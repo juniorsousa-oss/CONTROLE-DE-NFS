@@ -36,7 +36,7 @@ st.set_page_config(
 
 DEFAULT = {
     "title": "CONTROLE DE NOTAS FISCAIS",
-    "subtitle": "Leitura, conferência e renomeação inteligente de documentos fiscais",
+    "subtitle": "Processamento • Pré-notas • Prioridade MRP • Fornecedores • Dashboard",
     "sidebar_title": "CONTROLE DE NFs",
     "sidebar_subtitle": "Automação do fluxo fiscal",
     "intro": "Envie os PDFs, valide as correspondências encontradas e somente depois gere os arquivos com o padrão definitivo.",
@@ -115,19 +115,42 @@ def logo_html() -> str:
 st.markdown(
     """
 <style>
-:root{--p:__COLOR__}.stApp{background:#f7f8fa}.block-container{padding-top:1rem;max-width:1600px}
-section[data-testid="stSidebar"]{background:#fff;border-right:1px solid #e7e9ee}
-.brand,.info,.intro,.logo-card,.metric,.panel{background:#fff;border:1px solid #e7e9ee;border-radius:14px}
-.brand{padding:.85rem;margin-bottom:1rem;background:#fafbfc}.brand b{font-size:.95rem}.brand small{color:#737982}
-.label{font-size:.68rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8a9099;margin:.45rem 0}
-.logo-preview{background:#fff;border:1px solid #eceef2;border-radius:12px;min-height:86px;display:flex;align-items:center;justify-content:center;padding:.6rem}.logo-preview img{max-height:70px;max-width:100%}
-.info{padding:.8rem;background:#fafbfc;font-size:.78rem;color:#5f6670;line-height:1.45}
-.logo-card{min-height:116px;display:flex;align-items:center;justify-content:center;box-shadow:0 5px 20px rgba(16,24,40,.04)}.logo-card img{max-height:92px;max-width:300px}.fallback{font-size:2rem;letter-spacing:.08em}
-.title{font-size:1.85rem;font-weight:850;margin:.9rem 0 .1rem}.subtitle{color:#737982;margin-bottom:1rem}.intro{padding:.9rem 1rem;color:#555c66;margin-bottom:1rem}
-.metric{padding:.8rem}.metric small{font-size:.7rem;color:#8a9099;font-weight:800;text-transform:uppercase}.metric strong{display:block;font-size:1.45rem;margin-top:.15rem}.metric span{font-size:.72rem;color:#8a9099}
-.panel{padding:1rem;margin:.5rem 0 1rem}.ok{color:#16794f}.warn{color:#9a6700}.muted{color:#8a9099}
-button[kind="primary"],button[data-testid="stBaseButton-primary"]{background:var(--p)!important;border-color:var(--p)!important;color:#fff!important}
-.footer{text-align:center;color:#9298a1;font-size:.72rem;padding-top:1.2rem}
+:root{--p:__COLOR__}
+[data-testid="stAppViewContainer"]{background:#f4f7fb!important}
+[data-testid="stHeader"]{background:rgba(255,255,255,.96)!important}
+.block-container{max-width:1780px!important;padding-top:3.2rem!important;padding-left:2.7rem!important;padding-right:2.7rem!important;padding-bottom:3rem!important;width:100%!important}
+section[data-testid="stSidebar"]{background:#fff!important;border-right:1px solid #e8ebf0!important}
+section[data-testid="stSidebar"] .block-container{padding-top:1.6rem!important;padding-left:1rem!important;padding-right:1rem!important}
+.brand,.info,.intro,.setta-logo-card,.kpi-card,.panel{background:#fff;border:1px solid #e5e8ee;border-radius:14px}
+.brand{padding:.9rem 1rem;margin:0 0 1.05rem;background:#f8fafc}.brand b{font-size:.92rem;color:#111827;font-weight:800}.brand small{color:#6b7280;font-size:.75rem}
+.label{margin:.25rem 0 .45rem;color:#374151;font-size:.76rem;font-weight:800;text-transform:uppercase;letter-spacing:.055em}
+.logo-preview{width:100%;min-height:82px;display:flex;justify-content:center;align-items:center;margin:.65rem 0 .5rem;padding:.65rem .8rem;background:#fff;border:1px dashed #d1d5db;border-radius:10px;box-sizing:border-box;overflow:hidden}
+.logo-preview img{display:block;width:auto;height:auto;max-width:140px;max-height:62px;object-fit:contain}
+.info{padding:.75rem .85rem;background:#f8fafc;color:#6b7280;font-size:.76rem;line-height:1.55}
+section[data-testid="stSidebar"] div[role="radiogroup"]{display:flex;flex-direction:column;gap:.58rem}
+section[data-testid="stSidebar"] div[role="radiogroup"] label{position:relative;width:100%;min-height:48px;display:flex!important;align-items:center!important;padding:.66rem .8rem .66rem 1rem!important;margin:0!important;border:1px solid #e2e8f0!important;border-radius:12px;background:#fff!important;box-shadow:0 2px 8px rgba(15,23,42,.035)!important;cursor:pointer;box-sizing:border-box;transition:.12s ease}
+section[data-testid="stSidebar"] div[role="radiogroup"] label>div:first-child{display:none!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] label p{margin:0!important;color:#334155!important;font-size:.86rem!important;line-height:1.2!important;font-weight:700!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover{transform:translateY(-1px);border-color:#cbd5e1!important;background:#fbfdff!important;box-shadow:0 5px 14px rgba(15,23,42,.07)!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked){background:#111827!important;border-color:#111827!important;box-shadow:0 5px 14px rgba(17,24,39,.14)!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked)::before{content:"";position:absolute;left:.42rem;top:50%;width:4px;height:20px;border-radius:999px;background:#ef4444;transform:translateY(-50%)}
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p{color:#fff!important}
+section[data-testid="stSidebar"][aria-expanded="false"]{width:0!important;min-width:0!important;max-width:0!important;flex-basis:0!important}
+.setta-logo-card{width:100%;min-height:128px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #e5e8ee;border-radius:16px;box-shadow:0 4px 14px rgba(24,39,75,.08);box-sizing:border-box;margin:0 0 2.55rem;padding:1.1rem 2rem}
+.setta-logo-card img{display:block;width:auto;height:auto;max-width:205px;max-height:86px;object-fit:contain}.fallback{font-size:2rem;letter-spacing:.08em}
+.app-title{margin:0!important;padding:0!important;font-size:2.55rem!important;line-height:1.08!important;font-weight:800!important;letter-spacing:-.04em!important;color:#050505!important}
+.app-brand-line{display:flex;align-items:center;gap:.45rem;margin-top:.06rem}.app-brand-bar{display:inline-block;width:4px;height:.98em;background:#0b0b0b;border-radius:1px;flex:0 0 4px}
+.app-sub{margin-top:.72rem!important;margin-bottom:2rem!important;color:#4f5661!important;font-size:.94rem!important;line-height:1.45!important}
+.section-title{margin:0 0 1rem!important;color:#0f172a!important;font-size:1.28rem!important;font-weight:800!important;letter-spacing:-.02em}
+.intro{padding:.9rem 1rem;color:#555c66;margin-bottom:1rem;box-shadow:0 3px 12px rgba(15,23,42,.035)}
+.kpi-card{position:relative;min-height:116px;padding:16px 18px 15px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;box-shadow:0 4px 16px rgba(15,23,42,.055);overflow:hidden;transition:transform .12s ease,box-shadow .12s ease}
+.kpi-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--accent)}.kpi-card.selected{outline:2px solid var(--accent);outline-offset:1px}
+.kpi-header{display:flex;align-items:center;gap:8px;margin-bottom:11px}.kpi-dot{width:9px;height:9px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);flex:0 0 auto}
+.kpi-label{color:#475569;font-size:.83rem;font-weight:700;line-height:1.15}.kpi-value{color:#0f172a;font-size:2rem;font-weight:800;line-height:1;letter-spacing:-.035em}.kpi-delta{margin-top:8px;color:#64748b;font-size:.76rem}
+[data-testid="stDataFrame"]{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 3px 12px rgba(15,23,42,.04)}
+[data-testid="stAlert"]{border-radius:12px!important;box-shadow:0 3px 12px rgba(15,23,42,.035)}
+button[kind="primary"],button[data-testid="stBaseButton-primary"]{background:var(--p)!important;border-color:var(--p)!important;color:#fff!important}.footer{text-align:center;color:#9298a1;font-size:.72rem;padding-top:1.2rem}
+@media (max-width:900px){.block-container{padding-top:2rem!important;padding-left:1rem!important;padding-right:1rem!important;padding-bottom:2rem!important}.setta-logo-card{min-height:105px;margin-bottom:1.8rem;padding:.9rem 1rem}.setta-logo-card img{max-width:170px;max-height:72px}.app-title{font-size:2rem!important;line-height:1.12!important}.app-sub{font-size:.9rem!important;margin-bottom:1.6rem!important}.section-title{font-size:1.14rem!important}div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="stColumn"]{min-width:100%!important;width:100%!important;flex:1 1 100%!important}.kpi-card{min-height:112px;margin-bottom:.12rem}}
 </style>
 """.replace("__COLOR__", color),
     unsafe_allow_html=True,
