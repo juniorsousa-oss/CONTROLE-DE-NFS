@@ -382,7 +382,7 @@ st.markdown(f'<div class="app-sub">{cfg["subtitle"]}</div>', unsafe_allow_html=T
 
 
 if page == "Dashboard":
-    st.markdown("### Dashboard operacional")
+    st.markdown('<div class="section-title">Dashboard operacional</div>', unsafe_allow_html=True)
     if db.configured():
         try:
             records = pd.DataFrame(db.list_process_records())
@@ -391,35 +391,59 @@ if page == "Dashboard":
             records = pd.DataFrame(st.session_state.history)
     else:
         records = pd.DataFrame(st.session_state.history)
-        st.info("Dashboard em modo de sessão. Configure SUPABASE_ANON_KEY para manter os registros entre acessos.")
 
     if records.empty:
-        st.info("Ainda não existem documentos processados para o dashboard.")
-    else:
-        for col in ["recebido_em", "pdf_criado_em", "enviado_em", "processado_em", "pre_nota_em"]:
-            if col in records.columns:
-                records[col] = pd.to_datetime(records[col], errors="coerce")
-        received = int(records.get("recebido_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-        pre_done = int(records.get("pre_nota_status", pd.Series("", index=records.index)).fillna("").astype(str).str.strip().ne("").sum())
-        created = int(records.get("pdf_criado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-        sent = int(records.get("enviado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-        cards = [("Notas recebidas", received, "Registradas"), ("Pré-notas", pre_done, "Com vínculo"), ("PDFs criados", created, "Compactados"), ("Enviadas", sent, "Marcadas como enviadas")]
-        for col, (title, number, desc) in zip(st.columns(4), cards):
-            col.markdown(f'<div class="metric"><small>{title}</small><strong>{number}</strong><span>{desc}</span></div>', unsafe_allow_html=True)
+        records = pd.DataFrame(columns=[
+            "id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza",
+            "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp",
+            "status", "recebido_em", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
+        ])
 
-        st.markdown("#### Consulta")
+    for col in ["recebido_em", "pdf_criado_em", "enviado_em", "processado_em", "pre_nota_em"]:
+        if col in records.columns:
+            records[col] = pd.to_datetime(records[col], errors="coerce")
+
+    received = int(records.get("recebido_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
+    pre_done = int(records.get("pre_nota_status", pd.Series("", index=records.index)).fillna("").astype(str).str.strip().ne("").sum())
+    created = int(records.get("pdf_criado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
+    sent = int(records.get("enviado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
+
+    kpis = [
+        ("Notas recebidas", received, "Documentos registrados", "#2563eb", "#dbeafe", True),
+        ("Pré-notas realizadas", pre_done, "Vinculadas ao controle", "#d97706", "#ffedd5", False),
+        ("PDFs criados", created, "Renomeados e compactados", "#0891b2", "#cffafe", False),
+        ("Enviadas", sent, "Fluxo concluído", "#16a34a", "#dcfce7", False),
+    ]
+    for col, item in zip(st.columns(4), kpis):
+        label, value, delta, accent, soft, selected = item
+        selected_class = " selected" if selected else ""
+        col.markdown(
+            f'<div class="kpi-card{selected_class}" style="--accent:{accent};--accent-soft:{soft}">'
+            f'<div class="kpi-header"><span class="kpi-dot"></span><span class="kpi-label">{label}</span></div>'
+            f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    if not db.configured():
+        st.caption("Persistência ainda não conectada neste deployment. Configure a chave do Supabase em Configurações.")
+
+    st.markdown('<div class="section-title" style="margin-top:1.65rem!important;">Consulta de documentos</div>', unsafe_allow_html=True)
+    if records.empty:
+        st.caption("Os documentos processados passarão a aparecer nesta tabela.")
+    else:
         f1, f2, f3, f4 = st.columns(4)
         ref_date = pd.to_datetime(records.get("processado_em"), errors="coerce").dt.date if "processado_em" in records.columns else pd.Series([date.today()] * len(records))
         min_d = min([d for d in ref_date.dropna().tolist()] or [date.today()])
         max_d = max([d for d in ref_date.dropna().tolist()] or [date.today()])
-        start = f1.date_input("De", value=min_d)
-        end = f2.date_input("Até", value=max_d)
+        start_date = f1.date_input("De", value=min_d)
+        end_date = f2.date_input("Até", value=max_d)
         natures = sorted(records.get("natureza", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
         nature_filter = f3.multiselect("Natureza", natures, default=natures)
         suppliers = sorted(records.get("fornecedor_padrao", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
         supplier_filter = f4.multiselect("Fornecedor", suppliers)
+
         view = records.copy()
-        mask_date = (ref_date >= start) & (ref_date <= end)
+        mask_date = (ref_date >= start_date) & (ref_date <= end_date)
         view = view[mask_date]
         if nature_filter and "natureza" in view.columns:
             view = view[view["natureza"].isin(nature_filter)]
@@ -429,12 +453,25 @@ if page == "Dashboard":
         if priority_only and "prioridade_mrp" in view.columns:
             view = view[view["prioridade_mrp"].fillna(False).astype(bool)]
 
-        display_cols = [c for c in ["id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza", "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp", "status", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"] if c in view.columns]
+        display_cols = [x for x in [
+            "id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza",
+            "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp",
+            "status", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
+        ] if x in view.columns]
         table = view[display_cols].copy().reset_index(drop=True)
+
         if "id" in table.columns:
             table.insert(0, "Selecionar", False)
-            edited = st.data_editor(table, use_container_width=True, hide_index=True, disabled=[c for c in table.columns if c != "Selecionar"], key="dashboard_editor")
-            selected_ids = edited.loc[edited["Selecionar"].fillna(False).astype(bool), "id"].astype(str).tolist()
+            edited = st.data_editor(
+                table,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[x for x in table.columns if x != "Selecionar"],
+                key="dashboard_editor",
+            )
+            selected_ids = edited.loc[
+                edited["Selecionar"].fillna(False).astype(bool), "id"
+            ].astype(str).tolist()
             if st.button("Marcar selecionadas como enviadas", type="primary", disabled=not selected_ids):
                 try:
                     result = db.mark_sent(selected_ids, st.session_state.operator)
@@ -444,8 +481,15 @@ if page == "Dashboard":
                     st.error(f"Falha ao atualizar envio: {exc}")
         else:
             st.dataframe(table, use_container_width=True, hide_index=True)
-        export_view = view.drop(columns=[c for c in ["id"] if c in view.columns])
-        st.download_button("Exportar consulta para Excel", excel_bytes(export_view, "Controle NFs"), file_name=f"controle_nfs_{now_local():%d%m%Y}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+
+        export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
+        st.download_button(
+            "Exportar consulta para Excel",
+            excel_bytes(export_view, "Controle NFs"),
+            file_name=f"controle_nfs_{now_local():%d%m%Y}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
 
 
 elif page == "Processar NFs":
