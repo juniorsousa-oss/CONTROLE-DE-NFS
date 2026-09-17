@@ -373,7 +373,12 @@ with st.sidebar:
     if st.session_state.get("db_sync_error"):
         st.warning("Falha na sincronização inicial do banco. Veja Configurações.")
 
-st.markdown(f'<div class="logo-card">{logo_html()}</div><div class="title">{cfg["title"]}</div><div class="subtitle">{cfg["subtitle"]}</div>', unsafe_allow_html=True)
+st.markdown(f'<div class="setta-logo-card">{logo_html()}</div>', unsafe_allow_html=True)
+st.markdown(
+    f'<div class="app-title">{cfg["title"]}<div class="app-brand-line"><span class="app-brand-bar"></span><span>SETTA</span></div></div>',
+    unsafe_allow_html=True,
+)
+st.markdown(f'<div class="app-sub">{cfg["subtitle"]}</div>', unsafe_allow_html=True)
 
 
 if page == "Dashboard":
