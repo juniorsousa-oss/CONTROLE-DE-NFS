@@ -4,8 +4,8 @@ import hashlib
 import io
 import re
 import unicodedata
-from dataclasses import dataclass, asdict
-from datetime import date, datetime
+from dataclasses import asdict, dataclass
+from datetime import date
 from typing import Iterable
 
 import fitz  # PyMuPDF
@@ -15,10 +15,9 @@ from rapidfuzz import fuzz, process
 try:
     import pytesseract
     from PIL import Image
-except Exception:  # OCR é opcional em ambiente sem binário/pacote
+except Exception:
     pytesseract = None
     Image = None
-
 
 DATE_RE = re.compile(r"\b([0-3]\d)/([01]\d)/(20\d{2})\b")
 KEY_GROUPED_RE = re.compile(r"\b(?:\d{4}\s+){10}\d{4}\b")
@@ -31,22 +30,19 @@ def digits_only(value: object) -> str:
 
 
 def strip_accents_upper(value: object) -> str:
-    """Normaliza acentos preservando aproximadamente os índices do texto original."""
     raw = unicodedata.normalize("NFKD", str(value or ""))
     raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
     return raw.upper()
 
 
 def normalize_text(value: object) -> str:
-    raw = strip_accents_upper(value)
-    return re.sub(r"\s+", " ", raw).strip()
+    return re.sub(r"\s+", " ", strip_accents_upper(value)).strip()
 
 
 def sanitize_filename_part(value: object) -> str:
     text = str(value or "").strip()
     text = re.sub(r'[<>:"/\\|?*]', " ", text)
-    text = re.sub(r"\s+", " ", text).strip(" .-")
-    return text
+    return re.sub(r"\s+", " ", text).strip(" .-")
 
 
 def format_cnpj(cnpj: str) -> str:
@@ -56,21 +52,30 @@ def format_cnpj(cnpj: str) -> str:
     return f"{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}"
 
 
-def extract_pdf_text(pdf_bytes: bytes, ocr_fallback: bool = True) -> tuple[str, str]:
-    """Retorna (texto, método). OCR entra apenas quando a camada textual é insuficiente."""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    texts: list[str] = []
-    for page in doc:
-        texts.append(page.get_text("text") or "")
-    text = "\n".join(texts).strip()
+def valid_cnpj(value: object) -> bool:
+    cnpj = digits_only(value)
+    if len(cnpj) != 14 or len(set(cnpj)) == 1:
+        return False
 
-    # DANFE normal possui bastante texto. Menos de 160 caracteres sugere PDF imagem.
+    def check(base: str, weights: list[int]) -> str:
+        total = sum(int(d) * w for d, w in zip(base, weights))
+        remainder = total % 11
+        digit = 0 if remainder < 2 else 11 - remainder
+        return str(digit)
+
+    d1 = check(cnpj[:12], [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    d2 = check(cnpj[:12] + d1, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+    return cnpj[-2:] == d1 + d2
+
+
+def extract_pdf_text(pdf_bytes: bytes, ocr_fallback: bool = True) -> tuple[str, str]:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    texts = [(page.get_text("text") or "") for page in doc]
+    text = "\n".join(texts).strip()
     if len(re.sub(r"\s+", "", text)) >= 160:
         return text, "TEXTO PDF"
-
     if not ocr_fallback or pytesseract is None or Image is None:
         return text, "SEM TEXTO / OCR INDISPONÍVEL"
-
     ocr_pages: list[str] = []
     for page in doc:
         pix = page.get_pixmap(matrix=fitz.Matrix(2.0, 2.0), alpha=False)
@@ -78,24 +83,18 @@ def extract_pdf_text(pdf_bytes: bytes, ocr_fallback: bool = True) -> tuple[str, 
         try:
             ocr_pages.append(pytesseract.image_to_string(image, lang="por"))
         except Exception:
-            # Alguns ambientes têm apenas o pacote inglês. Mantém fallback sem quebrar o app.
             ocr_pages.append(pytesseract.image_to_string(image))
     ocr_text = "\n".join(ocr_pages).strip()
-    if len(ocr_text) > len(text):
-        return ocr_text, "OCR"
-    return text, "SEM TEXTO / OCR SEM RESULTADO"
+    return (ocr_text, "OCR") if len(ocr_text) > len(text) else (text, "SEM TEXTO / OCR SEM RESULTADO")
 
 
 def find_access_key(text: str) -> str:
-    # A chave normalmente aparece no topo da primeira página.
     scope = text[:12000]
     for pattern in (KEY_GROUPED_RE, KEY_COMPACT_RE):
         for match in pattern.finditer(scope):
             candidate = digits_only(match.group(0))
             if len(candidate) == 44 and candidate[20:22] in {"55", "57"}:
                 return candidate
-
-    # Fallback contextual próximo de CHAVE DE ACESSO.
     normalized = strip_accents_upper(scope)
     anchor = normalized.find("CHAVE DE ACESSO")
     if anchor >= 0:
@@ -139,8 +138,6 @@ def extract_emitter_cnpj(text: str) -> str:
         candidate = _first_valid_cnpj(text[emit_pos:end])
         if candidate:
             return candidate
-
-    # Fallback: antes de DESTINATÁRIO costuma estar somente o CNPJ do emitente.
     if dest_pos > 0:
         candidate = _first_valid_cnpj(text[:dest_pos])
         if candidate:
@@ -149,10 +146,7 @@ def extract_emitter_cnpj(text: str) -> str:
 
 
 def extract_nf_number(text: str) -> str:
-    patterns = [
-        r"NF-e\s*\n?\s*N\.?\s*0*(\d{1,9})",
-        r"\bN\.?\s*0*(\d{1,9})\s*\n?\s*S[ÉE]RIE",
-    ]
+    patterns = [r"NF-e\s*\n?\s*N\.?\s*0*(\d{1,9})", r"\bN\.?\s*0*(\d{1,9})\s*\n?\s*S[ÉE]RIE"]
     for pattern in patterns:
         match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
@@ -162,9 +156,7 @@ def extract_nf_number(text: str) -> str:
 
 def extract_series(text: str) -> str:
     match = re.search(r"S[ÉE]RIE\s*0*(\d{1,3})", text, flags=re.IGNORECASE)
-    if match:
-        return str(int(match.group(1)))
-    return ""
+    return str(int(match.group(1))) if match else ""
 
 
 def extract_emitter_name(text: str) -> str:
@@ -186,31 +178,34 @@ def extract_emitter_name(text: str) -> str:
 
 def extract_due_dates(text: str) -> list[date]:
     normalized = strip_accents_upper(text)
-    anchors = ["FATURA", "DUPLICATA", "DUPLICATAS"]
-    start = -1
-    for anchor in anchors:
-        start = normalized.find(anchor)
-        if start >= 0:
-            break
-
+    start = next((normalized.find(a) for a in ["FATURA", "DUPLICATA", "DUPLICATAS"] if normalized.find(a) >= 0), -1)
     if start >= 0:
-        end_positions = []
-        for marker in ["CALCULO DO IMPOSTO", "CALCULO DO ICMS", "TRANSPORTADOR/VOLUMES"]:
-            pos = normalized.find(marker, start + 5)
-            if pos >= 0:
-                end_positions.append(pos)
+        end_positions = [normalized.find(m, start + 5) for m in ["CALCULO DO IMPOSTO", "CALCULO DO ICMS", "TRANSPORTADOR/VOLUMES"]]
+        end_positions = [p for p in end_positions if p >= 0]
         end = min(end_positions) if end_positions else min(len(text), start + 3200)
         scope = text[start:end]
     else:
         scope = ""
-
     dates: list[date] = []
     for d, m, y in DATE_RE.findall(scope):
         try:
             dates.append(date(int(y), int(m), int(d)))
         except ValueError:
-            continue
+            pass
     return sorted(set(dates))
+
+
+def extract_internal_nature(text: str) -> str:
+    """Extrai somente quando a natureza interna está explicitamente rotulada."""
+    normalized = strip_accents_upper(text)
+    for pattern in [
+        r"NATUREZA\s+INTERNA\s*[:\-]?\s*([A-Z0-9_-]{1,12})",
+        r"NAT\.?\s+INTERNA\s*[:\-]?\s*([A-Z0-9_-]{1,12})",
+    ]:
+        match = re.search(pattern, normalized)
+        if match:
+            return sanitize_filename_part(match.group(1)).upper()
+    return ""
 
 
 def supplier_dataframe(raw: pd.DataFrame | Iterable[dict] | None) -> pd.DataFrame:
@@ -228,57 +223,45 @@ def supplier_dataframe(raw: pd.DataFrame | Iterable[dict] | None) -> pd.DataFram
 
 
 def match_supplier(cnpj: str, emitter_name: str, suppliers: pd.DataFrame) -> dict[str, object]:
-    suppliers = supplier_dataframe(suppliers)
-    active = suppliers[suppliers["ativo"]].copy()
+    active = supplier_dataframe(suppliers)
+    active = active[active["ativo"]].copy()
     cnpj = digits_only(cnpj)
-
     if cnpj:
         exact = active[active["cnpj"] == cnpj]
         if not exact.empty:
-            return {
-                "nome_padrao": exact.iloc[0]["nome_padrao"],
-                "metodo": "CNPJ exato",
-                "score": 100,
-            }
-
+            return {"nome_padrao": exact.iloc[0]["nome_padrao"], "metodo": "CNPJ exato", "score": 100}
         root = cnpj[:8]
         root_matches = active[active["cnpj"].str[:8] == root]
         if len(root_matches) == 1:
-            return {
-                "nome_padrao": root_matches.iloc[0]["nome_padrao"],
-                "metodo": "Raiz do CNPJ",
-                "score": 92,
-            }
+            return {"nome_padrao": root_matches.iloc[0]["nome_padrao"], "metodo": "Raiz do CNPJ", "score": 92}
 
     emitter_norm = normalize_text(emitter_name)
     if emitter_norm and not active.empty:
         choices: dict[str, int] = {}
         for idx, row in active.iterrows():
-            variants = [row["nome_padrao"]]
-            variants += [x.strip() for x in str(row["aliases"]).split("|") if x.strip()]
+            variants = [row["nome_padrao"]] + [x.strip() for x in str(row["aliases"]).split("|") if x.strip()]
             for variant in variants:
                 value = normalize_text(variant)
                 if value:
                     choices[f"{idx}::{value}"] = idx
         if choices:
-            result = process.extractOne(emitter_norm, list(choices.keys()), scorer=lambda a, b, **_: fuzz.token_set_ratio(a.split("::", 1)[-1], b.split("::", 1)[-1]))
+            result = process.extractOne(
+                emitter_norm,
+                list(choices.keys()),
+                scorer=lambda a, b, **_: fuzz.token_set_ratio(a.split("::", 1)[-1], b.split("::", 1)[-1]),
+            )
             if result:
                 selected_key, score, _ = result
                 idx = choices[selected_key]
                 if score >= 74:
-                    return {
-                        "nome_padrao": active.loc[idx, "nome_padrao"],
-                        "metodo": "Nome aproximado",
-                        "score": int(round(score)),
-                    }
-
+                    return {"nome_padrao": active.loc[idx, "nome_padrao"], "metodo": "Nome aproximado", "score": int(round(score))}
     return {"nome_padrao": emitter_name.strip(), "metodo": "Não vinculado", "score": 0}
 
 
 def build_final_name(vencimento: date | None, numero_nf: str, fornecedor: str) -> str:
     if not isinstance(vencimento, date):
         return ""
-    numero = re.sub(r"\D", "", str(numero_nf or "")).lstrip("0") or "0"
+    numero = digits_only(numero_nf).lstrip("0") or "0"
     fornecedor = sanitize_filename_part(fornecedor)
     if not numero or not fornecedor:
         return ""
@@ -297,6 +280,7 @@ class NFResult:
     fornecedor_lido: str
     fornecedor_padrao: str
     vencimento: date | None
+    natureza: str
     metodo_fornecedor: str
     confianca: int
     leitura: str
@@ -313,24 +297,7 @@ def process_nf_pdf(file_name: str, pdf_bytes: bytes, suppliers: pd.DataFrame, oc
     try:
         text, reading_method = extract_pdf_text(pdf_bytes, ocr_fallback=ocr_fallback)
     except Exception as exc:
-        return NFResult(
-            file_id=file_id,
-            arquivo_original=file_name,
-            tipo="NF-e",
-            chave_nfe="",
-            numero_nf="",
-            serie="",
-            cnpj_fornecedor="",
-            fornecedor_lido="",
-            fornecedor_padrao="",
-            vencimento=None,
-            metodo_fornecedor="Falha de leitura",
-            confianca=0,
-            leitura="ERRO",
-            status="REVISAR",
-            nome_sugerido="",
-            observacao=f"Falha ao abrir/analisar PDF: {exc}",
-        )
+        return NFResult(file_id, file_name, "NF-e", "", "", "", "", "", "", None, "", "Falha de leitura", 0, "ERRO", "REVISAR", "", f"Falha ao abrir/analisar PDF: {exc}")
 
     key = find_access_key(text)
     key_info = parse_access_key(key)
@@ -340,6 +307,7 @@ def process_nf_pdf(file_name: str, pdf_bytes: bytes, suppliers: pd.DataFrame, oc
     emitter = extract_emitter_name(text)
     due_dates = extract_due_dates(text)
     due = due_dates[0] if due_dates else None
+    nature = extract_internal_nature(text)
     matched = match_supplier(cnpj, emitter, suppliers)
     supplier = str(matched.get("nome_padrao") or "").strip()
     supplier_method = str(matched.get("metodo") or "")
@@ -354,19 +322,16 @@ def process_nf_pdf(file_name: str, pdf_bytes: bytes, suppliers: pd.DataFrame, oc
         notes.append("Chave da NF-e não identificada; número/CNPJ lidos por campos do DANFE.")
     else:
         notes.append("Chave da NF-e não identificada.")
-
     if numero:
         score += 20
     else:
         notes.append("Número da NF não encontrado.")
-
     if due:
         score += 25
         if len(due_dates) > 1:
             notes.append(f"{len(due_dates)} parcelas localizadas; utilizado o primeiro vencimento.")
     else:
         notes.append("Vencimento não encontrado no bloco de FATURA/DUPLICATAS.")
-
     if supplier_method == "CNPJ exato":
         score += 20
     elif supplier_method == "Raiz do CNPJ":
@@ -376,7 +341,9 @@ def process_nf_pdf(file_name: str, pdf_bytes: bytes, suppliers: pd.DataFrame, oc
         score += min(15, round(supplier_score * 0.15))
         notes.append(f"Fornecedor vinculado por similaridade de nome ({supplier_score}%).")
     else:
-        notes.append("Fornecedor não encontrado na base; necessário validar/cadastrar.")
+        notes.append("Fornecedor não encontrado na base; necessário validar na conferência.")
+    if not nature:
+        notes.append("Natureza interna não identificada automaticamente; informar na conferência antes do ZIP.")
 
     score = min(100, int(score))
     final_name = build_final_name(due, numero, supplier)
@@ -395,6 +362,7 @@ def process_nf_pdf(file_name: str, pdf_bytes: bytes, suppliers: pd.DataFrame, oc
         fornecedor_lido=emitter,
         fornecedor_padrao=supplier,
         vencimento=due,
+        natureza=nature,
         metodo_fornecedor=supplier_method,
         confianca=score,
         leitura=reading_method,
