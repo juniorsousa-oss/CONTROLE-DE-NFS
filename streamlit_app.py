@@ -1385,15 +1385,17 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 if not st.session_state.analysis.empty:
                     st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
 
+                persisted = persist_mrp_current()
+
                 st.session_state.mrp_import_preview_detail = pd.DataFrame()
                 st.session_state.mrp_import_preview_summary = pd.DataFrame()
                 set_flash(
                     "_flash_mrp",
                     "success",
                     (
-                        f"Carga aplicada: {len(summary)} NF(s) avaliadas, "
+                        f"Carga aplicada e gravada: {len(summary)} NF(s) avaliadas, "
                         f"{len(high)} em prioridade ALTA. "
-                        "A correlação com pré-notas usa Data + NF, com validação pelo nome do fornecedor."
+                        f"Supabase: {int(persisted.get('resumo', len(summary)))} NF(s) no resumo atual."
                     ),
                 )
                 st.rerun()
@@ -1676,13 +1678,14 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                             .reset_index(drop=True)
                         )
                         st.session_state.pre_notes = updated
+                        persist_pre_notes_current("Impacto MRP / Protheus")
 
                         set_flash(
                             "_flash_mrp",
                             "success",
                             (
                                 f"{len(additions)} NF(s) adicionada(s) "
-                                "à lista de Pré-notas pendentes."
+                                "à lista de Pré-notas pendentes e gravada(s) no Supabase."
                             ),
                         )
                         st.rerun()
@@ -1826,13 +1829,15 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                                     )
                                 )
 
+                            persist_mrp_current()
+
                             set_flash(
                                 "_flash_mrp",
                                 "success",
                                 (
                                     f"{len(ignored_rows)} NF(s) "
-                                    "desconsiderada(s) da carga atual "
-                                    "de Impacto MRP."
+                                    "desconsiderada(s) da carga atual de Impacto MRP "
+                                    "e a base persistida foi atualizada."
                                 ),
                             )
                             st.rerun()
