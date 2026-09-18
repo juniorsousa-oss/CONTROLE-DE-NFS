@@ -1332,19 +1332,13 @@ elif page == "Pendências":
             if key:
                 processed_keys.add(key)
 
-    if (
-        not SAVE_NF_HISTORY
-        and pending_records.empty
-    ):
-        # Em modo de testes, antes de existir uma nova carga processada não há
-        # pendência a exibir. A base de pré-notas continua carregada, mas não
-        # deve aparecer como "48 pendentes" apenas por ausência de histórico.
-        pending_pre = pd.DataFrame()
-    elif isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
+    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
         pre_base["chave_validacao"] = pre_base.apply(
             lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")), axis=1
         )
-        pending_pre = pre_base[~pre_base["chave_validacao"].isin(processed_keys)].copy()
+        pending_pre = pre_base[
+            ~pre_base["chave_validacao"].isin(processed_keys)
+        ].copy()
     else:
         pending_pre = pd.DataFrame()
 
@@ -1381,16 +1375,19 @@ elif page == "Pendências":
     pend_pre_tab, pend_mrp_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP", "Processamento de arquivos"])
 
     with pend_pre_tab:
-        if not SAVE_NF_HISTORY and pending_records.empty:
+        if pre_base.empty:
             st.info(
-                "Modo de testes: aguardando a nova carga. "
-                "Nenhum histórico anterior e nenhuma pendência serão exibidos antes do novo processamento."
+                "A base de pré-notas ainda não foi carregada. "
+                "Use Configurações > Alimentação > Validação Pré-notas."
             )
-        elif pre_base.empty:
-            st.info("A base de pré-notas ainda não foi carregada. Use Configurações > Alimentação > Validação Pré-notas.")
         elif pending_pre.empty:
             st.success("Nenhuma pré-nota pendente de documento na base atual.")
         else:
+            if not SAVE_NF_HISTORY:
+                st.caption(
+                    "Modo de testes: esta lista usa somente a base de pré-notas carregada nesta sessão "
+                    "e o lote atual de PDFs. Nenhum histórico do banco é considerado."
+                )
             st.warning(f"{len(pending_pre)} pré-nota(s) ainda não possuem PDF processado correspondente por NF + CNPJ.")
             if "data_pre_nota" in pending_pre.columns:
                 groups = (
