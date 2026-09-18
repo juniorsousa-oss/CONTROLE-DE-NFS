@@ -2372,10 +2372,10 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
         )
 
     if pdf_result is not None:
+        # O PDF pode complementar leitura/validação, mas nunca prevalece como
+        # arquivo-base quando também existe XML.
         row = pdf_result.to_dict()
-        output_bytes = pdf_item["raw"]
-        source_name = pdf_item["name"]
-    else:
+    elif xml_item is not None:
         row = {
             "file_id": uuid.uuid4().hex[:16],
             "arquivo_original": xml_item["name"],
@@ -2395,8 +2395,18 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
             "nome_sugerido": "",
             "observacao": "",
         }
+    else:
+        raise ValueError("O PDF não pôde ser interpretado e não há XML correspondente.")
+
+    # Regra de precedência do documento visual:
+    # XML presente -> DANFE reconstruída exclusivamente do XML.
+    # Sem XML -> preserva o PDF recebido como base.
+    if xml_item is not None:
         output_bytes = generate_danfe_pdf(xml_item["raw"])
         source_name = xml_item["name"]
+    else:
+        output_bytes = pdf_item["raw"]
+        source_name = pdf_item["name"]
 
     notes = []
     source_mode = "PDF"
