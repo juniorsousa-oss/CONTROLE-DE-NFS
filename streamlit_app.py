@@ -811,267 +811,7 @@ def current_process_records_for_tests() -> pd.DataFrame:
     return pd.DataFrame(st.session_state.history)
 
 
-with st.sidebar:
-    st.markdown(
-        f'''<div class="sidebar-brand">
-            <div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>
-            <div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>
-        </div>''',
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="sidebar-section-label">Navegação</div>', unsafe_allow_html=True)
-    _pages = ["Dashboard", "Processamento de arquivos", "Configurações"]
-    if ENABLE_PENDING_REPORT:
-        _pages.insert(1, "Pendências")
-    page = st.radio(
-        "Página",
-        _pages,
-        label_visibility="collapsed",
-        format_func=str.upper,
-    )
-    st.divider()
-    st.markdown('<div class="sidebar-section-label">Operador</div>', unsafe_allow_html=True)
-    try:
-        _usuarios_ativos = db.list_users(active_only=True) if db.configured() else []
-    except Exception:
-        _usuarios_ativos = []
-    _nomes_usuarios = [str(x.get("nome") or "").strip() for x in _usuarios_ativos if str(x.get("nome") or "").strip()]
-    if _nomes_usuarios:
-        _placeholder_operador = "Selecione o operador"
-        _opcoes_operador = [_placeholder_operador] + _nomes_usuarios
-        _operador_atual = str(st.session_state.operator or "").strip()
-        _indice_operador = _opcoes_operador.index(_operador_atual) if _operador_atual in _opcoes_operador else 0
-        _operador_escolhido = st.selectbox("Operador", _opcoes_operador, index=_indice_operador, label_visibility="collapsed", key="operador_select")
-        st.session_state.operator = "" if _operador_escolhido == _placeholder_operador else _operador_escolhido
-    else:
-        st.session_state.operator = st.text_input("Nome do operador", value=st.session_state.operator, label_visibility="collapsed", placeholder="Cadastre um usuário em Configurações")
-    st.divider()
-    st.markdown('<div class="sidebar-section-label">Identidade visual</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="sidebar-logo-preview">{logo_html()}</div>', unsafe_allow_html=True)
-    st.caption("Logo, títulos e cores ficam em Configurações.")
-    st.divider()
-    status = db.db_status()
-    db_text = "Conectado" if status["configured"] else "Aguardando chave"
-    st.markdown('<div class="sidebar-section-label">Informações</div>', unsafe_allow_html=True)
-    _mode_text = "TESTES — sem gravação no Supabase" if not SAVE_NF_HISTORY else "Produção"
-    st.markdown(
-        f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e → conferência → ZIP<br><br><b>Modo</b><br>{_mode_text}<br><br><b>Versão</b><br>Protótipo 0.2</div>',
-        unsafe_allow_html=True,
-    )
-    if st.session_state.get("db_sync_error"):
-        st.warning("Falha na sincronização inicial do banco. Veja Configurações.")
-
-st.markdown(f'<div class="setta-logo-card">{logo_html()}</div>', unsafe_allow_html=True)
-st.markdown(
-    f'<h1 class="app-title">{cfg["title"]} | SETTA</h1>',
-    unsafe_allow_html=True,
-)
-st.markdown(
-    f'<p class="app-sub">{cfg["subtitle"]}</p>',
-    unsafe_allow_html=True,
-)
-
-
-if page == "Dashboard":
-    st.markdown('<div class="section-title">Dashboard operacional</div>', unsafe_allow_html=True)
-    if db.configured():
-        try:
-            records = pd.DataFrame(db.list_process_records())
-        except Exception as exc:
-            st.error(f"Não foi possível consultar o histórico: {exc}")
-            records = pd.DataFrame(st.session_state.history)
-    else:
-        records = pd.DataFrame(st.session_state.history)
-
-    if records.empty:
-        records = pd.DataFrame(columns=[
-            "id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza",
-            "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp",
-            "status", "recebido_em", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
-        ])
-
-    for col in ["recebido_em", "pdf_criado_em", "enviado_em", "processado_em", "pre_nota_em"]:
-        if col in records.columns:
-            records[col] = pd.to_datetime(records[col], errors="coerce")
-
-    received = int(records.get("recebido_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-    pre_done = int(records.get("pre_nota_status", pd.Series("", index=records.index)).fillna("").astype(str).str.strip().ne("").sum())
-    created = int(records.get("pdf_criado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-    sent = int(records.get("enviado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-
-    kpis = [
-        ("Notas recebidas", received, "Documentos registrados", "#2563eb", "#dbeafe", True),
-        ("Pré-notas realizadas", pre_done, "Vinculadas ao controle", "#d97706", "#ffedd5", False),
-        ("PDFs criados", created, "Renomeados e compactados", "#0891b2", "#cffafe", False),
-        ("Enviadas", sent, "Fluxo concluído", "#16a34a", "#dcfce7", False),
-    ]
-    for col, item in zip(st.columns(4), kpis):
-        label, value, delta, accent, soft, selected = item
-        selected_class = " selected" if selected else ""
-        col.markdown(
-            f'<div class="kpi-card{selected_class}" style="--accent:{accent};--accent-soft:{soft}">'
-            f'<div class="kpi-header"><span class="kpi-dot"></span><span class="kpi-label">{label}</span></div>'
-            f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>',
-            unsafe_allow_html=True,
-        )
-
-    if not db.configured():
-        st.caption("Persistência ainda não conectada neste deployment. Configure a chave do Supabase em Configurações.")
-
-    st.markdown('<div class="section-title" style="margin-top:1.65rem!important;">Consulta de documentos</div>', unsafe_allow_html=True)
-    if records.empty:
-        st.caption("Os documentos processados passarão a aparecer nesta tabela.")
-    else:
-        f1, f2, f3, f4 = st.columns(4)
-        ref_date = pd.to_datetime(records.get("processado_em"), errors="coerce").dt.date if "processado_em" in records.columns else pd.Series([date.today()] * len(records))
-        min_d = min([d for d in ref_date.dropna().tolist()] or [date.today()])
-        max_d = max([d for d in ref_date.dropna().tolist()] or [date.today()])
-        start_date = f1.date_input("De", value=min_d)
-        end_date = f2.date_input("Até", value=max_d)
-        natures = sorted(records.get("natureza", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
-        nature_filter = f3.multiselect("Natureza", natures, default=natures)
-        suppliers = sorted(records.get("fornecedor_padrao", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
-        supplier_filter = f4.multiselect("Fornecedor", suppliers)
-
-        view = records.copy()
-        mask_date = (ref_date >= start_date) & (ref_date <= end_date)
-        view = view[mask_date]
-        if nature_filter and "natureza" in view.columns:
-            view = view[view["natureza"].isin(nature_filter)]
-        if supplier_filter and "fornecedor_padrao" in view.columns:
-            view = view[view["fornecedor_padrao"].isin(supplier_filter)]
-        priority_only = st.checkbox("Exibir somente prioridade MRP")
-        if priority_only and "prioridade_mrp" in view.columns:
-            view = view[view["prioridade_mrp"].fillna(False).astype(bool)]
-
-        display_cols = [x for x in [
-            "id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza",
-            "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp",
-            "status", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
-        ] if x in view.columns]
-        table = view[display_cols].copy().reset_index(drop=True)
-
-        if "id" in table.columns:
-            table.insert(0, "Selecionar", False)
-            edited = st.data_editor(
-                table,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[x for x in table.columns if x != "Selecionar"],
-                key="dashboard_editor",
-            )
-            selected_ids = edited.loc[
-                edited["Selecionar"].fillna(False).astype(bool), "id"
-            ].astype(str).tolist()
-            if st.button("Marcar selecionadas como enviadas", type="primary", disabled=not selected_ids):
-                try:
-                    result = db.mark_sent(selected_ids, st.session_state.operator)
-                    st.success(f"{int(result.get('atualizados', 0))} registro(s) marcados como enviados.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Falha ao atualizar envio: {exc}")
-        else:
-            st.dataframe(table, use_container_width=True, hide_index=True)
-
-        export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
-        st.download_button(
-            "Exportar consulta para Excel",
-            excel_bytes(export_view, "Controle NFs"),
-            file_name=f"controle_nfs_{now_local():%d%m%Y}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
-
-
-
-elif page == "Pendências":
-    st.markdown('<div class="section-title">Pendências operacionais</div>', unsafe_allow_html=True)
-    st.caption(
-        "Consolida as pré-notas que ainda não possuem documento processado e as NFs identificadas pelo cruzamento de impacto no MRP."
-    )
-
-    pending_records = current_process_records_for_tests()
-
-    pre_base = st.session_state.pre_notes.copy()
-    processed_keys = set()
-    if not pending_records.empty:
-        for _, prow in pending_records.iterrows():
-            key = pre_note_key(prow.get("numero_nf"), prow.get("cnpj_fornecedor"))
-            if key:
-                processed_keys.add(key)
-
-    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
-        pre_base["chave_validacao"] = pre_base.apply(
-            lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")), axis=1
-        )
-        pending_pre = pre_base[~pre_base["chave_validacao"].isin(processed_keys)].copy()
-    else:
-        pending_pre = pd.DataFrame()
-
-    pre_keys = set()
-    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
-        pre_keys = set(pre_base["chave_validacao"].dropna().astype(str).tolist())
-
-    pdf_without_pre = pd.DataFrame()
-    if not pending_records.empty:
-        temp = pending_records.copy()
-        temp["chave_validacao"] = temp.apply(
-            lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj_fornecedor")), axis=1
-        )
-        pdf_without_pre = temp[
-            temp["chave_validacao"].ne("") & ~temp["chave_validacao"].isin(pre_keys)
-        ].copy()
-
-    mrp_summary = st.session_state.get("mrp_priority_summary")
-    mrp_count = int(mrp_summary["numero_nf"].nunique()) if isinstance(mrp_summary, pd.DataFrame) and not mrp_summary.empty else 0
-    reviewing = 0
-    if isinstance(st.session_state.analysis, pd.DataFrame) and not st.session_state.analysis.empty:
-        reviewing = int(st.session_state.analysis.get("status", pd.Series(dtype=str)).eq("REVISAR").sum())
-
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Pré-notas pendentes", len(pending_pre))
-    p2.metric("PDFs sem pré-nota", len(pdf_without_pre))
-    p3.metric("NFs impacto MRP", mrp_count)
-    p4.metric("Em revisão", reviewing)
-
-    pend_pre_tab, pend_mrp_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP"])
-
-    with pend_pre_tab:
-        if pre_base.empty:
-            st.info("A base de pré-notas ainda não foi carregada. Use Configurações > Alimentação > Validação Pré-notas.")
-        elif pending_pre.empty:
-            st.success("Nenhuma pré-nota pendente de documento na base atual.")
-        else:
-            st.warning(f"{len(pending_pre)} pré-nota(s) ainda não possuem PDF processado correspondente por NF + CNPJ.")
-            if "data_pre_nota" in pending_pre.columns:
-                groups = (
-                    pending_pre.groupby("data_pre_nota", dropna=False)
-                    .size()
-                    .reset_index(name="pendentes")
-                    .sort_values("data_pre_nota", ascending=False, na_position="last")
-                )
-                st.dataframe(
-                    groups,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "data_pre_nota": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                        "pendentes": "Pendentes",
-                    },
-                )
-            show_cols = [x for x in ["data_pre_nota", "numero_nf", "cnpj", "status"] if x in pending_pre.columns]
-            st.dataframe(pending_pre[show_cols], use_container_width=True, hide_index=True)
-
-        if not pdf_without_pre.empty:
-            with st.expander(f"PDFs processados sem pré-nota correspondente ({len(pdf_without_pre)})"):
-                cols = [x for x in ["numero_nf", "cnpj_fornecedor", "fornecedor_padrao", "arquivo_final", "processado_em"] if x in pdf_without_pre.columns]
-                st.dataframe(pdf_without_pre[cols], use_container_width=True, hide_index=True)
-
-    with pend_mrp_tab:
-        render_mrp_priority_feed("pendencias_mrp")
-
-
-elif page == "Processamento de arquivos":
+def render_file_processing():
     st.markdown('<div class="section-title">Processamento de arquivos</div>', unsafe_allow_html=True)
     tab_nf, tab_cte = st.tabs(["NFs", "CTEs"])
 
@@ -1346,6 +1086,268 @@ elif page == "Processamento de arquivos":
         st.info("Módulo reservado. O fluxo seguirá a mesma arquitetura validada para NF-e, mas só será ativado após recebermos exemplos reais de CT-e e fecharmos as regras de extração e nomenclatura.")
         st.code("NUMERO CTE - TRANSPORTADORA - NUMERO NF - FORNECEDOR NF.pdf", language=None)
 
+
+with st.sidebar:
+    st.markdown(
+        f'''<div class="sidebar-brand">
+            <div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>
+            <div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="sidebar-section-label">Navegação</div>', unsafe_allow_html=True)
+    _pages = ["Dashboard", "Configurações"]
+    if ENABLE_PENDING_REPORT:
+        _pages.insert(1, "Pendências")
+    page = st.radio(
+        "Página",
+        _pages,
+        label_visibility="collapsed",
+        format_func=str.upper,
+    )
+    st.divider()
+    st.markdown('<div class="sidebar-section-label">Operador</div>', unsafe_allow_html=True)
+    try:
+        _usuarios_ativos = db.list_users(active_only=True) if db.configured() else []
+    except Exception:
+        _usuarios_ativos = []
+    _nomes_usuarios = [str(x.get("nome") or "").strip() for x in _usuarios_ativos if str(x.get("nome") or "").strip()]
+    if _nomes_usuarios:
+        _placeholder_operador = "Selecione o operador"
+        _opcoes_operador = [_placeholder_operador] + _nomes_usuarios
+        _operador_atual = str(st.session_state.operator or "").strip()
+        _indice_operador = _opcoes_operador.index(_operador_atual) if _operador_atual in _opcoes_operador else 0
+        _operador_escolhido = st.selectbox("Operador", _opcoes_operador, index=_indice_operador, label_visibility="collapsed", key="operador_select")
+        st.session_state.operator = "" if _operador_escolhido == _placeholder_operador else _operador_escolhido
+    else:
+        st.session_state.operator = st.text_input("Nome do operador", value=st.session_state.operator, label_visibility="collapsed", placeholder="Cadastre um usuário em Configurações")
+    st.divider()
+    st.markdown('<div class="sidebar-section-label">Identidade visual</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sidebar-logo-preview">{logo_html()}</div>', unsafe_allow_html=True)
+    st.caption("Logo, títulos e cores ficam em Configurações.")
+    st.divider()
+    status = db.db_status()
+    db_text = "Conectado" if status["configured"] else "Aguardando chave"
+    st.markdown('<div class="sidebar-section-label">Informações</div>', unsafe_allow_html=True)
+    _mode_text = "TESTES — sem gravação no Supabase" if not SAVE_NF_HISTORY else "Produção"
+    st.markdown(
+        f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e → conferência → ZIP<br><br><b>Modo</b><br>{_mode_text}<br><br><b>Versão</b><br>Protótipo 0.2</div>',
+        unsafe_allow_html=True,
+    )
+    if st.session_state.get("db_sync_error"):
+        st.warning("Falha na sincronização inicial do banco. Veja Configurações.")
+
+st.markdown(f'<div class="setta-logo-card">{logo_html()}</div>', unsafe_allow_html=True)
+st.markdown(
+    f'<h1 class="app-title">{cfg["title"]} | SETTA</h1>',
+    unsafe_allow_html=True,
+)
+st.markdown(
+    f'<p class="app-sub">{cfg["subtitle"]}</p>',
+    unsafe_allow_html=True,
+)
+
+
+if page == "Dashboard":
+    st.markdown('<div class="section-title">Dashboard operacional</div>', unsafe_allow_html=True)
+    if db.configured():
+        try:
+            records = pd.DataFrame(db.list_process_records())
+        except Exception as exc:
+            st.error(f"Não foi possível consultar o histórico: {exc}")
+            records = pd.DataFrame(st.session_state.history)
+    else:
+        records = pd.DataFrame(st.session_state.history)
+
+    if records.empty:
+        records = pd.DataFrame(columns=[
+            "id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza",
+            "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp",
+            "status", "recebido_em", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
+        ])
+
+    for col in ["recebido_em", "pdf_criado_em", "enviado_em", "processado_em", "pre_nota_em"]:
+        if col in records.columns:
+            records[col] = pd.to_datetime(records[col], errors="coerce")
+
+    received = int(records.get("recebido_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
+    pre_done = int(records.get("pre_nota_status", pd.Series("", index=records.index)).fillna("").astype(str).str.strip().ne("").sum())
+    created = int(records.get("pdf_criado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
+    sent = int(records.get("enviado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
+
+    kpis = [
+        ("Notas recebidas", received, "Documentos registrados", "#2563eb", "#dbeafe", True),
+        ("Pré-notas realizadas", pre_done, "Vinculadas ao controle", "#d97706", "#ffedd5", False),
+        ("PDFs criados", created, "Renomeados e compactados", "#0891b2", "#cffafe", False),
+        ("Enviadas", sent, "Fluxo concluído", "#16a34a", "#dcfce7", False),
+    ]
+    for col, item in zip(st.columns(4), kpis):
+        label, value, delta, accent, soft, selected = item
+        selected_class = " selected" if selected else ""
+        col.markdown(
+            f'<div class="kpi-card{selected_class}" style="--accent:{accent};--accent-soft:{soft}">'
+            f'<div class="kpi-header"><span class="kpi-dot"></span><span class="kpi-label">{label}</span></div>'
+            f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>',
+            unsafe_allow_html=True,
+        )
+
+    if not db.configured():
+        st.caption("Persistência ainda não conectada neste deployment. Configure a chave do Supabase em Configurações.")
+
+    st.markdown('<div class="section-title" style="margin-top:1.65rem!important;">Consulta de documentos</div>', unsafe_allow_html=True)
+    if records.empty:
+        st.caption("Os documentos processados passarão a aparecer nesta tabela.")
+    else:
+        f1, f2, f3, f4 = st.columns(4)
+        ref_date = pd.to_datetime(records.get("processado_em"), errors="coerce").dt.date if "processado_em" in records.columns else pd.Series([date.today()] * len(records))
+        min_d = min([d for d in ref_date.dropna().tolist()] or [date.today()])
+        max_d = max([d for d in ref_date.dropna().tolist()] or [date.today()])
+        start_date = f1.date_input("De", value=min_d)
+        end_date = f2.date_input("Até", value=max_d)
+        natures = sorted(records.get("natureza", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
+        nature_filter = f3.multiselect("Natureza", natures, default=natures)
+        suppliers = sorted(records.get("fornecedor_padrao", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
+        supplier_filter = f4.multiselect("Fornecedor", suppliers)
+
+        view = records.copy()
+        mask_date = (ref_date >= start_date) & (ref_date <= end_date)
+        view = view[mask_date]
+        if nature_filter and "natureza" in view.columns:
+            view = view[view["natureza"].isin(nature_filter)]
+        if supplier_filter and "fornecedor_padrao" in view.columns:
+            view = view[view["fornecedor_padrao"].isin(supplier_filter)]
+        priority_only = st.checkbox("Exibir somente prioridade MRP")
+        if priority_only and "prioridade_mrp" in view.columns:
+            view = view[view["prioridade_mrp"].fillna(False).astype(bool)]
+
+        display_cols = [x for x in [
+            "id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza",
+            "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp",
+            "status", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
+        ] if x in view.columns]
+        table = view[display_cols].copy().reset_index(drop=True)
+
+        if "id" in table.columns:
+            table.insert(0, "Selecionar", False)
+            edited = st.data_editor(
+                table,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[x for x in table.columns if x != "Selecionar"],
+                key="dashboard_editor",
+            )
+            selected_ids = edited.loc[
+                edited["Selecionar"].fillna(False).astype(bool), "id"
+            ].astype(str).tolist()
+            if st.button("Marcar selecionadas como enviadas", type="primary", disabled=not selected_ids):
+                try:
+                    result = db.mark_sent(selected_ids, st.session_state.operator)
+                    st.success(f"{int(result.get('atualizados', 0))} registro(s) marcados como enviados.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Falha ao atualizar envio: {exc}")
+        else:
+            st.dataframe(table, use_container_width=True, hide_index=True)
+
+        export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
+        st.download_button(
+            "Exportar consulta para Excel",
+            excel_bytes(export_view, "Controle NFs"),
+            file_name=f"controle_nfs_{now_local():%d%m%Y}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+
+
+elif page == "Pendências":
+    st.markdown('<div class="section-title">Pendências operacionais</div>', unsafe_allow_html=True)
+    st.caption(
+        "Centraliza a conferência de pré-notas, o impacto no MRP e o processamento dos PDFs em um único fluxo operacional."
+    )
+
+    pending_records = current_process_records_for_tests()
+
+    pre_base = st.session_state.pre_notes.copy()
+    processed_keys = set()
+    if not pending_records.empty:
+        for _, prow in pending_records.iterrows():
+            key = pre_note_key(prow.get("numero_nf"), prow.get("cnpj_fornecedor"))
+            if key:
+                processed_keys.add(key)
+
+    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
+        pre_base["chave_validacao"] = pre_base.apply(
+            lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")), axis=1
+        )
+        pending_pre = pre_base[~pre_base["chave_validacao"].isin(processed_keys)].copy()
+    else:
+        pending_pre = pd.DataFrame()
+
+    pre_keys = set()
+    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
+        pre_keys = set(pre_base["chave_validacao"].dropna().astype(str).tolist())
+
+    pdf_without_pre = pd.DataFrame()
+    if not pending_records.empty:
+        temp = pending_records.copy()
+        temp["chave_validacao"] = temp.apply(
+            lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj_fornecedor")), axis=1
+        )
+        pdf_without_pre = temp[
+            temp["chave_validacao"].ne("") & ~temp["chave_validacao"].isin(pre_keys)
+        ].copy()
+
+    mrp_summary = st.session_state.get("mrp_priority_summary")
+    mrp_count = int(mrp_summary["numero_nf"].nunique()) if isinstance(mrp_summary, pd.DataFrame) and not mrp_summary.empty else 0
+    reviewing = 0
+    if isinstance(st.session_state.analysis, pd.DataFrame) and not st.session_state.analysis.empty:
+        reviewing = int(st.session_state.analysis.get("status", pd.Series(dtype=str)).eq("REVISAR").sum())
+
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Pré-notas pendentes", len(pending_pre))
+    p2.metric("PDFs sem pré-nota", len(pdf_without_pre))
+    p3.metric("NFs impacto MRP", mrp_count)
+    p4.metric("Em revisão", reviewing)
+
+    pend_pre_tab, pend_mrp_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP", "Processamento de arquivos"])
+
+    with pend_pre_tab:
+        if pre_base.empty:
+            st.info("A base de pré-notas ainda não foi carregada. Use Configurações > Alimentação > Validação Pré-notas.")
+        elif pending_pre.empty:
+            st.success("Nenhuma pré-nota pendente de documento na base atual.")
+        else:
+            st.warning(f"{len(pending_pre)} pré-nota(s) ainda não possuem PDF processado correspondente por NF + CNPJ.")
+            if "data_pre_nota" in pending_pre.columns:
+                groups = (
+                    pending_pre.groupby("data_pre_nota", dropna=False)
+                    .size()
+                    .reset_index(name="pendentes")
+                    .sort_values("data_pre_nota", ascending=False, na_position="last")
+                )
+                st.dataframe(
+                    groups,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "data_pre_nota": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "pendentes": "Pendentes",
+                    },
+                )
+            show_cols = [x for x in ["data_pre_nota", "numero_nf", "cnpj", "status"] if x in pending_pre.columns]
+            st.dataframe(pending_pre[show_cols], use_container_width=True, hide_index=True)
+
+        if not pdf_without_pre.empty:
+            with st.expander(f"PDFs processados sem pré-nota correspondente ({len(pdf_without_pre)})"):
+                cols = [x for x in ["numero_nf", "cnpj_fornecedor", "fornecedor_padrao", "arquivo_final", "processado_em"] if x in pdf_without_pre.columns]
+                st.dataframe(pdf_without_pre[cols], use_container_width=True, hide_index=True)
+
+    with pend_mrp_tab:
+        render_mrp_priority_feed("pendencias_mrp")
+
+    with pend_process_tab:
+        render_file_processing()
 
 
 elif page == "Configurações":
