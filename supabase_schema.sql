@@ -288,3 +288,127 @@ grant execute on function public.nf_substituir_fornecedores(jsonb, text, integer
 grant execute on function public.nf_registrar_processamentos(jsonb) to anon, authenticated;
 grant execute on function public.nf_marcar_enviados(text[], text) to anon, authenticated;
 grant execute on function public.nf_substituir_pre_notas(jsonb, text, integer) to anon, authenticated;
+
+
+-- EVOLUCAO V2 - VALIDACOES POR CNPJ E METADADOS DE FORNECEDORES
+alter table public.nf_pre_notas_atual
+  add column if not exists cnpj text not null default '';
+
+alter table public.nf_pre_notas_atual
+  drop constraint if exists nf_pre_notas_atual_numero_nf_key;
+
+create unique index if not exists nf_pre_notas_nf_cnpj_uidx
+  on public.nf_pre_notas_atual(numero_nf, cnpj);
+
+create index if not exists nf_pre_notas_cnpj_idx
+  on public.nf_pre_notas_atual(cnpj);
+
+alter table public.nf_fornecedores
+  add column if not exists codigo text,
+  add column if not exists loja text,
+  add column if not exists nome_fantasia text,
+  add column if not exists tipo text;
+
+create or replace function public.nf_substituir_pre_notas(
+  p_rows jsonb,
+  p_arquivo_nome text,
+  p_total_linhas integer
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'p_rows deve ser um array JSON';
+  end if;
+
+  delete from public.nf_pre_notas_atual;
+
+  insert into public.nf_pre_notas_atual(
+    numero_nf, cnpj, status, data_pre_nota, natureza, origem_arquivo, atualizado_em
+  )
+  select
+    trim(coalesce(x->>'numero_nf','')),
+    regexp_replace(coalesce(x->>'cnpj',''), '\D', '', 'g'),
+    nullif(trim(coalesce(x->>'status','')), ''),
+    nullif(x->>'data_pre_nota','')::date,
+    nullif(trim(coalesce(x->>'natureza','')), ''),
+    coalesce(p_arquivo_nome, 'relatorio'),
+    now()
+  from jsonb_array_elements(p_rows) x
+  where trim(coalesce(x->>'numero_nf','')) <> ''
+    and regexp_replace(coalesce(x->>'cnpj',''), '\D', '', 'g') <> ''
+  on conflict (numero_nf, cnpj) do update
+    set status = excluded.status,
+        data_pre_nota = excluded.data_pre_nota,
+        natureza = excluded.natureza,
+        origem_arquivo = excluded.origem_arquivo,
+        atualizado_em = now();
+
+  get diagnostics v_count = row_count;
+
+  insert into public.nf_pre_nota_importacoes(arquivo_nome, total_linhas)
+  values (coalesce(p_arquivo_nome, 'relatorio'), coalesce(p_total_linhas, v_count));
+
+  return jsonb_build_object('ok', true, 'registros', v_count);
+end;
+$$;
+
+create or replace function public.nf_substituir_fornecedores(
+  p_rows jsonb,
+  p_arquivo_nome text,
+  p_total_linhas integer,
+  p_validos integer,
+  p_invalidos integer,
+  p_duplicados integer
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'p_rows deve ser um array JSON';
+  end if;
+
+  delete from public.nf_fornecedores;
+
+  insert into public.nf_fornecedores(
+    cnpj, nome_padrao, aliases, ativo, codigo, loja, nome_fantasia, tipo, criado_em, atualizado_em
+  )
+  select
+    regexp_replace(coalesce(x->>'cnpj',''), '\D', '', 'g'),
+    trim(coalesce(x->>'nome_padrao','')),
+    trim(coalesce(x->>'aliases','')),
+    coalesce((x->>'ativo')::boolean, true),
+    nullif(trim(coalesce(x->>'codigo','')), ''),
+    nullif(trim(coalesce(x->>'loja','')), ''),
+    nullif(trim(coalesce(x->>'nome_fantasia','')), ''),
+    nullif(trim(coalesce(x->>'tipo','')), ''),
+    now(), now()
+  from jsonb_array_elements(p_rows) x
+  where length(regexp_replace(coalesce(x->>'cnpj',''), '\D', '', 'g')) = 14
+    and trim(coalesce(x->>'nome_padrao','')) <> '';
+
+  get diagnostics v_count = row_count;
+
+  insert into public.nf_fornecedor_importacoes(
+    arquivo_nome, total_linhas, registros_validos, registros_invalidos, duplicados
+  ) values (
+    coalesce(p_arquivo_nome, 'fornecedores'),
+    coalesce(p_total_linhas, 0),
+    coalesce(p_validos, v_count),
+    coalesce(p_invalidos, 0),
+    coalesce(p_duplicados, 0)
+  );
+
+  return jsonb_build_object('ok', true, 'fornecedores', v_count);
+end;
+$$;
