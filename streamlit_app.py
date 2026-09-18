@@ -2791,22 +2791,7 @@ elif page == "Pendências":
     pending_records = current_process_records_for_tests()
 
     pre_base = st.session_state.pre_notes.copy()
-    processed_keys = set()
-    if not pending_records.empty:
-        for _, prow in pending_records.iterrows():
-            key = pre_note_key(prow.get("numero_nf"), prow.get("cnpj_fornecedor"))
-            if key:
-                processed_keys.add(key)
-
-    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
-        pre_base["chave_validacao"] = pre_base.apply(
-            lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")), axis=1
-        )
-        pending_pre = pre_base[
-            ~pre_base["chave_validacao"].isin(processed_keys)
-        ].copy()
-    else:
-        pending_pre = pd.DataFrame()
+    pending_pre = current_pending_pre_notes()
 
     pre_keys = set()
     if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
