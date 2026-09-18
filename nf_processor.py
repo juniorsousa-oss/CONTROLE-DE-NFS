@@ -474,6 +474,61 @@ class NFResult:
         return asdict(self)
 
 
+def inspect_nf_pdf_identity(
+    file_name: str,
+    pdf_bytes: bytes,
+    suppliers: pd.DataFrame,
+) -> dict:
+    """Leitura leve usada somente no pré-filtro do lote.
+
+    Evita OCR de página inteira e não tenta natureza/vencimento. O processamento
+    completo só acontece depois que o documento é confirmado contra a lista de
+    pré-notas pendentes.
+    """
+    try:
+        text, reading_method = extract_pdf_text(pdf_bytes, ocr_fallback=False)
+    except Exception as exc:
+        return {
+            "arquivo": file_name,
+            "numero_nf": "",
+            "serie": "",
+            "chave_nfe": "",
+            "cnpj_fornecedor": "",
+            "fornecedor_lido": "",
+            "fornecedor_padrao": "",
+            "metodo_fornecedor": "",
+            "confianca_fornecedor": 0,
+            "leitura": "ERRO",
+            "erro": str(exc),
+        }
+
+    key = find_access_key(text)
+    key_info = parse_access_key(key)
+    numero = key_info.get("numero") or extract_nf_number(text)
+    serie = key_info.get("serie") or extract_series(text)
+    cnpj = key_info.get("cnpj") or extract_emitter_cnpj(text)
+    emitter = extract_emitter_name(text)
+
+    matched = match_supplier(cnpj, emitter, suppliers)
+    supplier = str(matched.get("nome_padrao") or "").strip()
+    method = str(matched.get("metodo") or "")
+    score = int(matched.get("score") or 0)
+
+    return {
+        "arquivo": file_name,
+        "numero_nf": numero,
+        "serie": serie,
+        "chave_nfe": key,
+        "cnpj_fornecedor": format_cnpj(cnpj),
+        "fornecedor_lido": emitter,
+        "fornecedor_padrao": supplier,
+        "metodo_fornecedor": method,
+        "confianca_fornecedor": score,
+        "leitura": reading_method,
+        "erro": "",
+    }
+
+
 def process_nf_pdf(
     file_name: str,
     pdf_bytes: bytes,
