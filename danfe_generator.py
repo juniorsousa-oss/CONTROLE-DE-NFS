@@ -1219,13 +1219,25 @@ def apply_operational_stamp(
         doc.close()
         return pdf_bytes
 
-    page = doc[0]
-    page_rect = page.rect
+    # Procura o bloco RESERVADO AO FISCO em todas as páginas. No motor
+    # dinâmico, dados adicionais podem migrar para a última página quando a
+    # tabela de produtos ocupa mais espaço.
+    target_page = None
+    target_label = None
 
-    existing_text = page.get_text("text").upper()
-    if "CONTROLE INTERNO" in existing_text and "RECEBIDO POR" in existing_text:
-        doc.close()
-        return pdf_bytes
+    for candidate in doc:
+        candidate_text = candidate.get_text("text").upper()
+        if "CONTROLE INTERNO" in candidate_text and "RECEBIDO POR" in candidate_text:
+            doc.close()
+            return pdf_bytes
+
+        hits = candidate.search_for("RESERVADO AO FISCO")
+        if hits:
+            target_page = candidate
+            target_label = hits[-1]
+
+    page = target_page if target_page is not None else doc[-1]
+    page_rect = page.rect
 
     date_text = _stamp_date(data_chegada)
     cr_text = str(cr or "").strip()
@@ -1233,10 +1245,8 @@ def apply_operational_stamp(
     nature_text = str(natureza or "").strip().upper()
     receiver_text = str(recebido_por or "").strip().upper()
 
-    # Preferência: lado direito do bloco RESERVADO AO FISCO.
-    hits = page.search_for("RESERVADO AO FISCO")
-    if hits:
-        label = hits[-1]
+    if target_label is not None:
+        label = target_label
         x0 = max(label.x0 + 2, page_rect.width * 0.565)
         y0 = label.y1 + 7
     else:
