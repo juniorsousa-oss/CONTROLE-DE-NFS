@@ -965,10 +965,11 @@ def _build_mrp_impact(
         empty_detail = pd.DataFrame(columns=[
             "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
             "produto", "descricao", "prioridade", "ops", "data_cm",
+            "data_nf", "fornecedor_validacao",
         ])
         empty_summary = pd.DataFrame(columns=[
-            "nf_cnpj", "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
-            "prioridade", "ops", "data_cm", "itens_impacto",
+            "data_nf", "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
+            "fornecedor_validacao", "prioridade", "ops", "data_cm", "itens_impacto",
         ])
         return empty_detail, empty_summary, {"cnpj_nao_localizado": 0}
 
@@ -988,12 +989,25 @@ def _build_mrp_impact(
     detail["prioridade"] = detail["data_cm"].notna().map({True: "ALTA", False: "BAIXA"})
     detail["ops"] = detail["ops"].fillna("").astype(str)
 
+    # O CNPJ continua disponível como dado auxiliar, mas não participa mais
+    # da chave de vínculo entre Pré-notas e Impacto MRP.
     cnpj_series, unresolved = _supplier_cnpj_lookup(detail)
     detail["cnpj"] = cnpj_series.map(digits_only)
-    detail["nf_cnpj"] = detail.apply(
+
+    detail["data_nf"] = detail.apply(
+        lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
+        axis=1,
+    )
+    detail["fornecedor_validacao"] = detail["fornecedor"].map(
+        lambda value: standard_supplier_name(value) or str(value or "").strip()
+    )
+    detail["_fornecedor_norm"] = detail["fornecedor_validacao"].map(
+        supplier_validation_name
+    )
+    detail["_grupo_vinculo"] = detail.apply(
         lambda row: (
-            f"{normalized_nf(row.get('numero_nf'))}_{digits_only(row.get('cnpj'))}"
-            if normalized_nf(row.get("numero_nf")) and digits_only(row.get("cnpj"))
+            f"{row.get('data_nf')}|{row.get('_fornecedor_norm')}"
+            if row.get("data_nf") and row.get("_fornecedor_norm")
             else ""
         ),
         axis=1,
@@ -1002,24 +1016,31 @@ def _build_mrp_impact(
     detail = detail[
         [
             "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
-            "produto", "descricao", "prioridade", "ops", "data_cm",
-            "nf_cnpj", "fornecedor_codigo", "cr", "desc_cr", "natureza", "tes",
+            "fornecedor_validacao", "produto", "descricao", "prioridade",
+            "ops", "data_cm", "data_nf", "_grupo_vinculo",
+            "fornecedor_codigo", "cr", "desc_cr", "natureza", "tes",
         ]
     ].copy()
 
     summary_rows = []
-    valid_keys = detail[detail["nf_cnpj"].ne("")].copy()
-    for key, group in valid_keys.groupby("nf_cnpj", sort=False):
+    valid_groups = detail[
+        detail["data_nf"].ne("")
+        & detail["_grupo_vinculo"].ne("")
+    ].copy()
+
+    for group_key, group in valid_groups.groupby("_grupo_vinculo", sort=False):
         high = group[group["prioridade"].eq("ALTA")].copy()
         is_high = not high.empty
         oldest_cm = high["data_cm"].dropna().min() if is_high else None
         ops = _join_unique(high["ops"].tolist()) if is_high else ""
+
         summary_rows.append({
-            "nf_cnpj": key,
+            "data_nf": group["data_nf"].iloc[0],
             "data_pre_nota": group["data_pre_nota"].dropna().min(),
             "numero_nf": group["numero_nf"].iloc[0],
             "cnpj": group["cnpj"].iloc[0],
             "fornecedor": group["fornecedor"].iloc[0],
+            "fornecedor_validacao": group["fornecedor_validacao"].iloc[0],
             "prioridade": "ALTA" if is_high else "BAIXA",
             "ops": ops,
             "data_cm": oldest_cm,
@@ -1030,15 +1051,15 @@ def _build_mrp_impact(
     if not summary.empty:
         summary["_ord"] = summary["prioridade"].map({"ALTA": 0, "BAIXA": 1}).fillna(9)
         summary = summary.sort_values(
-            ["_ord", "data_cm", "data_pre_nota", "numero_nf"],
-            ascending=[True, True, False, True],
+            ["_ord", "data_cm", "data_pre_nota", "numero_nf", "fornecedor_validacao"],
+            ascending=[True, True, False, True, True],
             na_position="last",
         ).drop(columns="_ord").reset_index(drop=True)
 
     stats = {
         "cnpj_nao_localizado": unresolved,
         "linhas_detalhe": len(detail),
-        "nfs_total": int(summary["nf_cnpj"].nunique()) if not summary.empty else 0,
+        "nfs_total": len(summary),
         "nfs_alta": int(summary["prioridade"].eq("ALTA").sum()) if not summary.empty else 0,
         "nfs_baixa": int(summary["prioridade"].eq("BAIXA").sum()) if not summary.empty else 0,
     }
