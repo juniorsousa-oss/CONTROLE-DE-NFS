@@ -178,34 +178,129 @@ def extract_emitter_name(text: str) -> str:
 
 def extract_due_dates(text: str) -> list[date]:
     normalized = strip_accents_upper(text)
-    start = next((normalized.find(a) for a in ["FATURA", "DUPLICATA", "DUPLICATAS"] if normalized.find(a) >= 0), -1)
+    start = next(
+        (
+            normalized.find(a)
+            for a in ["FATURA", "DUPLICATA", "DUPLICATAS"]
+            if normalized.find(a) >= 0
+        ),
+        -1,
+    )
+
+    scopes: list[str] = []
     if start >= 0:
-        end_positions = [normalized.find(m, start + 5) for m in ["CALCULO DO IMPOSTO", "CALCULO DO ICMS", "TRANSPORTADOR/VOLUMES"]]
-        end_positions = [p for p in end_positions if p >= 0]
+        end_positions = [
+            normalized.find(m, start + 5)
+            for m in [
+                "CALCULO DO IMPOSTO",
+                "CALCULO DO ICMS",
+                "TRANSPORTADOR/VOLUMES",
+            ]
+        ]
+        end_positions = [pos for pos in end_positions if pos >= 0]
         end = min(end_positions) if end_positions else min(len(text), start + 3200)
-        scope = text[start:end]
-    else:
-        scope = ""
+        scopes.append(text[start:end])
+
     dates: list[date] = []
-    for d, m, y in DATE_RE.findall(scope):
+    for scope in scopes:
+        for d, m, y in DATE_RE.findall(scope):
+            try:
+                dates.append(date(int(y), int(m), int(d)))
+            except ValueError:
+                pass
+
+    if dates:
+        return sorted(set(dates))
+
+    # Contingência segura: alguns DANFEs não preservam o bloco FATURA no texto,
+    # mas mantêm o rótulo VENCIMENTO/VENCTO/VCTO próximo da data.
+    labeled = re.compile(
+        r"(?:VENCIMENTO|VENCTO|VCTO|VENC\.)\s*[:\-]?\s*"
+        r"([0-3]\d)/([01]\d)/(20\d{2})",
+        flags=re.IGNORECASE,
+    )
+    for d, m, y in labeled.findall(normalized):
         try:
             dates.append(date(int(y), int(m), int(d)))
         except ValueError:
             pass
+
     return sorted(set(dates))
 
 
-def extract_internal_nature(text: str) -> str:
-    """Extrai somente quando a natureza interna está explicitamente rotulada."""
+def extract_internal_nature(
+    text: str,
+    allowed_natures: Iterable[str] | None = None,
+) -> str:
+    """Extrai a natureza interna do carimbo operacional sem confundir com Natureza da Operação."""
     normalized = strip_accents_upper(text)
-    for pattern in [
+    allowed = {
+        sanitize_filename_part(x).upper()
+        for x in (allowed_natures or [])
+        if sanitize_filename_part(x)
+    }
+
+    patterns = [
         r"NATUREZA\s+INTERNA\s*[:\-]?\s*([A-Z0-9_-]{1,12})",
         r"NAT\.?\s+INTERNA\s*[:\-]?\s*([A-Z0-9_-]{1,12})",
-    ]:
-        match = re.search(pattern, normalized)
-        if match:
-            return sanitize_filename_part(match.group(1)).upper()
+        # Carimbo TOTVS observado nos documentos: "NATUREZA: MP".
+        # O ":" é obrigatório nesta forma para não capturar "NATUREZA DA OPERAÇÃO".
+        r"\bNATUREZA\s*[:\-]\s*([A-Z0-9_-]{1,12})\b",
+    ]
+
+    for pattern in patterns:
+        for match in re.finditer(pattern, normalized):
+            value = sanitize_filename_part(match.group(1)).upper()
+            if not value:
+                continue
+            if allowed and value not in allowed:
+                continue
+            return value
     return ""
+
+
+def extract_stamp_text(pdf_bytes: bytes) -> str:
+    """OCR leve somente na faixa inferior das páginas, onde fica o carimbo operacional."""
+    if pytesseract is None or Image is None:
+        return ""
+
+    pieces: list[str] = []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        for page in doc:
+            rect = page.rect
+            # Carimbo costuma estar na metade inferior do DANFE. Recortar reduz muito
+            # o custo em comparação a OCR da página inteira.
+            clip = fitz.Rect(
+                rect.x0,
+                rect.y0 + rect.height * 0.48,
+                rect.x1,
+                rect.y1,
+            )
+            pix = page.get_pixmap(
+                matrix=fitz.Matrix(1.65, 1.65),
+                clip=clip,
+                alpha=False,
+            )
+            image = Image.open(io.BytesIO(pix.tobytes("png")))
+            try:
+                stamp = pytesseract.image_to_string(
+                    image,
+                    lang="por",
+                    config="--psm 6",
+                )
+            except Exception:
+                stamp = pytesseract.image_to_string(
+                    image,
+                    config="--psm 6",
+                )
+            if stamp and stamp.strip():
+                pieces.append(stamp.strip())
+        doc.close()
+    except Exception:
+        return ""
+
+    return "\n".join(pieces)
 
 
 def supplier_dataframe(raw: pd.DataFrame | Iterable[dict] | None) -> pd.DataFrame:
@@ -317,7 +412,13 @@ class NFResult:
         return asdict(self)
 
 
-def process_nf_pdf(file_name: str, pdf_bytes: bytes, suppliers: pd.DataFrame, ocr_fallback: bool = True) -> NFResult:
+def process_nf_pdf(
+    file_name: str,
+    pdf_bytes: bytes,
+    suppliers: pd.DataFrame,
+    ocr_fallback: bool = True,
+    allowed_natures: Iterable[str] | None = None,
+) -> NFResult:
     file_id = hashlib.sha256(pdf_bytes).hexdigest()[:16]
     try:
         text, reading_method = extract_pdf_text(pdf_bytes, ocr_fallback=ocr_fallback)
@@ -332,7 +433,13 @@ def process_nf_pdf(file_name: str, pdf_bytes: bytes, suppliers: pd.DataFrame, oc
     emitter = extract_emitter_name(text)
     due_dates = extract_due_dates(text)
     due = due_dates[0] if due_dates else None
-    nature = extract_internal_nature(text)
+    nature = extract_internal_nature(text, allowed_natures)
+    nature_from_stamp_ocr = False
+    if not nature:
+        stamp_text = extract_stamp_text(pdf_bytes)
+        nature = extract_internal_nature(stamp_text, allowed_natures)
+        nature_from_stamp_ocr = bool(nature)
+
     matched = match_supplier(cnpj, emitter, suppliers)
     supplier = str(matched.get("nome_padrao") or "").strip()
     supplier_method = str(matched.get("metodo") or "")
@@ -367,7 +474,9 @@ def process_nf_pdf(file_name: str, pdf_bytes: bytes, suppliers: pd.DataFrame, oc
         notes.append(f"Fornecedor vinculado por similaridade de nome ({supplier_score}%).")
     else:
         notes.append("Fornecedor não encontrado na base; necessário validar na conferência.")
-    if not nature:
+    if nature_from_stamp_ocr:
+        notes.append("Natureza interna identificada pelo OCR do carimbo operacional.")
+    elif not nature:
         notes.append("Natureza interna não identificada automaticamente; informar na conferência antes do ZIP.")
 
     score = min(100, int(score))
