@@ -205,31 +205,50 @@ def _textbox(page, rect, value, size=6.0, bold=False, align=0, color=BLACK, line
 
 
 def _label(page, x, y, value):
-    _text(page, x, y, value, 4.85, True, MID)
+    _text(page, x, y, str(value or "").upper(), 5.0, True, BLACK)
 
 
-def _cell(page, rect, label, value="", value_size=6.25, bold=False, align="left", fill=None):
+def _field_label(page, x, y, value):
+    _text(page, x, y, str(value or "").upper(), 6.0, True, BLACK)
+
+
+def _cell(page, rect, label, value="", value_size=8.0, bold=False, align="left", fill=None):
     x0, y0, x1, y1 = rect
     _rect(page, rect, fill=fill)
-    _label(page, x0 + 2.1, y0 + 6.7, label)
+    _field_label(page, x0 + 2.1, y0 + 7.0, label)
     if value not in (None, ""):
-        baseline = y1 - 3.5
-        _fit_text(
-            page,
-            x0 + 2.1,
-            baseline,
-            x1 - 2.1,
-            value,
-            preferred=value_size,
-            minimum=4.3,
-            bold=bold,
-            align=align,
+        align_code = {"left": 0, "center": 1, "right": 2}.get(align, 0)
+        value_top = y0 + 9.0
+        value_bottom = y1 - 1.8
+        # Mantém o conteúdo legível e permite quebra em duas linhas nos
+        # campos estreitos, sem reduzir indefinidamente a fonte.
+        size = max(7.0, float(value_size or 8.0))
+        result = page.insert_textbox(
+            fitz.Rect(x0 + 2.1, value_top, x1 - 2.1, value_bottom),
+            str(value),
+            fontsize=size,
+            fontname=FONT_BOLD if bold else FONT,
+            color=BLACK,
+            align=align_code,
+            lineheight=1.0,
+            overlay=True,
         )
+        if result < 0 and size > 7.0:
+            page.insert_textbox(
+                fitz.Rect(x0 + 2.1, value_top, x1 - 2.1, value_bottom),
+                str(value),
+                fontsize=7.0,
+                fontname=FONT_BOLD if bold else FONT,
+                color=BLACK,
+                align=align_code,
+                lineheight=1.0,
+                overlay=True,
+            )
 
 
 def _section_title(page, y, title):
-    _text(page, MARGIN + 1, y + 8, title, 5.0, True, DARK)
-    _line(page, MARGIN, y + 10, RIGHT, y + 10, 0.55, DARK)
+    _text(page, MARGIN + 1, y + 8, str(title or "").upper(), 5.2, True, BLACK)
+    _line(page, MARGIN, y + 10, RIGHT, y + 10, 0.55, BLACK)
 
 
 def _code128_a_value(char: str) -> int:
@@ -993,7 +1012,8 @@ def _draw_additional(page, data, y, lines, max_height=None):
 def _first_static_end(data):
     # Deve espelhar as alturas usadas no desenho.
     y = MARGIN
-    y += 34 + 4
+    # Canhoto oficial (48pt) + faixa adicional SETTA (24pt) + espaçamentos.
+    y += 48 + 2 + 24 + 4
     y += 88
     y += 21 * 2 + 4
     y += 13 + 20 * 3 + 4
@@ -1008,7 +1028,7 @@ def _paginate(data):
     heights = [_row_height(item) for item in items]
 
     first_start = _first_static_end(data) + 13 + _product_header_height()
-    cont_start = MARGIN + _compact_header_height() + 6 + 13 + _product_header_height()
+    cont_start = MARGIN + 88 + (21 * 2 + 4) + 13 + _product_header_height()
 
     additional_lines = _additional_lines(data)
     # O bloco inferior da 1ª página comporta aproximadamente 17 linhas no
@@ -1060,7 +1080,7 @@ def _paginate(data):
     if extra_additional:
         per_page_lines = max(
             25,
-            int((BOTTOM - (MARGIN + _compact_header_height() + 45)) / 5.8),
+            int((BOTTOM - (MARGIN + 88 + (21 * 2 + 4) + 45)) / 6.2),
         )
         for pos in range(0, len(extra_additional), per_page_lines):
             plans.append(
@@ -1077,6 +1097,7 @@ def _paginate(data):
 
 
 def render_danfe_pdf(data: dict) -> bytes:
+    _validate_payload(data)
     plans = _paginate(data)
     total_pages = len(plans)
     doc = fitz.open()
@@ -1112,13 +1133,18 @@ def render_danfe_pdf(data: dict) -> bytes:
 
         else:
             y = MARGIN
-            y = _draw_compact_header(
+            # MOC: folhas adicionais repetem no topo, na mesma disposição e
+            # tamanho, os dados de identificação do emitente, DANFE, número,
+            # série, operação, folhas, código de barras, natureza, chave, IE,
+            # IEST e CNPJ.
+            y = _draw_main_header(
                 page,
                 data,
                 y,
                 page_index,
                 total_pages,
             )
+            y = _draw_identification(page, data, y)
 
             if plan.additional_only:
                 lines = plan.additional_lines or []
