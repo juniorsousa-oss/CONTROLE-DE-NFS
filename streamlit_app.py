@@ -2290,6 +2290,30 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
     row["pre_nota_fornecedor"] = pre_supplier_name(pre_row)
     row["pre_nota_cnpj"] = digits_only(pre_row.get("cnpj"))
     row["leitura"] = source_mode
+
+    # Natureza, CR e Desc. CR vêm da própria carga STSUP01 usada no Impacto MRP.
+    # Esses são exatamente os campos que antes compunham o carimbo manual.
+    operational = operational_fields_from_nf_load(pre_row, row)
+    if operational.get("natureza"):
+        row["natureza"] = str(operational["natureza"]).strip().upper()
+        row["natureza_origem"] = str(operational.get("source") or "CARGA NF")
+    row["cr"] = str(operational.get("cr") or "").strip()
+    row["desc_cr"] = str(operational.get("desc_cr") or "").strip()
+
+    # O PDF final — gerado do XML ou recebido originalmente — sai com o
+    # carimbo operacional azul dentro de RESERVADO AO FISCO.
+    output_bytes = apply_operational_stamp(
+        output_bytes,
+        data_chegada=row["pre_nota_data"],
+        cr=row["cr"],
+        desc_cr=row["desc_cr"],
+        natureza=row.get("natureza") or "",
+        recebido_por=st.session_state.operator,
+    )
+    notes.append(
+        "Carimbo operacional aplicado automaticamente com Data de chegada, "
+        "CR, Desc. CR, Natureza e Recebido por."
+    )
     row["observacao"] = " ".join(
         value
         for value in [
