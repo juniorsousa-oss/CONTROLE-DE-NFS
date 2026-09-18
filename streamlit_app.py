@@ -102,6 +102,7 @@ def init():
         "priority_nf_numbers": set(),
         "priority_nf_keys": set(),
         "priority_nf_doc_keys": set(),
+        "priority_date_nf_keys": set(),
         "mrp_priority_summary": pd.DataFrame(),
         "mrp_impact_detail": pd.DataFrame(),
         "mrp_import_preview_detail": pd.DataFrame(),
@@ -1201,10 +1202,13 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     else pd.DataFrame()
                 )
 
-                st.session_state.priority_nf_doc_keys = set(
-                    high.get("nf_cnpj", pd.Series(dtype=str)).dropna().astype(str).tolist()
+                # A prioridade oficial passa a ser vinculada por DATA + NF.
+                # O nome do fornecedor é usado como validação da correspondência,
+                # não o CNPJ.
+                st.session_state.priority_date_nf_keys = set(
+                    high.get("data_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
                 )
-                # Limpa a chave legada por fornecedor: a regra oficial passa a ser NF_CNPJ.
+                st.session_state.priority_nf_doc_keys = set()
                 st.session_state.priority_nf_keys = set()
                 st.session_state.priority_nf_numbers = set(
                     high.get("numero_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
@@ -1221,7 +1225,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     (
                         f"Carga aplicada: {len(summary)} NF(s) avaliadas, "
                         f"{len(high)} em prioridade ALTA. "
-                        "A correlação com pré-notas usa NF_CNPJ."
+                        "A correlação com pré-notas usa Data + NF, com validação pelo nome do fornecedor."
                     ),
                 )
                 st.rerun()
@@ -1260,29 +1264,48 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 "ops": st.column_config.TextColumn("OPs", width="large"),
                 "data_cm": st.column_config.DateColumn("Data CM", format="DD/MM/YYYY"),
                 "itens_impacto": "Itens impacto",
-                "nf_cnpj": "NF_CNPJ",
+                "data_nf": "DATA + NF",
+                "fornecedor_validacao": st.column_config.TextColumn(
+                    "Fornecedor validado",
+                    width="large",
+                ),
             },
         )
 
         pre = st.session_state.pre_notes.copy()
         if isinstance(pre, pd.DataFrame) and not pre.empty:
-            pre_keys = set(
-                pre.apply(
-                    lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")),
-                    axis=1,
-                )
-            )
-            missing_pre = summary[
-                summary["nf_cnpj"].ne("")
-                & ~summary["nf_cnpj"].isin(pre_keys)
+            comparison_rows = []
+            for idx, row in summary.iterrows():
+                match = match_mrp_to_pre_note(row, pre)
+                comparison_rows.append({
+                    "_idx": idx,
+                    "situacao_vinculo": match["situacao"],
+                    "score_fornecedor": match["score_fornecedor"],
+                    "correspondente": bool(match["matched"]),
+                })
+
+            comparison = pd.DataFrame(comparison_rows).set_index("_idx")
+            checked_summary = summary.join(comparison)
+            missing_pre = checked_summary[
+                ~checked_summary["correspondente"].fillna(False).astype(bool)
             ].copy()
 
             if not missing_pre.empty:
                 st.warning(
-                    f"{len(missing_pre)} NF(s) do relatório de impacto MRP não estão na lista de pré-notas pendentes."
+                    f"{len(missing_pre)} NF(s) do Impacto MRP não tiveram correspondência segura "
+                    "na lista de pré-notas. O confronto usa Data + NF e valida o nome do fornecedor."
                 )
                 add_view = missing_pre[
-                    ["data_pre_nota", "numero_nf", "cnpj", "fornecedor", "prioridade", "data_cm"]
+                    [
+                        "data_pre_nota",
+                        "numero_nf",
+                        "cnpj",
+                        "fornecedor",
+                        "prioridade",
+                        "data_cm",
+                        "situacao_vinculo",
+                        "score_fornecedor",
+                    ]
                 ].copy()
                 add_view.insert(0, "Adicionar", False)
 
@@ -1300,6 +1323,14 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                         "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
                         "prioridade": "Prioridade",
                         "data_cm": st.column_config.DateColumn("Data CM", format="DD/MM/YYYY"),
+                        "situacao_vinculo": st.column_config.TextColumn(
+                            "Situação do vínculo",
+                            width="large",
+                        ),
+                        "score_fornecedor": st.column_config.NumberColumn(
+                            "Aderência fornecedor",
+                            format="%d%%",
+                        ),
                     },
                 )
 
@@ -1314,21 +1345,36 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     additions = []
                     for _, row in selected.iterrows():
                         additions.append({
-                            "data_pre_nota": row["data_pre_nota"],
+                            "data_pre_nota": normalized_business_date(row["data_pre_nota"]),
                             "numero_nf": normalized_nf(row["numero_nf"]),
                             "cnpj": digits_only(row["cnpj"]),
+                            "fornecedor": str(row["fornecedor"] or "").strip(),
                             "status": "Pré-nota lançada",
                             "origem": "Impacto MRP / Protheus",
                         })
+
                     updated = pd.concat(
                         [st.session_state.pre_notes, pd.DataFrame(additions)],
                         ignore_index=True,
                         sort=False,
                     )
-                    updated = updated.drop_duplicates(
-                        ["numero_nf", "cnpj"],
-                        keep="last",
-                    ).reset_index(drop=True)
+                    updated["_data_nf"] = updated.apply(
+                        lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
+                        axis=1,
+                    )
+                    updated["_supplier_norm"] = updated.apply(
+                        lambda row: supplier_validation_name(pre_supplier_name(row)),
+                        axis=1,
+                    )
+                    updated = (
+                        updated.sort_index()
+                        .drop_duplicates(
+                            ["_data_nf", "_supplier_norm"],
+                            keep="last",
+                        )
+                        .drop(columns=["_data_nf", "_supplier_norm"], errors="ignore")
+                        .reset_index(drop=True)
+                    )
                     st.session_state.pre_notes = updated
                     set_flash(
                         "_flash_mrp",
