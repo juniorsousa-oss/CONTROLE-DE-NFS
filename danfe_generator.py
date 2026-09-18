@@ -1087,14 +1087,31 @@ def _draw_issqn_and_additional(page: fitz.Page, data: dict):
     for idx in range(4):
         _draw_rect(page, columns[idx], 654.54, columns[idx + 1], 675.77)
         _label(page, columns[idx] + 1.84, 662.74, labels[idx])
-        if values[idx] and float(values[idx] or 0) != 0:
-            _draw_text(
-                page,
-                columns[idx] + 1.84,
-                672.0,
-                _format_number(values[idx]),
-                6.321,
-            )
+
+        if idx == 0:
+            if values[idx]:
+                _draw_fit_text(
+                    page,
+                    columns[idx] + 1.84,
+                    672.0,
+                    columns[idx + 1] - 1.84,
+                    values[idx],
+                    6.321,
+                    4.5,
+                )
+        elif values[idx]:
+            try:
+                numeric = float(values[idx] or 0)
+            except Exception:
+                numeric = 0.0
+            if numeric != 0:
+                _draw_text(
+                    page,
+                    columns[idx] + 1.84,
+                    672.0,
+                    _format_number(values[idx]),
+                    6.321,
+                )
 
     _label(page, 20.27, 684.33, "DADOS ADICIONAIS")
     _draw_rect(page, 18.43, 685.00, 342.43, 817.93)
