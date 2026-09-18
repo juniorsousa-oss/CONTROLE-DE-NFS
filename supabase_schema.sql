@@ -412,3 +412,331 @@ begin
   return jsonb_build_object('ok', true, 'fornecedores', v_count);
 end;
 $$;
+
+
+-- EVOLUCAO V3 - FLUXO INTEGRADO PRE-NOTAS / MRP / REALIZADOS
+-- Mantém o arquivo versionado alinhado à estrutura utilizada pelo app em produção.
+
+alter table public.nf_pre_notas_atual
+  add column if not exists fornecedor text,
+  add column if not exists recebedor text;
+
+alter table public.nf_processamentos
+  add column if not exists cr text,
+  add column if not exists desc_cr text,
+  add column if not exists recebedor text,
+  add column if not exists origem_dados text,
+  add column if not exists data_chegada date,
+  add column if not exists carimbo_aplicado boolean not null default false;
+
+create table if not exists public.nf_mrp_carga_atual (
+  id text primary key default 'atual',
+  detalhe jsonb not null default '[]'::jsonb,
+  resumo jsonb not null default '[]'::jsonb,
+  arquivos jsonb not null default '[]'::jsonb,
+  stats jsonb not null default '{}'::jsonb,
+  atualizado_em timestamptz not null default now()
+);
+
+create table if not exists public.nf_mrp_importacoes (
+  id uuid primary key default gen_random_uuid(),
+  arquivos jsonb not null default '[]'::jsonb,
+  total_detalhe integer not null default 0,
+  total_resumo integer not null default 0,
+  stats jsonb not null default '{}'::jsonb,
+  importado_em timestamptz not null default now()
+);
+
+create table if not exists public.nf_usuarios (
+  id uuid primary key default gen_random_uuid(),
+  nome text not null,
+  email text,
+  ativo boolean not null default true,
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+
+alter table public.nf_mrp_carga_atual enable row level security;
+alter table public.nf_mrp_importacoes enable row level security;
+alter table public.nf_usuarios enable row level security;
+
+drop policy if exists nf_mrp_carga_read on public.nf_mrp_carga_atual;
+create policy nf_mrp_carga_read
+  on public.nf_mrp_carga_atual
+  for select to anon, authenticated
+  using (true);
+
+drop policy if exists nf_mrp_importacoes_read on public.nf_mrp_importacoes;
+create policy nf_mrp_importacoes_read
+  on public.nf_mrp_importacoes
+  for select to anon, authenticated
+  using (true);
+
+drop policy if exists nf_usuarios_read on public.nf_usuarios;
+create policy nf_usuarios_read
+  on public.nf_usuarios
+  for select to anon, authenticated
+  using (true);
+
+-- A Data API precisa de privilégio SQL além da policy de RLS.
+grant select on public.nf_fornecedores,
+  public.nf_fornecedor_importacoes,
+  public.nf_processamentos,
+  public.nf_configuracoes,
+  public.nf_pre_notas_atual,
+  public.nf_pre_nota_importacoes,
+  public.nf_mrp_carga_atual,
+  public.nf_mrp_importacoes,
+  public.nf_usuarios
+to anon, authenticated;
+
+create or replace function public.nf_registrar_processamentos(p_rows jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'p_rows deve ser um array JSON';
+  end if;
+
+  insert into public.nf_processamentos(
+    lote_id, arquivo_original, arquivo_final, tipo_documento, chave_nfe,
+    numero_nf, serie, cnpj_fornecedor, fornecedor_padrao, vencimento,
+    natureza, prioridade_mrp, pre_nota_status, pre_nota_em, metodo_fornecedor,
+    confianca, status, operador, recebido_em, pdf_criado_em, processado_em,
+    cr, desc_cr, recebedor, origem_dados, data_chegada, carimbo_aplicado
+  )
+  select
+    coalesce(x->>'lote_id',''),
+    coalesce(x->>'arquivo_original',''),
+    coalesce(x->>'arquivo_final',''),
+    coalesce(x->>'tipo_documento','NF-e'),
+    nullif(x->>'chave_nfe',''),
+    nullif(x->>'numero_nf',''),
+    nullif(x->>'serie',''),
+    nullif(x->>'cnpj_fornecedor',''),
+    nullif(x->>'fornecedor_padrao',''),
+    nullif(x->>'vencimento','')::date,
+    nullif(x->>'natureza',''),
+    coalesce((x->>'prioridade_mrp')::boolean, false),
+    nullif(x->>'pre_nota_status',''),
+    nullif(x->>'pre_nota_em','')::date,
+    nullif(x->>'metodo_fornecedor',''),
+    nullif(x->>'confianca','')::integer,
+    coalesce(nullif(x->>'status',''), 'REALIZADO'),
+    nullif(x->>'operador',''),
+    coalesce(nullif(x->>'recebido_em','')::timestamptz, now()),
+    coalesce(nullif(x->>'pdf_criado_em','')::timestamptz, now()),
+    coalesce(nullif(x->>'processado_em','')::timestamptz, now()),
+    nullif(x->>'cr',''),
+    nullif(x->>'desc_cr',''),
+    nullif(x->>'recebedor',''),
+    nullif(x->>'origem_dados',''),
+    nullif(x->>'data_chegada','')::date,
+    coalesce((x->>'carimbo_aplicado')::boolean, false)
+  from jsonb_array_elements(p_rows) x;
+
+  get diagnostics v_count = row_count;
+  return jsonb_build_object('ok', true, 'inseridos', v_count);
+end;
+$$;
+
+create or replace function public.nf_substituir_pre_notas(
+  p_rows jsonb,
+  p_arquivo_nome text,
+  p_total_linhas integer
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'p_rows deve ser um array JSON';
+  end if;
+
+  delete from public.nf_pre_notas_atual where true;
+
+  insert into public.nf_pre_notas_atual(
+    numero_nf, cnpj, fornecedor, recebedor, status, data_pre_nota,
+    natureza, origem_arquivo, atualizado_em
+  )
+  select
+    trim(coalesce(x->>'numero_nf','')),
+    regexp_replace(coalesce(x->>'cnpj',''), '\D', '', 'g'),
+    nullif(trim(coalesce(x->>'fornecedor','')), ''),
+    nullif(trim(coalesce(x->>'recebedor','')), ''),
+    nullif(trim(coalesce(x->>'status','')), ''),
+    nullif(x->>'data_pre_nota','')::date,
+    nullif(trim(coalesce(x->>'natureza','')), ''),
+    coalesce(p_arquivo_nome, 'relatorio'),
+    now()
+  from jsonb_array_elements(p_rows) x
+  where trim(coalesce(x->>'numero_nf','')) <> ''
+    and regexp_replace(coalesce(x->>'cnpj',''), '\D', '', 'g') <> ''
+  on conflict (numero_nf, cnpj) do update
+    set fornecedor = excluded.fornecedor,
+        recebedor = excluded.recebedor,
+        status = excluded.status,
+        data_pre_nota = excluded.data_pre_nota,
+        natureza = excluded.natureza,
+        origem_arquivo = excluded.origem_arquivo,
+        atualizado_em = now();
+
+  get diagnostics v_count = row_count;
+
+  insert into public.nf_pre_nota_importacoes(arquivo_nome, total_linhas)
+  values (
+    coalesce(p_arquivo_nome, 'relatorio'),
+    coalesce(p_total_linhas, v_count)
+  );
+
+  return jsonb_build_object('ok', true, 'registros', v_count);
+end;
+$$;
+
+create or replace function public.nf_salvar_mrp_carga(
+  p_detalhe jsonb,
+  p_resumo jsonb,
+  p_arquivos jsonb,
+  p_stats jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_detalhe integer := 0;
+  v_resumo integer := 0;
+begin
+  if p_detalhe is null or jsonb_typeof(p_detalhe) <> 'array' then
+    raise exception 'p_detalhe deve ser um array JSON';
+  end if;
+  if p_resumo is null or jsonb_typeof(p_resumo) <> 'array' then
+    raise exception 'p_resumo deve ser um array JSON';
+  end if;
+
+  v_detalhe := jsonb_array_length(p_detalhe);
+  v_resumo := jsonb_array_length(p_resumo);
+
+  insert into public.nf_mrp_carga_atual(
+    id, detalhe, resumo, arquivos, stats, atualizado_em
+  )
+  values (
+    'atual',
+    p_detalhe,
+    p_resumo,
+    coalesce(p_arquivos, '[]'::jsonb),
+    coalesce(p_stats, '{}'::jsonb),
+    now()
+  )
+  on conflict (id) do update
+    set detalhe = excluded.detalhe,
+        resumo = excluded.resumo,
+        arquivos = excluded.arquivos,
+        stats = excluded.stats,
+        atualizado_em = now();
+
+  insert into public.nf_mrp_importacoes(
+    arquivos, total_detalhe, total_resumo, stats
+  )
+  values (
+    coalesce(p_arquivos, '[]'::jsonb),
+    v_detalhe,
+    v_resumo,
+    coalesce(p_stats, '{}'::jsonb)
+  );
+
+  return jsonb_build_object(
+    'ok', true,
+    'detalhe', v_detalhe,
+    'resumo', v_resumo
+  );
+end;
+$$;
+
+create or replace function public.nf_criar_usuario(
+  p_nome text,
+  p_email text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_id uuid;
+begin
+  if trim(coalesce(p_nome,'')) = '' then
+    raise exception 'Nome do usuário é obrigatório';
+  end if;
+
+  insert into public.nf_usuarios(nome,email,ativo,criado_em,atualizado_em)
+  values (
+    trim(p_nome),
+    nullif(trim(coalesce(p_email,'')),''),
+    true,
+    now(),
+    now()
+  )
+  returning id into v_id;
+
+  return jsonb_build_object('ok', true, 'id', v_id);
+end;
+$$;
+
+create or replace function public.nf_atualizar_usuario(
+  p_id uuid,
+  p_nome text,
+  p_email text,
+  p_ativo boolean
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.nf_usuarios
+     set nome = trim(coalesce(p_nome,nome)),
+         email = nullif(trim(coalesce(p_email,'')),''),
+         ativo = coalesce(p_ativo,ativo),
+         atualizado_em = now()
+   where id = p_id;
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+create or replace function public.nf_excluir_usuario(p_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  delete from public.nf_usuarios where id = p_id;
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+revoke all on function public.nf_registrar_processamentos(jsonb) from public;
+revoke all on function public.nf_substituir_pre_notas(jsonb, text, integer) from public;
+revoke all on function public.nf_salvar_mrp_carga(jsonb, jsonb, jsonb, jsonb) from public;
+revoke all on function public.nf_criar_usuario(text, text) from public;
+revoke all on function public.nf_atualizar_usuario(uuid, text, text, boolean) from public;
+revoke all on function public.nf_excluir_usuario(uuid) from public;
+
+grant execute on function public.nf_registrar_processamentos(jsonb) to anon, authenticated;
+grant execute on function public.nf_substituir_pre_notas(jsonb, text, integer) to anon, authenticated;
+grant execute on function public.nf_salvar_mrp_carga(jsonb, jsonb, jsonb, jsonb) to anon, authenticated;
+grant execute on function public.nf_criar_usuario(text, text) to anon, authenticated;
+grant execute on function public.nf_atualizar_usuario(uuid, text, text, boolean) to anon, authenticated;
+grant execute on function public.nf_excluir_usuario(uuid) to anon, authenticated;
