@@ -140,7 +140,7 @@ begin
     raise exception 'p_rows deve ser um array JSON';
   end if;
 
-  delete from public.nf_fornecedores;
+  delete from public.nf_fornecedores where true;
 
   insert into public.nf_fornecedores(cnpj, nome_padrao, aliases, ativo, criado_em, atualizado_em)
   select
@@ -249,7 +249,7 @@ begin
     raise exception 'p_rows deve ser um array JSON';
   end if;
 
-  delete from public.nf_pre_notas_atual;
+  delete from public.nf_pre_notas_atual where true;
 
   insert into public.nf_pre_notas_atual(numero_nf, status, data_pre_nota, natureza, origem_arquivo, atualizado_em)
   select
@@ -326,7 +326,7 @@ begin
     raise exception 'p_rows deve ser um array JSON';
   end if;
 
-  delete from public.nf_pre_notas_atual;
+  delete from public.nf_pre_notas_atual where true;
 
   insert into public.nf_pre_notas_atual(
     numero_nf, cnpj, status, data_pre_nota, natureza, origem_arquivo, atualizado_em
@@ -378,7 +378,7 @@ begin
     raise exception 'p_rows deve ser um array JSON';
   end if;
 
-  delete from public.nf_fornecedores;
+  delete from public.nf_fornecedores where true;
 
   insert into public.nf_fornecedores(
     cnpj, nome_padrao, aliases, ativo, codigo, loja, nome_fantasia, tipo, criado_em, atualizado_em
