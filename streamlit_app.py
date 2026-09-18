@@ -2300,19 +2300,11 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
     row["cr"] = str(operational.get("cr") or "").strip()
     row["desc_cr"] = str(operational.get("desc_cr") or "").strip()
 
-    # O PDF final — gerado do XML ou recebido originalmente — sai com o
-    # carimbo operacional azul dentro de RESERVADO AO FISCO.
-    output_bytes = apply_operational_stamp(
-        output_bytes,
-        data_chegada=row["pre_nota_data"],
-        cr=row["cr"],
-        desc_cr=row["desc_cr"],
-        natureza=row.get("natureza") or "",
-        recebido_por=st.session_state.operator,
-    )
+    # O carimbo é aplicado somente na geração final dos arquivos, depois
+    # das tratativas. Assim qualquer correção de Natureza/CR/Desc. CR é
+    # refletida no PDF que efetivamente sai no ZIP.
     notes.append(
-        "Carimbo operacional aplicado automaticamente com Data de chegada, "
-        "CR, Desc. CR, Natureza e Recebido por."
+        "Dados do carimbo operacional preparados a partir da carga de NFs."
     )
     row["observacao"] = " ".join(
         value
