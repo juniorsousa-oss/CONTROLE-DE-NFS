@@ -33,7 +33,7 @@ TZ = ZoneInfo("America/Sao_Paulo")
 
 # MODO DE TESTES — reativar quando o fluxo estiver homologado.
 SAVE_NF_HISTORY = False
-ENABLE_PENDING_REPORT = False
+ENABLE_PENDING_REPORT = True
 
 FAVICON_FILE = ROOT / "config" / "favicon_setta.b64"
 
@@ -799,6 +799,18 @@ def save_config_or_session(new_cfg: dict) -> tuple[bool, str]:
     return True, "Configuração salva no Supabase."
 
 
+def current_process_records_for_tests() -> pd.DataFrame:
+    """Em testes, usa somente registros temporários da sessão; em produção, usa o Supabase."""
+    if not SAVE_NF_HISTORY:
+        return pd.DataFrame(st.session_state.history)
+    if db.configured():
+        try:
+            return pd.DataFrame(db.list_process_records())
+        except Exception:
+            return pd.DataFrame(st.session_state.history)
+    return pd.DataFrame(st.session_state.history)
+
+
 with st.sidebar:
     st.markdown(
         f'''<div class="sidebar-brand">
@@ -841,7 +853,7 @@ with st.sidebar:
     status = db.db_status()
     db_text = "Conectado" if status["configured"] else "Aguardando chave"
     st.markdown('<div class="sidebar-section-label">Informações</div>', unsafe_allow_html=True)
-    _mode_text = "TESTES — histórico desligado" if not SAVE_NF_HISTORY else "Produção"
+    _mode_text = "TESTES — sem gravação no Supabase" if not SAVE_NF_HISTORY else "Produção"
     st.markdown(
         f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e → conferência → ZIP<br><br><b>Modo</b><br>{_mode_text}<br><br><b>Versão</b><br>Protótipo 0.2</div>',
         unsafe_allow_html=True,
@@ -978,13 +990,7 @@ elif page == "Pendências":
         "Consolida as pré-notas que ainda não possuem documento processado e as NFs identificadas pelo cruzamento de impacto no MRP."
     )
 
-    if db.configured():
-        try:
-            pending_records = pd.DataFrame(db.list_process_records())
-        except Exception:
-            pending_records = pd.DataFrame(st.session_state.history)
-    else:
-        pending_records = pd.DataFrame(st.session_state.history)
+    pending_records = current_process_records_for_tests()
 
     pre_base = st.session_state.pre_notes.copy()
     processed_keys = set()
@@ -1310,8 +1316,11 @@ elif page == "Processamento de arquivos":
                     outputs, manifest = make_zip_outputs(merged)
                     st.session_state.zip_outputs = outputs
 
+                    # Em modo de testes mantemos apenas um histórico temporário da sessão
+                    # para permitir validar Pré-notas/Pendências/MRP. Nada é persistido no Supabase.
+                    st.session_state.history.extend(manifest)
+
                     if SAVE_NF_HISTORY:
-                        st.session_state.history.extend(manifest)
                         if db.configured():
                             try:
                                 db.save_process_records(manifest)
@@ -1322,8 +1331,8 @@ elif page == "Processamento de arquivos":
                             st.success("ZIPs criados. Histórico mantido nesta sessão; nenhum PDF foi salvo em banco.")
                     else:
                         st.success(
-                            "ZIPs criados em modo de testes. Nenhum histórico desta execução foi salvo "
-                            "na sessão nem no Supabase."
+                            "ZIPs criados em modo de testes. Os registros ficam somente nesta sessão "
+                            "para testar as conferências e não são gravados no Supabase."
                         )
                 except Exception as exc:
                     st.error(f"Falha ao gerar ZIP: {exc}")
@@ -1671,13 +1680,7 @@ elif page == "Configurações":
 
             pre = st.session_state.pre_notes.copy()
             if not pre.empty:
-                if db.configured():
-                    try:
-                        processed = pd.DataFrame(db.list_process_records())
-                    except Exception:
-                        processed = pd.DataFrame(st.session_state.history)
-                else:
-                    processed = pd.DataFrame(st.session_state.history)
+                processed = current_process_records_for_tests()
 
                 processed_keys = set()
                 if not processed.empty:
