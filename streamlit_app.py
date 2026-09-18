@@ -18,12 +18,12 @@ from openpyxl import load_workbook
 
 import db
 from danfe_generator import (
-    apply_operational_stamp,
     danfe_file_name,
     extract_danfe_metadata,
     extract_nfe_processing_data,
     generate_danfe_pdf,
 )
+from operational_stamp import apply_operational_stamp
 from nf_processor import (
     build_final_name,
     digits_only,
