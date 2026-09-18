@@ -2303,14 +2303,19 @@ elif page == "Pendências":
 
             pending_view = pending_pre.copy()
             pending_view["cnpj"] = pending_view["cnpj"].map(digits_only)
+            if "fornecedor" not in pending_view.columns:
+                pending_view["fornecedor"] = ""
             pending_view["fornecedor"] = (
-                pending_view["cnpj"]
-                .map(supplier_map)
+                pending_view["fornecedor"]
                 .fillna("")
                 .astype(str)
                 .str.strip()
-                .replace("", "NÃO LOCALIZADO")
             )
+            supplier_fallback = pending_view["cnpj"].map(supplier_map).fillna("").astype(str).str.strip()
+            pending_view["fornecedor"] = pending_view["fornecedor"].where(
+                pending_view["fornecedor"].ne(""),
+                supplier_fallback,
+            ).replace("", "NÃO LOCALIZADO")
             pending_view["validacao_documento"] = "PENDENTE DE DOCUMENTO"
             pending_view["data_nf"] = pending_view.apply(
                 lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
