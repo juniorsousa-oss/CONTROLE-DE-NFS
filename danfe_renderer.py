@@ -400,12 +400,9 @@ def _validate_payload(data: dict) -> None:
 
 
 def _draw_receipt(page, data, y):
-    # Canhoto no topo no modo retrato, conforme MOC. Acrescentamos uma faixa
-    # de controle interno logo abaixo; o Portal permite campos adicionais no
-    # canhoto desde que o conteúdo fiscal e a leitura do DANFE não sejam
-    # prejudicados.
+    # Canhoto oficial no topo, sem qualquer bloco interno adicional.
     h = 48.0
-    split = RIGHT - 127.5  # ~4,5 cm para NF-e / número / série
+    split = RIGHT - 127.5
 
     _rect(page, (MARGIN, y, RIGHT, y + h))
     _line(page, split, y, split, y + h)
@@ -469,32 +466,7 @@ def _draw_receipt(page, data, y):
         "center",
     )
 
-    # Faixa adicional do canhoto para o fluxo SETTA. Ela fica fora do quadro
-    # RESERVADO AO FISCO e será preenchida depois do cruzamento operacional.
-    y2 = y + h + 2
-    control_h = 24.0
-    _rect(page, (MARGIN, y2, RIGHT, y2 + control_h), fill=VERY_LIGHT)
-    widths = [94.0, 62.0, 112.0, 165.0]
-    points = [MARGIN]
-    for width in widths:
-        points.append(points[-1] + width)
-    points.append(RIGHT)
-
-    for x in points[1:-1]:
-        _line(page, x, y2, x, y2 + control_h, 0.35, MID)
-
-    labels = [
-        "CONTROLE INTERNO — SETTA",
-        "CR",
-        "DESC. CR",
-        "NATUREZA",
-        "RECEBIDO POR",
-    ]
-    for idx, label in enumerate(labels):
-        x0, x1 = points[idx], points[idx + 1]
-        _label(page, x0 + 3, y2 + 7, label)
-
-    return y2 + control_h + 4
+    return y + h + 4
 
 
 def _draw_main_header(page, data, y, page_no, total_pages):
@@ -1012,8 +984,7 @@ def _draw_additional(page, data, y, lines, max_height=None):
 def _first_static_end(data):
     # Deve espelhar as alturas usadas no desenho.
     y = MARGIN
-    # Canhoto oficial (48pt) + faixa adicional SETTA (24pt) + espaçamentos.
-    y += 48 + 2 + 24 + 4
+    y += 48 + 4
     y += 100
     y += 25 * 2 + 4
     y += 13 + 20 * 3 + 4
