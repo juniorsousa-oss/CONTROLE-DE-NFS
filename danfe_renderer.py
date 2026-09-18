@@ -767,9 +767,9 @@ def _row_height(item):
     lines = _wrap(
         _product_description(item),
         PRODUCT_X[2] - PRODUCT_X[1] - 5,
-        5.2,
+        6.0,
     )
-    return max(15.5, len(lines) * 6.1 + 6.0)
+    return max(17.5, len(lines) * 7.0 + 6.0)
 
 
 def _product_header_height():
@@ -792,7 +792,7 @@ def _draw_product_header(page, y):
             page,
             (x0 + 1.2, y + 3, x1 - 1.2, y + h - 2),
             headers[i],
-            4.5,
+            5.0,
             True,
             1,
             DARK,
@@ -834,7 +834,7 @@ def _draw_product_rows(page, items, heights, y, bottom):
                     page,
                     (x0 + 2, y + 3, x1 - 2, y + h - 2),
                     _product_description(item),
-                    5.2,
+                    6.0,
                     False,
                     0,
                     BLACK,
@@ -848,8 +848,8 @@ def _draw_product_rows(page, items, heights, y, bottom):
                     y + 8,
                     x1 - 1.5,
                     value,
-                    5.2,
-                    3.8,
+                    6.0,
+                    6.0,
                     False,
                     align,
                 )
@@ -898,7 +898,7 @@ def _draw_additional_fixed(page, data, lines):
         page,
         (MARGIN + 3, y + 12, xmid - 3, y + h - 3),
         "\n".join(lines),
-        5.25,
+        6.0,
         False,
         0,
         BLACK,
@@ -974,7 +974,7 @@ def _draw_compact_header(page, data, y, page_no, total_pages):
 
 
 def _additional_lines(data):
-    return _wrap(data.get("informacoes") or "", 300, 5.4)
+    return _wrap(data.get("informacoes") or "", 300, 6.0)
 
 
 def _additional_height(lines):
@@ -1080,7 +1080,7 @@ def _paginate(data):
     if extra_additional:
         per_page_lines = max(
             25,
-            int((BOTTOM - (MARGIN + 100 + (25 * 2 + 4) + 45)) / 6.2),
+            int((BOTTOM - (MARGIN + 100 + (25 * 2 + 4) + 45)) / 7.0),
         )
         for pos in range(0, len(extra_additional), per_page_lines):
             plans.append(
@@ -1159,7 +1159,7 @@ def render_danfe_pdf(data: dict) -> bytes:
                     page,
                     (MARGIN + 3, y + 12, xmid - 3, BOTTOM - 3),
                     "\n".join(lines),
-                    5.25,
+                    6.0,
                     False,
                     0,
                     BLACK,
