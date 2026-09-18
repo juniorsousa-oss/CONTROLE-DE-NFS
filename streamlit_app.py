@@ -31,6 +31,10 @@ SUPPLIERS_FILE = ROOT / "data" / "fornecedores.csv"
 LOGO_FILE = ROOT / "config" / "logo_setta.svg"
 TZ = ZoneInfo("America/Sao_Paulo")
 
+# MODO DE TESTES — reativar quando o fluxo estiver homologado.
+SAVE_NF_HISTORY = False
+ENABLE_PENDING_REPORT = False
+
 FAVICON_FILE = ROOT / "config" / "favicon_setta.b64"
 
 st.set_page_config(
@@ -257,6 +261,7 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
             due = None if pd.isna(parsed) else parsed.date()
 
         num = cell_text(row.get("numero_nf"))
+        cnpj = digits_only(cell_text(row.get("cnpj_fornecedor")))
         supplier = cell_text(row.get("fornecedor_padrao"))
         nature = cell_text(row.get("natureza")).upper()
 
@@ -265,6 +270,8 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
             missing.append("vencimento")
         if not digits_only(num):
             missing.append("número NF")
+        if not valid_cnpj(cnpj):
+            missing.append("CNPJ")
         if not supplier:
             missing.append("fornecedor")
         if not nature:
@@ -273,11 +280,16 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
         names.append(build_final_name(due, num, supplier))
 
         current = cell_text(row.get("status")) or "REVISAR"
-        stats.append(
-            "REVISAR"
-            if any(x in missing for x in ["vencimento", "número NF", "fornecedor"])
-            else (current if current in {"APROVADO", "REVISAR"} else "REVISAR")
-        )
+
+        # Qualquer campo obrigatório ausente/inválido é uma tratativa real.
+        # Quando todos estão preenchidos, preservamos REVISAR/APROVADO para
+        # permitir que o operador aprove manualmente casos de baixa confiança.
+        if missing:
+            final_status = "REVISAR"
+        else:
+            final_status = current if current in {"APROVADO", "REVISAR"} else "REVISAR"
+
+        stats.append(final_status)
         issues.append(
             "Campos pendentes: " + ", ".join(missing)
             if missing else ""
@@ -796,9 +808,12 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.markdown('<div class="sidebar-section-label">Navegação</div>', unsafe_allow_html=True)
+    _pages = ["Dashboard", "Processamento de arquivos", "Configurações"]
+    if ENABLE_PENDING_REPORT:
+        _pages.insert(1, "Pendências")
     page = st.radio(
         "Página",
-        ["Dashboard", "Pendências", "Processamento de arquivos", "Configurações"],
+        _pages,
         label_visibility="collapsed",
         format_func=str.upper,
     )
@@ -826,8 +841,9 @@ with st.sidebar:
     status = db.db_status()
     db_text = "Conectado" if status["configured"] else "Aguardando chave"
     st.markdown('<div class="sidebar-section-label">Informações</div>', unsafe_allow_html=True)
+    _mode_text = "TESTES — histórico desligado" if not SAVE_NF_HISTORY else "Produção"
     st.markdown(
-        f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e → conferência → ZIP<br><br><b>Versão</b><br>Protótipo 0.2</div>',
+        f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e → conferência → ZIP<br><br><b>Modo</b><br>{_mode_text}<br><br><b>Versão</b><br>Protótipo 0.2</div>',
         unsafe_allow_html=True,
     )
     if st.session_state.get("db_sync_error"):
@@ -1293,15 +1309,22 @@ elif page == "Processamento de arquivos":
                 try:
                     outputs, manifest = make_zip_outputs(merged)
                     st.session_state.zip_outputs = outputs
-                    st.session_state.history.extend(manifest)
-                    if db.configured():
-                        try:
-                            db.save_process_records(manifest)
-                            st.success("ZIPs criados e registros gravados no Supabase. Nenhum PDF foi salvo no banco.")
-                        except Exception as exc:
-                            st.warning(f"ZIPs criados, mas o histórico não pôde ser gravado no Supabase: {exc}")
+
+                    if SAVE_NF_HISTORY:
+                        st.session_state.history.extend(manifest)
+                        if db.configured():
+                            try:
+                                db.save_process_records(manifest)
+                                st.success("ZIPs criados e registros gravados no Supabase. Nenhum PDF foi salvo no banco.")
+                            except Exception as exc:
+                                st.warning(f"ZIPs criados, mas o histórico não pôde ser gravado no Supabase: {exc}")
+                        else:
+                            st.success("ZIPs criados. Histórico mantido nesta sessão; nenhum PDF foi salvo em banco.")
                     else:
-                        st.success("ZIPs criados. Histórico mantido nesta sessão; nenhum PDF foi salvo em banco.")
+                        st.success(
+                            "ZIPs criados em modo de testes. Nenhum histórico desta execução foi salvo "
+                            "na sessão nem no Supabase."
+                        )
                 except Exception as exc:
                     st.error(f"Falha ao gerar ZIP: {exc}")
 
