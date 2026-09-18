@@ -498,9 +498,9 @@ def _draw_receipt(page, data, y):
 
 
 def _draw_main_header(page, data, y, page_no, total_pages):
-    h = 88.0
+    h = 100.0
     left_w = 232.0
-    center_w = 95.0
+    center_w = 102.0
     x1 = MARGIN + left_w
     x2 = x1 + center_w
 
@@ -509,7 +509,7 @@ def _draw_main_header(page, data, y, page_no, total_pages):
     _rect(page, (x2, y, RIGHT, y + h))
 
     # emitente
-    _text(page, MARGIN + 5, y + 12, data["emitente"], 8.0, True)
+    _fit_text(page, MARGIN + 5, y + 17, x1 - 5, data["emitente"], 12.0, 12.0, True, "center")
     a = data["emitente_end"]
     address = ", ".join(v for v in [a["logradouro"], a["numero"], a["complemento"]] if v)
     rows = [
@@ -518,39 +518,39 @@ def _draw_main_header(page, data, y, page_no, total_pages):
         " / ".join(v for v in [a["municipio"], a["uf"]] if v),
         f"Fone: {a['fone']}" if a["fone"] else "",
     ]
-    yy = y + 26
+    yy = y + 36
     for row in rows:
         if row:
-            _fit_text(page, MARGIN + 5, yy, x1 - 5, row, 6.0, 4.6)
-            yy += 10
+            _fit_text(page, MARGIN + 5, yy, x1 - 5, row, 8.0, 7.0, True, "center")
+            yy += 13
 
     # centro DANFE
-    _fit_text(page, x1 + 4, y + 15, x2 - 4, "DANFE", 14.0, 10.0, True, "center")
+    _fit_text(page, x1 + 4, y + 17, x2 - 4, "DANFE", 14.0, 12.0, True, "center")
     _textbox(
         page,
-        (x1 + 5, y + 19, x2 - 5, y + 42),
-        "Documento Auxiliar da Nota Fiscal Eletrônica",
-        5.6,
+        (x1 + 5, y + 22, x2 - 5, y + 49),
+        "DOCUMENTO AUXILIAR DA NOTA FISCAL ELETRÔNICA",
+        8.0,
         False,
         1,
     )
-    _text(page, x1 + 10, y + 52, "0 - ENTRADA", 5.6)
-    _text(page, x1 + 10, y + 61, "1 - SAÍDA", 5.6)
-    _rect(page, (x2 - 22, y + 45, x2 - 8, y + 61))
-    _fit_text(page, x2 - 22, y + 57, x2 - 8, data.get("tpNF") or "1", 7.0, 6.0, True, "center")
-    _text(page, x1 + 7, y + 72, f"Nº {_fmt_nf(data['nf'])}", 6.8, True)
-    _text(page, x1 + 7, y + 81, f"SÉRIE {data['serie']}  |  FOLHA {page_no}/{total_pages}", 5.8, True)
+    _text(page, x1 + 8, y + 61, "0 - ENTRADA", 8.0)
+    _text(page, x1 + 8, y + 72, "1 - SAÍDA", 8.0)
+    _rect(page, (x2 - 23, y + 54, x2 - 7, y + 73))
+    _fit_text(page, x2 - 23, y + 68, x2 - 7, data.get("tpNF") or "1", 10.0, 10.0, True, "center")
+    _fit_text(page, x1 + 5, y + 87, x2 - 5, f"Nº {_fmt_nf(data['nf'])}", 10.0, 10.0, True, "center")
+    _fit_text(page, x1 + 5, y + 98, x2 - 5, f"SÉRIE {data['serie']} | FOLHA {page_no}/{total_pages}", 10.0, 8.0, True, "center")
 
     # direita
-    _barcode(page, (x2 + 12, y + 6, RIGHT - 12, y + 29), data["key"])
-    _label(page, x2 + 7, y + 39, "CHAVE DE ACESSO")
+    _barcode(page, (x2 + 12, y + 7, RIGHT - 12, y + 32), data["key"])
+    _field_label(page, x2 + 7, y + 43, "CHAVE DE ACESSO")
     grouped = " ".join(data["key"][i:i+4] for i in range(0, len(data["key"]), 4))
-    _fit_text(page, x2 + 7, y + 49, RIGHT - 7, grouped, 7.6, 5.2, True)
+    _fit_text(page, x2 + 7, y + 55, RIGHT - 7, grouped, 8.0, 7.0, True)
     _textbox(
         page,
-        (x2 + 7, y + 56, RIGHT - 7, y + 83),
-        "Consulta de autenticidade no portal nacional da NF-e\nwww.nfe.fazenda.gov.br/portal",
-        5.3,
+        (x2 + 7, y + 61, RIGHT - 7, y + 96),
+        "CONSULTA DE AUTENTICIDADE NO PORTAL NACIONAL DA NF-e\nwww.nfe.fazenda.gov.br/portal",
+        6.0,
         False,
         0,
     )
@@ -558,7 +558,7 @@ def _draw_main_header(page, data, y, page_no, total_pages):
 
 
 def _draw_identification(page, data, y):
-    row_h = 21
+    row_h = 25
     w = RIGHT - MARGIN
     # natureza + protocolo
     split = MARGIN + w * 0.57
@@ -1014,8 +1014,8 @@ def _first_static_end(data):
     y = MARGIN
     # Canhoto oficial (48pt) + faixa adicional SETTA (24pt) + espaçamentos.
     y += 48 + 2 + 24 + 4
-    y += 88
-    y += 21 * 2 + 4
+    y += 100
+    y += 25 * 2 + 4
     y += 13 + 20 * 3 + 4
     y += _billing_height(data)
     y += 13 + 21 * 2 + 4
@@ -1028,7 +1028,7 @@ def _paginate(data):
     heights = [_row_height(item) for item in items]
 
     first_start = _first_static_end(data) + 13 + _product_header_height()
-    cont_start = MARGIN + 88 + (21 * 2 + 4) + 13 + _product_header_height()
+    cont_start = MARGIN + 100 + (25 * 2 + 4) + 13 + _product_header_height()
 
     additional_lines = _additional_lines(data)
     # O bloco inferior da 1ª página comporta aproximadamente 17 linhas no
@@ -1080,7 +1080,7 @@ def _paginate(data):
     if extra_additional:
         per_page_lines = max(
             25,
-            int((BOTTOM - (MARGIN + 88 + (21 * 2 + 4) + 45)) / 6.2),
+            int((BOTTOM - (MARGIN + 100 + (25 * 2 + 4) + 45)) / 6.2),
         )
         for pos in range(0, len(extra_additional), per_page_lines):
             plans.append(
