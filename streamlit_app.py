@@ -4060,6 +4060,8 @@ elif page == "Configurações":
                                 rows.append({
                                     "numero_nf": row["numero_nf"],
                                     "cnpj": row["cnpj"],
+                                    "fornecedor": str(row.get("fornecedor") or "").strip(),
+                                    "recebedor": str(row.get("recebedor") or "").strip(),
                                     "status": row["status"],
                                     "data_pre_nota": (
                                         row["data_pre_nota"].isoformat()
