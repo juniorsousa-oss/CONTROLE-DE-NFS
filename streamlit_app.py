@@ -2236,53 +2236,52 @@ elif page == "Pendências":
                 .replace("", "NÃO LOCALIZADO")
             )
             pending_view["validacao_documento"] = "PENDENTE DE DOCUMENTO"
-            pending_view["nf_cnpj"] = pending_view.apply(
-                lambda row: (
-                    f"{normalized_nf(row.get('numero_nf'))}_{digits_only(row.get('cnpj'))}"
-                    if normalized_nf(row.get("numero_nf")) and digits_only(row.get("cnpj"))
-                    else ""
-                ),
+            pending_view["data_nf"] = pending_view.apply(
+                lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
                 axis=1,
             )
 
             impact_summary = st.session_state.get("mrp_priority_summary")
             if isinstance(impact_summary, pd.DataFrame) and not impact_summary.empty:
-                impact_map = (
-                    impact_summary[
-                        ["nf_cnpj", "prioridade", "data_cm", "ops"]
-                    ]
-                    .drop_duplicates("nf_cnpj", keep="first")
-                    .set_index("nf_cnpj")
-                    .to_dict("index")
+                match_results = pending_view.apply(
+                    lambda row: match_pre_note_to_mrp(row, impact_summary),
+                    axis=1,
                 )
 
-                pending_view["prioridade"] = pending_view["nf_cnpj"].map(
-                    lambda key: str(impact_map.get(key, {}).get("prioridade") or "ERRO")
-                )
-                pending_view["data_cm"] = pending_view["nf_cnpj"].map(
-                    lambda key: impact_map.get(key, {}).get("data_cm")
-                )
-                pending_view["situacao_mrp"] = pending_view["nf_cnpj"].map(
-                    lambda key: (
-                        "OK"
-                        if key in impact_map
-                        else "NÃO LOCALIZADA NO IMPACTO MRP"
+                pending_view["prioridade"] = match_results.map(
+                    lambda result: (
+                        str(result["row"].get("prioridade") or "ERRO")
+                        if result.get("matched") and result.get("row")
+                        else "ERRO"
                     )
+                )
+                pending_view["data_cm"] = match_results.map(
+                    lambda result: (
+                        result["row"].get("data_cm")
+                        if result.get("matched") and result.get("row")
+                        else None
+                    )
+                )
+                pending_view["situacao_mrp"] = match_results.map(
+                    lambda result: str(result.get("situacao") or "ERRO")
+                )
+                pending_view["aderencia_fornecedor"] = match_results.map(
+                    lambda result: int(result.get("score_fornecedor") or 0)
                 )
             else:
                 pending_view["prioridade"] = "AGUARDANDO CARGA MRP"
                 pending_view["data_cm"] = None
                 pending_view["situacao_mrp"] = "IMPACTO MRP NÃO CARREGADO"
+                pending_view["aderencia_fornecedor"] = 0
 
             mrp_errors = int(
-                pending_view["situacao_mrp"]
-                .eq("NÃO LOCALIZADA NO IMPACTO MRP")
-                .sum()
-            )
+                ~pending_view["situacao_mrp"].eq("OK")
+                & ~pending_view["situacao_mrp"].eq("IMPACTO MRP NÃO CARREGADO")
+            ).sum()
             if mrp_errors:
                 st.error(
-                    f"{mrp_errors} pré-nota(s) não possuem correspondência na tabela de Impacto MRP. "
-                    "É necessária verificação detalhada de NF + CNPJ."
+                    f"{mrp_errors} pré-nota(s) não tiveram correspondência segura no Impacto MRP. "
+                    "A chave principal agora é Data + NF e o nome do fornecedor precisa validar a correspondência."
                 )
 
             st.markdown(
@@ -2292,7 +2291,7 @@ elif page == "Pendências":
                         <div>
                             <div style="font-size:1.12rem;font-weight:800;color:#0f172a;">Pré-notas pendentes de documento</div>
                             <div style="margin-top:.24rem;font-size:.82rem;color:#64748b;">
-                                Conferência da carga atual por NF + CNPJ. O histórico do banco permanece ignorado no modo de testes.
+                                Vínculo com Impacto MRP por Data + NF, validado pelo nome do fornecedor. O CNPJ permanece apenas informativo.
                             </div>
                         </div>
                         <div style="font-size:.82rem;font-weight:800;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:.45rem .75rem;">
@@ -2419,6 +2418,7 @@ elif page == "Pendências":
                 "prioridade",
                 "data_cm",
                 "situacao_mrp",
+                "aderencia_fornecedor",
                 "validacao_documento",
             ]
 
@@ -2445,6 +2445,10 @@ elif page == "Pendências":
                     "situacao_mrp": st.column_config.TextColumn(
                         "Situação MRP",
                         width="medium",
+                    ),
+                    "aderencia_fornecedor": st.column_config.NumberColumn(
+                        "Aderência fornecedor",
+                        format="%d%%",
                     ),
                     "validacao_documento": st.column_config.TextColumn(
                         "Validação documento",
