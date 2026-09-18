@@ -209,17 +209,18 @@ def extract_internal_nature(text: str) -> str:
 
 
 def supplier_dataframe(raw: pd.DataFrame | Iterable[dict] | None) -> pd.DataFrame:
+    columns = ["cnpj", "nome_padrao", "aliases", "ativo", "codigo", "loja", "nome_fantasia", "tipo"]
     if raw is None:
-        return pd.DataFrame(columns=["cnpj", "nome_padrao", "aliases", "ativo"])
+        return pd.DataFrame(columns=columns)
     frame = raw.copy() if isinstance(raw, pd.DataFrame) else pd.DataFrame(list(raw))
-    for col in ["cnpj", "nome_padrao", "aliases", "ativo"]:
+    for col in columns:
         if col not in frame.columns:
             frame[col] = True if col == "ativo" else ""
     frame["cnpj"] = frame["cnpj"].map(digits_only)
-    frame["nome_padrao"] = frame["nome_padrao"].fillna("").astype(str).str.strip()
-    frame["aliases"] = frame["aliases"].fillna("").astype(str).str.strip()
+    for col in ["nome_padrao", "aliases", "codigo", "loja", "nome_fantasia", "tipo"]:
+        frame[col] = frame[col].fillna("").astype(str).str.strip()
     frame["ativo"] = frame["ativo"].fillna(True).astype(bool)
-    return frame[["cnpj", "nome_padrao", "aliases", "ativo"]]
+    return frame[columns]
 
 
 def match_supplier(cnpj: str, emitter_name: str, suppliers: pd.DataFrame) -> dict[str, object]:
