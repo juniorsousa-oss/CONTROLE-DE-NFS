@@ -180,6 +180,47 @@ def list_process_records(limit: int = 10000) -> list[dict]:
     return _select_all("nf_processamentos", order="processado_em.desc", max_rows=limit)[:limit]
 
 
+def save_mrp_load(
+    detail: Iterable[dict],
+    summary: Iterable[dict],
+    files: Iterable[str],
+    stats: dict | None = None,
+) -> dict:
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    return rpc(
+        "nf_salvar_mrp_carga",
+        {
+            "p_detalhe": list(detail),
+            "p_resumo": list(summary),
+            "p_arquivos": list(files),
+            "p_stats": stats or {},
+        },
+        timeout=120,
+    ) or {}
+
+
+def load_mrp_load() -> dict:
+    if not configured():
+        return {}
+    rows = _select_all(
+        "nf_mrp_carga_atual",
+        order="atualizado_em.desc",
+        max_rows=1,
+    )
+    return rows[0] if rows else {}
+
+
+def list_mrp_imports(limit: int = 100) -> list[dict]:
+    if not configured():
+        return []
+    return _select_all(
+        "nf_mrp_importacoes",
+        order="importado_em.desc",
+        max_rows=limit,
+    )[:limit]
+
+
 def mark_sent(ids: Iterable[str], operator: str = "") -> dict:
     ids = [str(x) for x in ids if str(x).strip()]
     if not ids:
