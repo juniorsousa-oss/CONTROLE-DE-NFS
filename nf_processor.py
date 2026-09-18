@@ -543,7 +543,7 @@ def process_nf_pdf(
 
     score = min(100, int(score))
     final_name = build_final_name(due, numero, supplier)
-    required_ok = bool(numero and due and supplier)
+    required_ok = bool(numero and due and supplier and nature and valid_cnpj(cnpj))
     high_confidence = supplier_method == "CNPJ exato" and bool(key)
     status = "APROVADO" if required_ok and high_confidence and score >= 90 else "REVISAR"
 
