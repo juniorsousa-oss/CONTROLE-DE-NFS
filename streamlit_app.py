@@ -350,7 +350,7 @@ def metrics(df: pd.DataFrame):
     pending = treatment_mask(df)
     ready = int((~pending).sum())
     values = [
-        ("Documentos", len(df), "PDFs analisados"),
+        ("Documentos", len(df), "XML/PDF analisados"),
         ("Prontos", ready, "Sem tratativa"),
         ("Tratativas", int(pending.sum()), "Corrigir antes do ZIP"),
         ("Prioridade MRP", int(df.get("prioridade_mrp", pd.Series(False, index=df.index)).fillna(False).astype(bool).sum()), "ZIP separado"),
@@ -731,6 +731,20 @@ def match_mrp_to_pre_note(
         result["situacao"] = "FORNECEDOR DIVERGENTE"
         result["score_fornecedor"] = best_score
         return result
+
+    strong_candidates = candidates[
+        candidates["_score_supplier"] >= min_supplier_score
+    ].copy()
+    if len(strong_candidates) > 1:
+        strong_dates = {
+            normalized_business_date(value)
+            for value in strong_candidates["data_pre_nota"].tolist()
+            if normalized_business_date(value) is not None
+        }
+        if len(strong_dates) > 1:
+            result["situacao"] = "CORRESPONDÊNCIA AMBÍGUA ENTRE DATAS"
+            result["score_fornecedor"] = best_score
+            return result
 
     if len(candidates) > 1:
         second = candidates.iloc[1]
@@ -1457,7 +1471,7 @@ def match_document_to_pre_note(
     ]
     supplier_names = [name for name in supplier_names if name]
     if not supplier_names:
-        result["situacao"] = "FORNECEDOR DO PDF NÃO LOCALIZADO"
+        result["situacao"] = "FORNECEDOR DO DOCUMENTO NÃO LOCALIZADO"
         return result
 
     candidates["_supplier_pre"] = candidates.apply(pre_supplier_name, axis=1)
@@ -1797,7 +1811,7 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
         and row.get("vencimento")
         and str(row.get("natureza") or "").strip()
     )
-    if required and xml_item:
+    if required and xml_item and str(xml_item["data"].get("status_codigo") or "") == "100":
         row["status"] = "APROVADO"
 
     row["nome_sugerido"] = build_final_name(
@@ -2193,6 +2207,7 @@ def render_file_processing():
             ):
                 ready_cols = [
                     "arquivo_original",
+                    "origem_dados",
                     "numero_nf",
                     "fornecedor_padrao",
                     "vencimento",
@@ -2206,6 +2221,7 @@ def render_file_processing():
                     hide_index=True,
                     column_config={
                         "arquivo_original": "Arquivo",
+                        "origem_dados": "Origem",
                         "numero_nf": "NF",
                         "fornecedor_padrao": "Fornecedor",
                         "vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
@@ -2226,6 +2242,7 @@ def render_file_processing():
 
                 treatment_cols = [
                     "arquivo_original",
+                    "origem_dados",
                     "vencimento",
                     "numero_nf",
                     "cnpj_fornecedor",
@@ -2244,6 +2261,7 @@ def render_file_processing():
                     key="treatment_editor",
                     disabled=[
                         "arquivo_original",
+                        "origem_dados",
                         "validacao",
                         "observacao",
                     ],
@@ -2251,6 +2269,10 @@ def render_file_processing():
                         "arquivo_original": st.column_config.TextColumn(
                             "Arquivo",
                             width="medium",
+                        ),
+                        "origem_dados": st.column_config.TextColumn(
+                            "Origem",
+                            width="small",
                         ),
                         "vencimento": st.column_config.DateColumn(
                             "Vencimento",
@@ -2357,7 +2379,7 @@ def render_file_processing():
                         },
                     )
 
-            if st.button("Renomear, separar e gerar ZIPs", type="primary", use_container_width=True, disabled=(not invalid.empty or duplicate.any())):
+            if st.button("GERAR ARQUIVOS RENOMEADOS E COMPACTADOS", type="primary", use_container_width=True, disabled=(not invalid.empty or duplicate.any())):
                 try:
                     outputs, manifest = make_zip_outputs(merged)
                     st.session_state.zip_outputs = outputs
