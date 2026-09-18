@@ -131,7 +131,7 @@ def load_suppliers() -> list[dict]:
         return []
     return _select_all(
         "nf_fornecedores",
-        select="cnpj,nome_padrao,aliases,ativo,atualizado_em",
+        select="cnpj,nome_padrao,aliases,ativo,codigo,loja,nome_fantasia,tipo,atualizado_em",
         order="nome_padrao.asc",
         max_rows=30000,
     )
