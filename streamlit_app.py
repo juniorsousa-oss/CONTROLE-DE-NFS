@@ -1649,24 +1649,51 @@ def current_pending_pre_notes() -> pd.DataFrame:
 
     pending = base.copy()
     processed = current_process_records_for_tests()
-    processed_keys = set()
+
+    processed_pairs: list[tuple[str, str]] = []
+    legacy_processed_keys = set()
 
     if isinstance(processed, pd.DataFrame) and not processed.empty:
         for _, row in processed.iterrows():
-            key = pre_note_key(row.get("numero_nf"), row.get("cnpj_fornecedor"))
-            if key:
-                processed_keys.add(key)
+            data_nf = date_nf_key(
+                row.get("pre_nota_em"),
+                row.get("numero_nf"),
+            )
+            supplier = str(row.get("fornecedor_padrao") or "").strip()
+            if data_nf and supplier:
+                processed_pairs.append((data_nf, supplier))
 
-    pending["_process_key"] = pending.apply(
-        lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")),
-        axis=1,
-    )
-    if processed_keys:
-        pending = pending[
-            ~pending["_process_key"].isin(processed_keys)
-        ].copy()
+            # Compatibilidade apenas com lotes antigos da sessão.
+            legacy_key = pre_note_key(
+                row.get("numero_nf"),
+                row.get("cnpj_fornecedor"),
+            )
+            if legacy_key:
+                legacy_processed_keys.add(legacy_key)
 
-    return pending.drop(columns=["_process_key"], errors="ignore").reset_index(drop=True)
+    def already_processed(row) -> bool:
+        pre_data_nf = date_nf_key(
+            row.get("data_pre_nota"),
+            row.get("numero_nf"),
+        )
+        pre_supplier = pre_supplier_name(row)
+
+        if pre_data_nf and pre_supplier:
+            for processed_data_nf, processed_supplier in processed_pairs:
+                if (
+                    processed_data_nf == pre_data_nf
+                    and supplier_similarity(pre_supplier, processed_supplier) >= 82
+                ):
+                    return True
+
+        legacy_key = pre_note_key(
+            row.get("numero_nf"),
+            row.get("cnpj"),
+        )
+        return bool(legacy_key and legacy_key in legacy_processed_keys)
+
+    processed_mask = pending.apply(already_processed, axis=1)
+    return pending[~processed_mask].copy().reset_index(drop=True)
 
 
 def pending_document_group_key(pre_row: pd.Series | dict) -> str:
