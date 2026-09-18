@@ -1053,7 +1053,13 @@ elif page == "Processamento de arquivos":
             progress = st.progress(0, text="Analisando documentos...")
             for i, file in enumerate(files, 1):
                 raw = file.getvalue()
-                result = process_nf_pdf(file.name, raw, st.session_state.suppliers, ocr_fallback=True)
+                result = process_nf_pdf(
+                    file.name,
+                    raw,
+                    st.session_state.suppliers,
+                    ocr_fallback=True,
+                    allowed_natures=parse_natures(),
+                )
                 rows.append(result.to_dict())
                 store[result.file_id] = {"name": file.name, "bytes": raw}
                 progress.progress(i / len(files), text=f"{i}/{len(files)} — {file.name}")
@@ -1077,6 +1083,11 @@ elif page == "Processamento de arquivos":
             st.markdown("### Conferência das correspondências")
             metrics(frame)
             st.caption("Vencimento, número da NF, fornecedor, natureza interna e status podem ser corrigidos antes da geração definitiva.")
+            st.info(
+                "Tratamento de exceções: quando uma linha ficar em REVISAR, corrija o campo pendente diretamente na tabela "
+                "(por exemplo, Vencimento), confira o fornecedor/natureza e então altere o Status para APROVADO. "
+                "O nome final é recalculado automaticamente."
+            )
 
             nature_options = parse_natures()
             with st.expander("Atribuição rápida de natureza", expanded=False):
