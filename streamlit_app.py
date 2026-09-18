@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 from PIL import Image
+from openpyxl import load_workbook
 
 import db
 from nf_processor import (
@@ -87,6 +88,14 @@ def init():
         "priority_nf_keys": set(),
         "mrp_priority_summary": pd.DataFrame(),
         "mrp_priority_stats": {},
+        "mrp_priority_files": (),
+        "pre_import_preview": pd.DataFrame(),
+        "pre_import_invalid_count": 0,
+        "pre_import_name": "",
+        "supplier_import_preview": pd.DataFrame(),
+        "supplier_import_stats": {},
+        "supplier_import_conflicts": pd.DataFrame(),
+        "supplier_import_name": "",
         "db_synced": False,
         "operator": "",
     }
@@ -282,10 +291,14 @@ def show_flash(key: str) -> None:
         fn(message)
 
 
-def read_uploaded_table(uploaded, sheet_name: str | None = None, header_row: int = 0) -> tuple[pd.DataFrame, list[str]]:
-    raw = uploaded.getvalue()
-    name = uploaded.name.lower()
-    suffix = Path(name).suffix.lower()
+@st.cache_data(show_spinner=False, max_entries=20)
+def _read_uploaded_table_cached(
+    raw: bytes,
+    name: str,
+    sheet_name: str | None,
+    header_row: int | None,
+) -> tuple[pd.DataFrame, list[str]]:
+    suffix = Path(name.lower()).suffix.lower()
 
     if suffix == ".csv":
         for sep in [None, ";", ",", "\t"]:
@@ -304,25 +317,89 @@ def read_uploaded_table(uploaded, sheet_name: str | None = None, header_row: int
         raise ValueError("Não foi possível interpretar o CSV.")
 
     if suffix in {".xls", ".xlt"}:
-        engine = "xlrd"
-    else:
-        engine = "openpyxl"
+        try:
+            book = pd.ExcelFile(io.BytesIO(raw), engine="xlrd")
+            sheets = book.sheet_names
+            selected = sheet_name if sheet_name in sheets else sheets[0]
+            frame = pd.read_excel(
+                io.BytesIO(raw),
+                sheet_name=selected,
+                dtype=str,
+                header=header_row,
+                engine="xlrd",
+            ).fillna("")
+            return frame, sheets
+        except Exception as exc:
+            raise ValueError(f"Não foi possível abrir o arquivo {suffix}: {exc}") from exc
 
+    # XLSX / XLTX: leitura streaming. Evita o travamento causado por relatórios
+    # do Protheus com grande área formatada/used-range.
     try:
-        book = pd.ExcelFile(io.BytesIO(raw), engine=engine)
+        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        sheets = list(wb.sheetnames)
+        selected = sheet_name if sheet_name in sheets else sheets[0]
+        ws = wb[selected]
+
+        rows = []
+        started = False
+        blank_streak = 0
+        max_rows = 250_000
+
+        for row in ws.iter_rows(values_only=True):
+            values = list(row)
+            is_blank = not any(v is not None and str(v).strip() != "" for v in values)
+
+            if is_blank:
+                if started:
+                    blank_streak += 1
+                    if blank_streak >= 150:
+                        break
+                continue
+
+            started = True
+            blank_streak = 0
+            rows.append(values)
+            if len(rows) >= max_rows:
+                raise ValueError(
+                    "A planilha excede 250.000 linhas úteis. Gere o relatório novamente com apenas os dados necessários."
+                )
+
+        wb.close()
+
+        if not rows:
+            return pd.DataFrame(), sheets
+
+        width = max(len(row) for row in rows)
+        rows = [row + [None] * (width - len(row)) for row in rows]
+
+        if header_row is None:
+            frame = pd.DataFrame(rows)
+        else:
+            h = int(header_row)
+            if h >= len(rows):
+                return pd.DataFrame(), sheets
+            columns = [
+                str(v).strip() if v is not None and str(v).strip() else f"COL_{i+1}"
+                for i, v in enumerate(rows[h])
+            ]
+            frame = pd.DataFrame(rows[h + 1 :], columns=columns)
+
+        return frame.fillna(""), sheets
     except Exception as exc:
         raise ValueError(f"Não foi possível abrir o arquivo {suffix or 'Excel'}: {exc}") from exc
 
-    sheets = book.sheet_names
-    selected = sheet_name if sheet_name in sheets else sheets[0]
-    frame = pd.read_excel(
-        io.BytesIO(raw),
-        sheet_name=selected,
-        dtype=str,
-        header=header_row,
-        engine=engine,
-    ).fillna("")
-    return frame, sheets
+
+def read_uploaded_table(
+    uploaded,
+    sheet_name: str | None = None,
+    header_row: int | None = 0,
+) -> tuple[pd.DataFrame, list[str]]:
+    return _read_uploaded_table_cached(
+        uploaded.getvalue(),
+        uploaded.name,
+        sheet_name,
+        header_row,
+    )
 
 
 def guess_column(columns, tokens: list[str]) -> str | None:
@@ -379,7 +456,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
     st.write(
         "Formato validado: **Materiais C = Código do produto**. "
         "No relatório de Entradas/NFs: **D = Número da NF, F = Fornecedor e L = Código do material**. "
-        "Códigos e NFs são normalizados removendo zeros à esquerda."
+        "Os arquivos são apenas selecionados primeiro; o processamento só começa ao clicar em **Cruzar relatórios**."
     )
 
     mrp_file = st.file_uploader(
@@ -393,139 +470,149 @@ def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
         key=f"{key_prefix}_entries",
     )
 
-    if mrp_file and not nf_items_file:
-        st.info(f"Planilha de Materiais selecionada: **{mrp_file.name}**. Aguardando o relatório de Entradas/NFs.")
-    elif nf_items_file and not mrp_file:
-        st.info(f"Relatório de Entradas/NFs selecionado: **{nf_items_file.name}**. Aguardando a planilha de Materiais.")
+    if mrp_file:
+        st.caption(f"Materiais selecionado: {mrp_file.name} — {len(mrp_file.getvalue()) / 1024 / 1024:.1f} MB")
+    if nf_items_file:
+        st.caption(f"Entradas/NFs selecionado: {nf_items_file.name} — {len(nf_items_file.getvalue()) / 1024 / 1024:.1f} MB")
 
-    if mrp_file and nf_items_file:
+    can_process = bool(mrp_file and nf_items_file)
+    process = st.button(
+        "CRUZAR RELATÓRIOS",
+        type="primary",
+        use_container_width=True,
+        disabled=not can_process,
+        key=f"{key_prefix}_process",
+    )
+
+    if process:
         try:
-            # Leitura sem depender da posição do cabeçalho. As regras usam letras fixas de coluna.
-            mrp, mrp_sheets = read_uploaded_table(mrp_file, header_row=None)
-            if mrp_sheets and len(mrp_sheets) > 1:
-                ms = st.selectbox("Aba Materiais", mrp_sheets, key=f"{key_prefix}_materials_sheet")
-                mrp, _ = read_uploaded_table(mrp_file, ms, header_row=None)
+            with st.spinner("Lendo somente as informações necessárias e cruzando os relatórios..."):
+                mrp, mrp_sheets = read_uploaded_table(mrp_file, header_row=None)
+                if mrp_sheets and len(mrp_sheets) > 1:
+                    # Na carga automática usa a primeira aba; a lista fica visível no retorno.
+                    st.caption(f"Aba utilizada em Materiais: {mrp_sheets[0]}")
+                nf_items, nf_sheets = read_uploaded_table(nf_items_file, header_row=None)
+                if nf_items_sheets := nf_sheets:
+                    if len(nf_items_sheets) > 1:
+                        st.caption(f"Aba utilizada em Entradas/NFs: {nf_items_sheets[0]}")
 
-            nf_items, nf_sheets = read_uploaded_table(nf_items_file, header_row=None)
-            if nf_sheets and len(nf_sheets) > 1:
-                ns = st.selectbox("Aba relatório de Entradas", nf_sheets, key=f"{key_prefix}_entries_sheet")
-                nf_items, _ = read_uploaded_table(nf_items_file, ns, header_row=None)
+                if mrp.shape[1] < 3:
+                    raise ValueError("A planilha de Materiais precisa conter a coluna C.")
+                if nf_items.shape[1] < 12:
+                    raise ValueError("O relatório de Entradas precisa conter pelo menos as colunas A até L.")
 
-            if mrp.shape[1] < 3:
-                raise ValueError("A planilha de Materiais precisa conter a coluna C.")
-            if nf_items.shape[1] < 12:
-                raise ValueError("O relatório de Entradas precisa conter pelo menos as colunas A até L.")
+                urgent = set()
+                for raw_value in mrp.iloc[:, 2].tolist():
+                    value = normalized_material_code(raw_value)
+                    if not value:
+                        continue
+                    label = normalize_text(value)
+                    if "CODIGO" in label and ("PRODUTO" in label or "MATERIAL" in label):
+                        continue
+                    urgent.add(value)
 
-            urgent = set()
-            for raw_value in mrp.iloc[:, 2].tolist():
-                value = normalized_material_code(raw_value)
-                if not value:
-                    continue
-                label = normalize_text(value)
-                if "CODIGO" in label and ("PRODUTO" in label or "MATERIAL" in label):
-                    continue
-                urgent.add(value)
+                base = pd.DataFrame({
+                    "numero_nf": nf_items.iloc[:, 3].map(normalized_nf),
+                    "fornecedor_entrada": nf_items.iloc[:, 5].fillna("").astype(str).str.strip(),
+                    "produto": nf_items.iloc[:, 11].map(normalized_material_code),
+                })
+                base = base[
+                    base["numero_nf"].ne("")
+                    & base["produto"].ne("")
+                    & base["fornecedor_entrada"].ne("")
+                ].copy()
 
-            base = pd.DataFrame({
-                "numero_nf": nf_items.iloc[:, 3].map(normalized_nf),
-                "fornecedor_entrada": nf_items.iloc[:, 5].fillna("").astype(str).str.strip(),
-                "produto": nf_items.iloc[:, 11].map(normalized_material_code),
-            })
-            base = base[
-                base["numero_nf"].ne("")
-                & base["produto"].ne("")
-                & base["fornecedor_entrada"].ne("")
-            ].copy()
-
-            hits = base[base["produto"].isin(urgent)].copy()
-            if not hits.empty:
-                hits["fornecedor_padrao"] = hits["fornecedor_entrada"].map(standard_supplier_name)
-                summary = (
-                    hits.groupby(
-                        ["numero_nf", "fornecedor_padrao", "fornecedor_entrada"],
-                        as_index=False,
+                hits = base[base["produto"].isin(urgent)].copy()
+                if not hits.empty:
+                    hits["fornecedor_padrao"] = hits["fornecedor_entrada"].map(standard_supplier_name)
+                    summary = (
+                        hits.groupby(
+                            ["numero_nf", "fornecedor_padrao", "fornecedor_entrada"],
+                            as_index=False,
+                        )
+                        .agg(itens_urgentes=("produto", "nunique"))
+                        .sort_values(["itens_urgentes", "numero_nf"], ascending=[False, True])
+                        .reset_index(drop=True)
                     )
-                    .agg(itens_urgentes=("produto", "nunique"))
-                    .sort_values(["itens_urgentes", "numero_nf"], ascending=[False, True])
-                    .reset_index(drop=True)
-                )
-            else:
-                summary = pd.DataFrame(
-                    columns=["numero_nf", "fornecedor_padrao", "fornecedor_entrada", "itens_urgentes"]
-                )
+                else:
+                    summary = pd.DataFrame(
+                        columns=["numero_nf", "fornecedor_padrao", "fornecedor_entrada", "itens_urgentes"]
+                    )
 
-            stats = {
-                "materiais": len(urgent),
-                "linhas_entradas": len(base),
-                "linhas_correspondentes": len(hits),
-                "nfs": int(summary["numero_nf"].nunique()) if not summary.empty else 0,
-            }
-            st.session_state.mrp_priority_summary = summary.copy()
-            st.session_state.mrp_priority_stats = stats
-
-            a, b, d, e = st.columns(4)
-            a.metric("Materiais MRP", stats["materiais"])
-            b.metric("Linhas válidas Entradas", stats["linhas_entradas"])
-            d.metric("Correspondências", stats["linhas_correspondentes"])
-            e.metric("NFs impactadas", stats["nfs"])
-
-            if summary.empty:
-                st.warning(
-                    "Os dois relatórios foram lidos com sucesso, mas nenhum código da coluna C de Materiais "
-                    "foi encontrado na coluna L do relatório de Entradas/NFs."
-                )
-            else:
-                st.success(
-                    f"Cruzamento concluído com sucesso: {stats['linhas_correspondentes']} linha(s) "
-                    f"correspondente(s), envolvendo {stats['nfs']} NF(s)."
-                )
-                st.dataframe(
-                    summary,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "numero_nf": "NF",
-                        "fornecedor_padrao": "Fornecedor validado",
-                        "fornecedor_entrada": "Fornecedor do relatório",
-                        "itens_urgentes": "Itens MRP",
-                    },
-                )
-
-            if st.button(
-                "Aplicar prioridades ao processamento",
-                type="primary",
-                use_container_width=True,
-                disabled=summary.empty,
-                key=f"{key_prefix}_apply",
-            ):
-                keys = set()
-                for _, row in summary.iterrows():
-                    for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
-                        key = priority_key(row["numero_nf"], supplier_name)
-                        if key:
-                            keys.add(key)
-
-                st.session_state.priority_nf_keys = keys
-                st.session_state.priority_nf_numbers = set(summary["numero_nf"].astype(str).tolist())
+                stats = {
+                    "materiais": len(urgent),
+                    "linhas_entradas": len(base),
+                    "linhas_correspondentes": len(hits),
+                    "nfs": int(summary["numero_nf"].nunique()) if not summary.empty else 0,
+                }
                 st.session_state.mrp_priority_summary = summary.copy()
                 st.session_state.mrp_priority_stats = stats
+                st.session_state.mrp_priority_files = (mrp_file.name, nf_items_file.name)
 
-                if not st.session_state.analysis.empty:
-                    st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
-
-                set_flash(
-                    "_flash_mrp",
-                    "success",
-                    f"Prioridades aplicadas: {stats['nfs']} NF(s) serão identificadas como PRIORIDADE MRP quando o fornecedor também corresponder.",
-                )
-                st.rerun()
+            set_flash(
+                "_flash_mrp",
+                "success" if not summary.empty else "warning",
+                (
+                    f"Cruzamento concluído: {stats['linhas_correspondentes']} linha(s) correspondente(s), "
+                    f"{stats['nfs']} NF(s) impactada(s)."
+                    if not summary.empty
+                    else "Os dois relatórios foram processados, mas nenhum código de Materiais C foi localizado em Entradas/NFs L."
+                ),
+            )
+            st.rerun()
         except Exception as exc:
             st.error(f"Falha no cruzamento dos relatórios: {exc}")
 
-    existing = st.session_state.get("mrp_priority_summary")
-    if isinstance(existing, pd.DataFrame) and not existing.empty and not (mrp_file and nf_items_file):
-        st.markdown("#### Último cruzamento MRP da sessão")
-        st.dataframe(existing, use_container_width=True, hide_index=True)
+    summary = st.session_state.get("mrp_priority_summary")
+    stats = st.session_state.get("mrp_priority_stats") or {}
+    files_used = st.session_state.get("mrp_priority_files") or ()
+
+    if files_used:
+        st.caption(f"Último cruzamento: {files_used[0]} + {files_used[1]}")
+
+    if stats:
+        a, b, d, e = st.columns(4)
+        a.metric("Materiais MRP", stats.get("materiais", 0))
+        b.metric("Linhas válidas Entradas", stats.get("linhas_entradas", 0))
+        d.metric("Correspondências", stats.get("linhas_correspondentes", 0))
+        e.metric("NFs impactadas", stats.get("nfs", 0))
+
+    if isinstance(summary, pd.DataFrame) and not summary.empty:
+        st.dataframe(
+            summary,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "numero_nf": "NF",
+                "fornecedor_padrao": "Fornecedor validado",
+                "fornecedor_entrada": "Fornecedor do relatório",
+                "itens_urgentes": "Itens MRP",
+            },
+        )
+        if st.button(
+            "Aplicar prioridades ao processamento",
+            type="primary",
+            use_container_width=True,
+            key=f"{key_prefix}_apply",
+        ):
+            keys = set()
+            for _, row in summary.iterrows():
+                for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
+                    key = priority_key(row["numero_nf"], supplier_name)
+                    if key:
+                        keys.add(key)
+
+            st.session_state.priority_nf_keys = keys
+            st.session_state.priority_nf_numbers = set(summary["numero_nf"].astype(str).tolist())
+            if not st.session_state.analysis.empty:
+                st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
+
+            set_flash(
+                "_flash_mrp",
+                "success",
+                f"Prioridades aplicadas: {len(st.session_state.priority_nf_numbers)} NF(s).",
+            )
+            st.rerun()
 
     if st.session_state.priority_nf_numbers:
         st.info(
@@ -537,6 +624,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
             st.session_state.priority_nf_keys = set()
             st.session_state.mrp_priority_summary = pd.DataFrame()
             st.session_state.mrp_priority_stats = {}
+            st.session_state.mrp_priority_files = ()
             if not st.session_state.analysis.empty:
                 st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
             set_flash("_flash_mrp", "success", "Prioridades MRP limpas.")
