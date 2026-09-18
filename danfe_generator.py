@@ -1213,6 +1213,17 @@ def apply_operational_stamp(
     page = doc[0]
     page_rect = page.rect
 
+    # PDFs históricos podem já vir carimbados pelo TOTVS. Não sobrepõe um
+    # segundo carimbo nesses casos.
+    existing_text = page.get_text("text").upper()
+    if (
+        "DATA DE CHEGADA:" in existing_text
+        and "DESC CR:" in existing_text
+        and "RECEBIDO POR" in existing_text
+    ):
+        doc.close()
+        return pdf_bytes
+
     date_text = _stamp_date(data_chegada)
     cr_text = str(cr or "").strip()
     desc_text = str(desc_cr or "").strip()
