@@ -381,25 +381,101 @@ def _validate_payload(data: dict) -> None:
 
 
 def _draw_receipt(page, data, y):
-    h = 34.0
+    # Canhoto no topo no modo retrato, conforme MOC. Acrescentamos uma faixa
+    # de controle interno logo abaixo; o Portal permite campos adicionais no
+    # canhoto desde que o conteúdo fiscal e a leitura do DANFE não sejam
+    # prejudicados.
+    h = 48.0
+    split = RIGHT - 127.5  # ~4,5 cm para NF-e / número / série
+
     _rect(page, (MARGIN, y, RIGHT, y + h))
-    split = RIGHT - 105
     _line(page, split, y, split, y + h)
+    _line(page, MARGIN, y + 24, split, y + 24)
+
     _textbox(
         page,
-        (MARGIN + 3, y + 3, split - 3, y + 16),
-        f"RECEBEMOS DE {data['emitente']} OS PRODUTOS/SERVIÇOS CONSTANTES DA NF-e INDICADA AO LADO.",
-        5.2,
+        (MARGIN + 3, y + 3, split - 3, y + 21),
+        (
+            f"RECEBEMOS DE {data['emitente']} OS PRODUTOS/SERVIÇOS "
+            "CONSTANTES DA NOTA FISCAL ELETRÔNICA INDICADA AO LADO."
+        ),
+        6.0,
         False,
+        0,
+        BLACK,
+        1.0,
     )
-    _line(page, MARGIN, y + 17, split, y + 17)
-    _line(page, MARGIN + 106, y + 17, MARGIN + 106, y + h)
-    _label(page, MARGIN + 3, y + 23, "DATA DE RECEBIMENTO")
-    _label(page, MARGIN + 109, y + 23, "IDENTIFICAÇÃO E ASSINATURA DO RECEBEDOR")
-    _text(page, split + 34, y + 9, "NF-e", 10.0, True)
-    _text(page, split + 9, y + 21, f"Nº {_fmt_nf(data['nf'])}", 6.8, True)
-    _text(page, split + 9, y + 29, f"SÉRIE {data['serie']}", 6.8, True)
-    return y + h + 4
+
+    date_w = 116.0
+    _line(page, MARGIN + date_w, y + 24, MARGIN + date_w, y + h)
+    _label(page, MARGIN + 3, y + 31, "DATA DE RECEBIMENTO")
+    _label(
+        page,
+        MARGIN + date_w + 3,
+        y + 31,
+        "IDENTIFICAÇÃO E ASSINATURA DO RECEBEDOR",
+    )
+
+    _fit_text(
+        page,
+        split + 5,
+        y + 12,
+        RIGHT - 5,
+        "NF-e",
+        10.0,
+        10.0,
+        True,
+        "center",
+    )
+    _fit_text(
+        page,
+        split + 5,
+        y + 29,
+        RIGHT - 5,
+        f"Nº {_fmt_nf(data['nf'])}",
+        10.0,
+        10.0,
+        True,
+        "center",
+    )
+    _fit_text(
+        page,
+        split + 5,
+        y + 42,
+        RIGHT - 5,
+        f"SÉRIE {data['serie']}",
+        10.0,
+        10.0,
+        True,
+        "center",
+    )
+
+    # Faixa adicional do canhoto para o fluxo SETTA. Ela fica fora do quadro
+    # RESERVADO AO FISCO e será preenchida depois do cruzamento operacional.
+    y2 = y + h + 2
+    control_h = 24.0
+    _rect(page, (MARGIN, y2, RIGHT, y2 + control_h), fill=VERY_LIGHT)
+    widths = [94.0, 62.0, 112.0, 165.0]
+    points = [MARGIN]
+    for width in widths:
+        points.append(points[-1] + width)
+    points.append(RIGHT)
+
+    for x in points[1:-1]:
+        _line(page, x, y2, x, y2 + control_h, 0.35, MID)
+
+    labels = [
+        "CONTROLE INTERNO — SETTA",
+        "CR",
+        "DESC. CR",
+        "NATUREZA",
+        "RECEBIDO POR",
+    ]
+    for idx, label in enumerate(labels):
+        x0, x1 = points[idx], points[idx + 1]
+        _label(page, x0 + 3, y2 + 7, label)
+
+    return y2 + control_h + 4
 
 
 def _draw_main_header(page, data, y, page_no, total_pages):
