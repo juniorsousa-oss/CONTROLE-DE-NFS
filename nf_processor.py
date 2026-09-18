@@ -232,30 +232,63 @@ def extract_internal_nature(
     text: str,
     allowed_natures: Iterable[str] | None = None,
 ) -> str:
-    """Extrai a natureza interna do carimbo operacional sem confundir com Natureza da Operação."""
-    normalized = strip_accents_upper(text)
-    allowed = {
-        sanitize_filename_part(x).upper()
-        for x in (allowed_natures or [])
-        if sanitize_filename_part(x)
-    }
+    """Extrai qualquer natureza registrada no carimbo operacional.
 
-    patterns = [
-        r"NATUREZA\s+INTERNA\s*[:\-]?\s*([A-Z0-9_-]{1,12})",
-        r"NAT\.?\s+INTERNA\s*[:\-]?\s*([A-Z0-9_-]{1,12})",
-        # Carimbo TOTVS observado nos documentos: "NATUREZA: MP".
-        # O ":" é obrigatório nesta forma para não capturar "NATUREZA DA OPERAÇÃO".
-        r"\bNATUREZA\s*[:\-]\s*([A-Z0-9_-]{1,12})\b",
+    allowed_natures é mantido apenas por compatibilidade com chamadas antigas.
+    Ele NÃO funciona mais como lista restritiva: o valor encontrado na NF deve
+    prevalecer, inclusive quando for uma descrição longa e quebrada em linhas.
+    """
+    if not text:
+        return ""
+
+    raw_lines = [
+        re.sub(r"\s+", " ", str(line or "")).strip()
+        for line in text.splitlines()
     ]
+    raw_lines = [line for line in raw_lines if line]
 
-    for pattern in patterns:
-        for match in re.finditer(pattern, normalized):
-            value = sanitize_filename_part(match.group(1)).upper()
-            if not value:
-                continue
-            if allowed and value not in allowed:
-                continue
+    stop_re = re.compile(
+        r"^(?:DATA\s+(?:DA\s+)?CHEGADA|CR|DESC\s*CR|RECEBIDO\s+POR|"
+        r"RECEBEDOR|USUARIO|USUÁRIO|DATA\s+RECEBIMENTO)\s*[:\-]?",
+        flags=re.IGNORECASE,
+    )
+
+    for idx, line in enumerate(raw_lines):
+        normalized_line = strip_accents_upper(line)
+
+        if re.search(r"\bNATUREZA\s+DA\s+OPERACAO\b", normalized_line):
+            continue
+
+        match = re.search(
+            r"\b(?:NATUREZA(?:\s+INTERNA)?|NAT\.?\s+INTERNA)\s*[:\-]\s*(.*)$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            continue
+
+        parts: list[str] = []
+        first = re.sub(r"\s+", " ", match.group(1) or "").strip(" :-")
+        if first:
+            parts.append(first)
+
+        for next_line in raw_lines[idx + 1 : idx + 4]:
+            if stop_re.search(next_line):
+                break
+            next_norm = strip_accents_upper(next_line)
+            if re.search(r"\bNATUREZA\s+DA\s+OPERACAO\b", next_norm):
+                break
+            if re.match(r"^[A-ZÁÀÃÂÉÊÍÓÔÕÚÇ ]+\s*:", next_line, flags=re.IGNORECASE):
+                break
+            parts.append(next_line)
+
+        value = " ".join(parts)
+        value = re.sub(r"\s+", " ", value).strip(" .:-")
+        value = sanitize_filename_part(value).upper()
+
+        if value:
             return value
+
     return ""
 
 
