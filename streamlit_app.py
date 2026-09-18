@@ -1574,7 +1574,7 @@ elif page == "Configurações":
             st.write(
                 "Formato validado: A = Data, C = Número da NF, E = CNPJ e F = Status. "
                 "Somente registros com status **Pré-nota lançada** entram na base. "
-                "O arquivo é apenas selecionado primeiro; a leitura começa ao clicar em **Validar relatório**."
+                "Carregue o arquivo, valide a prévia e confirme a carga."
             )
 
             upload = st.file_uploader(
@@ -1628,7 +1628,11 @@ elif page == "Configurações":
                                 & only_pre["cnpj_valido"]
                             ].copy()
                             preview = (
-                                preview.sort_values("data_pre_nota", na_position="last")
+                                preview.sort_values(
+                                    ["data_pre_nota", "numero_nf"],
+                                    ascending=[False, True],
+                                    na_position="last",
+                                )
                                 .drop_duplicates(["numero_nf", "cnpj"], keep="last")
                                 .drop(
                                     columns=["status_normalizado", "cnpj_valido"],
@@ -1645,8 +1649,8 @@ elif page == "Configurações":
                             "_flash_pre",
                             "success" if not preview.empty else "warning",
                             (
-                                f"Relatório validado: {len(preview)} pré-nota(s) válida(s) "
-                                f"em {preview['data_pre_nota'].nunique(dropna=True)} dia(s)."
+                                f"Relatório validado: {len(preview)} pré-nota(s) válida(s). "
+                                f"Confira a tabela abaixo antes de confirmar a carga."
                                 if not preview.empty
                                 else "Relatório processado, mas nenhuma Pré-nota lançada válida foi encontrada."
                             ),
@@ -1660,50 +1664,14 @@ elif page == "Configurações":
             preview_name = str(st.session_state.get("pre_import_name") or "")
 
             if isinstance(preview, pd.DataFrame) and not preview.empty:
-                st.markdown(f"#### Prévia validada — {preview_name}")
-
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Pré-notas lançadas", len(preview))
-                m2.metric(
-                    "Dias com movimento",
-                    preview["data_pre_nota"].nunique(dropna=True),
-                )
-                m3.metric("Ignoradas por NF/CNPJ inválido", invalid_count)
-
-                groups = (
-                    preview.groupby("data_pre_nota", dropna=False)
-                    .agg(
-                        quantidade=("numero_nf", "size"),
-                        fornecedores=("cnpj", "nunique"),
+                st.markdown(f"#### Conferência da carga — {preview_name}")
+                if invalid_count:
+                    st.warning(
+                        f"{invalid_count} registro(s) com NF ou CNPJ inválido foram ignorados na validação."
                     )
-                    .reset_index()
-                    .sort_values(
-                        "data_pre_nota",
-                        ascending=False,
-                        na_position="last",
-                    )
-                )
-                st.markdown("#### Grupos por dia")
-                st.dataframe(
-                    groups,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "data_pre_nota": st.column_config.DateColumn(
-                            "Data", format="DD/MM/YYYY"
-                        ),
-                        "quantidade": "Pré-notas",
-                        "fornecedores": "CNPJs",
-                    },
-                )
 
-                st.markdown("#### Detalhamento")
                 st.dataframe(
-                    preview.sort_values(
-                        "data_pre_nota",
-                        ascending=False,
-                        na_position="last",
-                    ),
+                    preview,
                     use_container_width=True,
                     hide_index=True,
                     column_config={
@@ -1717,7 +1685,7 @@ elif page == "Configurações":
                 )
 
                 if st.button(
-                    "SUBSTITUIR BASE DE PRÉ-NOTAS",
+                    "CONFIRMAR E APLICAR CARGA",
                     type="primary",
                     use_container_width=True,
                     key="replace_pre_import",
@@ -1741,16 +1709,16 @@ elif page == "Configurações":
                                 })
                             result = db.replace_pre_notes(rows, preview_name or "relatorio")
                             message = (
-                                f"Base de pré-notas atualizada com sucesso: "
+                                f"Carga confirmada: "
                                 f"{int(result.get('registros', len(rows)))} registro(s) gravado(s)."
                             )
                         elif not SAVE_NF_HISTORY:
                             message = (
-                                "Base de pré-notas aplicada somente nesta sessão de testes. "
-                                "Nada foi gravado no Supabase."
+                                f"Carga confirmada para testes: {len(preview)} registro(s) aplicados "
+                                "somente nesta sessão. Nada foi gravado no Supabase."
                             )
                         else:
-                            message = "Base de pré-notas aplicada nesta sessão."
+                            message = f"Carga confirmada: {len(preview)} registro(s) aplicados nesta sessão."
 
                         if not st.session_state.analysis.empty:
                             st.session_state.analysis = apply_cross_checks(
@@ -1758,64 +1726,21 @@ elif page == "Configurações":
                             )
 
                         set_flash("_flash_pre", "success", message)
+                        # Limpa somente a prévia para o menu voltar ao estado enxuto.
+                        st.session_state.pre_import_preview = pd.DataFrame()
+                        st.session_state.pre_import_invalid_count = 0
+                        st.session_state.pre_import_name = ""
                         st.rerun()
                     except Exception as exc:
-                        st.error(f"Falha ao gravar base de pré-notas: {exc}")
+                        st.error(f"Falha ao aplicar base de pré-notas: {exc}")
 
-            pre = st.session_state.pre_notes.copy()
-            if pre.empty:
-                st.info(
-                    "Base de pré-notas vazia. Carregue e valide o novo relatório acima para iniciar este teste."
+            elif not st.session_state.pre_notes.empty:
+                st.success(
+                    f"Carga atual confirmada: {len(st.session_state.pre_notes)} pré-nota(s). "
+                    "A conferência operacional fica em Controle de Doc."
                 )
             else:
-                processed = current_process_records_for_tests()
-
-                processed_keys = set()
-                if not processed.empty:
-                    for _, prow in processed.iterrows():
-                        key = pre_note_key(
-                            prow.get("numero_nf"),
-                            prow.get("cnpj_fornecedor"),
-                        )
-                        if key:
-                            processed_keys.add(key)
-
-                pre["validacao_documento"] = pre.apply(
-                    lambda row: (
-                        "PROCESSADA"
-                        if pre_note_key(row.get("numero_nf"), row.get("cnpj"))
-                        in processed_keys
-                        else "PENDENTE DE DOCUMENTO"
-                    ),
-                    axis=1,
-                )
-
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Pré-notas na base", len(pre))
-                c2.metric(
-                    "Processadas",
-                    int(pre["validacao_documento"].eq("PROCESSADA").sum()),
-                )
-                c3.metric(
-                    "Pendentes",
-                    int(
-                        pre["validacao_documento"]
-                        .eq("PENDENTE DE DOCUMENTO")
-                        .sum()
-                    ),
-                )
-                st.caption(
-                    "Validação feita por NF + CNPJ. A data não interfere na correspondência."
-                )
-                st.dataframe(
-                    pre.sort_values(
-                        "data_pre_nota",
-                        ascending=False,
-                        na_position="last",
-                    ),
-                    use_container_width=True,
-                    hide_index=True,
-                )
+                st.info("Nenhuma carga de pré-notas confirmada nesta sessão.")
 
 
         with feed_mrp:
