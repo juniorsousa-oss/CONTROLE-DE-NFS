@@ -1787,6 +1787,54 @@ elif page == "Pendências":
                 .replace("", "NÃO LOCALIZADO")
             )
             pending_view["validacao_documento"] = "PENDENTE DE DOCUMENTO"
+            pending_view["nf_cnpj"] = pending_view.apply(
+                lambda row: (
+                    f"{normalized_nf(row.get('numero_nf'))}_{digits_only(row.get('cnpj'))}"
+                    if normalized_nf(row.get("numero_nf")) and digits_only(row.get("cnpj"))
+                    else ""
+                ),
+                axis=1,
+            )
+
+            impact_summary = st.session_state.get("mrp_priority_summary")
+            if isinstance(impact_summary, pd.DataFrame) and not impact_summary.empty:
+                impact_map = (
+                    impact_summary[
+                        ["nf_cnpj", "prioridade", "data_cm", "ops"]
+                    ]
+                    .drop_duplicates("nf_cnpj", keep="first")
+                    .set_index("nf_cnpj")
+                    .to_dict("index")
+                )
+
+                pending_view["prioridade"] = pending_view["nf_cnpj"].map(
+                    lambda key: str(impact_map.get(key, {}).get("prioridade") or "ERRO")
+                )
+                pending_view["data_cm"] = pending_view["nf_cnpj"].map(
+                    lambda key: impact_map.get(key, {}).get("data_cm")
+                )
+                pending_view["situacao_mrp"] = pending_view["nf_cnpj"].map(
+                    lambda key: (
+                        "OK"
+                        if key in impact_map
+                        else "NÃO LOCALIZADA NO IMPACTO MRP"
+                    )
+                )
+            else:
+                pending_view["prioridade"] = "AGUARDANDO CARGA MRP"
+                pending_view["data_cm"] = None
+                pending_view["situacao_mrp"] = "IMPACTO MRP NÃO CARREGADO"
+
+            mrp_errors = int(
+                pending_view["situacao_mrp"]
+                .eq("NÃO LOCALIZADA NO IMPACTO MRP")
+                .sum()
+            )
+            if mrp_errors:
+                st.error(
+                    f"{mrp_errors} pré-nota(s) não possuem correspondência na tabela de Impacto MRP. "
+                    "É necessária verificação detalhada de NF + CNPJ."
+                )
 
             st.markdown(
                 f"""
@@ -1899,18 +1947,29 @@ elif page == "Pendências":
                     filtered["fornecedor"].fillna("").astype(str).eq(selected_supplier)
                 ].copy()
 
-            filtered = filtered.sort_values(
-                ["data_pre_nota", "numero_nf"],
-                ascending=[False, True],
-                na_position="last",
+            priority_order = {
+                "ERRO": 0,
+                "ALTA": 1,
+                "BAIXA": 2,
+                "AGUARDANDO CARGA MRP": 3,
+            }
+            filtered["_priority_order"] = (
+                filtered["prioridade"].map(priority_order).fillna(9)
             )
+            filtered = filtered.sort_values(
+                ["_priority_order", "data_cm", "data_pre_nota", "numero_nf"],
+                ascending=[True, True, False, True],
+                na_position="last",
+            ).drop(columns="_priority_order")
 
             table_cols = [
                 "data_pre_nota",
                 "numero_nf",
                 "cnpj",
                 "fornecedor",
-                "status",
+                "prioridade",
+                "data_cm",
+                "situacao_mrp",
                 "validacao_documento",
             ]
 
@@ -1929,9 +1988,17 @@ elif page == "Pendências":
                         "Fornecedor",
                         width="large",
                     ),
-                    "status": "Status",
+                    "prioridade": "Prioridade",
+                    "data_cm": st.column_config.DateColumn(
+                        "Data CM",
+                        format="DD/MM/YYYY",
+                    ),
+                    "situacao_mrp": st.column_config.TextColumn(
+                        "Situação MRP",
+                        width="medium",
+                    ),
                     "validacao_documento": st.column_config.TextColumn(
-                        "Validação",
+                        "Validação documento",
                         width="medium",
                     ),
                 },
