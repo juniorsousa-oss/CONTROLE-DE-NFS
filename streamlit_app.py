@@ -1360,18 +1360,6 @@ elif page == "Pendências":
             temp["chave_validacao"].ne("") & ~temp["chave_validacao"].isin(pre_keys)
         ].copy()
 
-    mrp_summary = st.session_state.get("mrp_priority_summary")
-    mrp_count = int(mrp_summary["numero_nf"].nunique()) if isinstance(mrp_summary, pd.DataFrame) and not mrp_summary.empty else 0
-    reviewing = 0
-    if isinstance(st.session_state.analysis, pd.DataFrame) and not st.session_state.analysis.empty:
-        reviewing = int(st.session_state.analysis.get("status", pd.Series(dtype=str)).eq("REVISAR").sum())
-
-    p1, p2, p3, p4 = st.columns(4)
-    p1.metric("Pré-notas pendentes", len(pending_pre))
-    p2.metric("PDFs sem pré-nota", len(pdf_without_pre))
-    p3.metric("NFs impacto MRP", mrp_count)
-    p4.metric("Em revisão", reviewing)
-
     pend_pre_tab, pend_mrp_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP", "Processamento de arquivos"])
 
     with pend_pre_tab:
@@ -1381,37 +1369,204 @@ elif page == "Pendências":
                 "Use Configurações > Alimentação > Validação Pré-notas."
             )
         elif pending_pre.empty:
-            st.success("Nenhuma pré-nota pendente de documento na base atual.")
+            st.success("Nenhuma pré-nota pendente de documento na carga atual.")
         else:
-            if not SAVE_NF_HISTORY:
-                st.caption(
-                    "Modo de testes: esta lista usa somente a base de pré-notas carregada nesta sessão "
-                    "e o lote atual de PDFs. Nenhum histórico do banco é considerado."
+            # Complementa a carga com o fornecedor padrão usando o CNPJ.
+            supplier_base = supplier_dataframe(st.session_state.suppliers)
+            supplier_map = {}
+            if not supplier_base.empty:
+                supplier_map = (
+                    supplier_base[
+                        supplier_base["cnpj"].fillna("").astype(str).str.strip().ne("")
+                    ]
+                    .drop_duplicates("cnpj", keep="first")
+                    .set_index("cnpj")["nome_padrao"]
+                    .to_dict()
                 )
-            st.warning(f"{len(pending_pre)} pré-nota(s) ainda não possuem PDF processado correspondente por NF + CNPJ.")
-            if "data_pre_nota" in pending_pre.columns:
-                groups = (
-                    pending_pre.groupby("data_pre_nota", dropna=False)
-                    .size()
-                    .reset_index(name="pendentes")
-                    .sort_values("data_pre_nota", ascending=False, na_position="last")
-                )
-                st.dataframe(
-                    groups,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "data_pre_nota": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
-                        "pendentes": "Pendentes",
-                    },
-                )
-            show_cols = [x for x in ["data_pre_nota", "numero_nf", "cnpj", "status"] if x in pending_pre.columns]
-            st.dataframe(pending_pre[show_cols], use_container_width=True, hide_index=True)
 
-            if not pdf_without_pre.empty:
-                with st.expander(f"PDFs processados sem pré-nota correspondente ({len(pdf_without_pre)})"):
-                    cols = [x for x in ["numero_nf", "cnpj_fornecedor", "fornecedor_padrao", "arquivo_final", "processado_em"] if x in pdf_without_pre.columns]
-                    st.dataframe(pdf_without_pre[cols], use_container_width=True, hide_index=True)
+            pending_view = pending_pre.copy()
+            pending_view["cnpj"] = pending_view["cnpj"].map(digits_only)
+            pending_view["fornecedor"] = (
+                pending_view["cnpj"]
+                .map(supplier_map)
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .replace("", "NÃO LOCALIZADO")
+            )
+            pending_view["validacao_documento"] = "PENDENTE DE DOCUMENTO"
+
+            st.markdown(
+                f"""
+                <div class="panel" style="padding:1.05rem 1.2rem;margin:0 0 1rem 0;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
+                        <div>
+                            <div style="font-size:1.12rem;font-weight:800;color:#0f172a;">Pré-notas pendentes de documento</div>
+                            <div style="margin-top:.24rem;font-size:.82rem;color:#64748b;">
+                                Conferência da carga atual por NF + CNPJ. O histórico do banco permanece ignorado no modo de testes.
+                            </div>
+                        </div>
+                        <div style="font-size:.82rem;font-weight:800;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:.45rem .75rem;">
+                            {len(pending_view)} pendente(s)
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Barra de pesquisa no mesmo padrão visual do fluxo operacional.
+            if "pre_pending_search" not in st.session_state:
+                st.session_state.pre_pending_search = ""
+            if "pre_pending_status" not in st.session_state:
+                st.session_state.pre_pending_status = "Todos"
+            if "pre_pending_date" not in st.session_state:
+                st.session_state.pre_pending_date = "Todas"
+            if "pre_pending_supplier" not in st.session_state:
+                st.session_state.pre_pending_supplier = "Todos"
+
+            status_options = ["Todos"] + sorted(
+                pending_view["status"].fillna("").astype(str).loc[
+                    lambda s: s.str.strip().ne("")
+                ].unique().tolist()
+            )
+
+            date_values = sorted(
+                [
+                    d for d in pd.to_datetime(
+                        pending_view["data_pre_nota"], errors="coerce"
+                    ).dt.date.dropna().unique().tolist()
+                ],
+                reverse=True,
+            )
+            date_options = ["Todas"] + [d.strftime("%d/%m/%Y") for d in date_values]
+
+            supplier_options = ["Todos"] + sorted(
+                pending_view["fornecedor"].fillna("").astype(str).loc[
+                    lambda s: s.str.strip().ne("")
+                ].unique().tolist()
+            )
+
+            def _clear_pre_pending_filters():
+                st.session_state.pre_pending_search = ""
+                st.session_state.pre_pending_status = "Todos"
+                st.session_state.pre_pending_date = "Todas"
+                st.session_state.pre_pending_supplier = "Todos"
+
+            with st.container(border=True):
+                f1, f2, f3, f4 = st.columns([1.6, 1, 1, 1])
+                f1.text_input(
+                    "Buscar NF / CNPJ / fornecedor",
+                    key="pre_pending_search",
+                )
+                f2.selectbox(
+                    "Status",
+                    status_options,
+                    key="pre_pending_status",
+                )
+                f3.selectbox(
+                    "Data da pré-nota",
+                    date_options,
+                    key="pre_pending_date",
+                )
+                f4.selectbox(
+                    "Fornecedor",
+                    supplier_options,
+                    key="pre_pending_supplier",
+                )
+
+                b1, b2 = st.columns([9, 1])
+                b1.button(
+                    "Pesquisar",
+                    type="primary",
+                    use_container_width=True,
+                    key="pre_pending_search_button",
+                )
+                b2.button(
+                    "Limpar",
+                    use_container_width=True,
+                    key="pre_pending_clear_button",
+                    on_click=_clear_pre_pending_filters,
+                )
+
+            filtered = pending_view.copy()
+
+            search_term = normalize_text(
+                st.session_state.get("pre_pending_search") or ""
+            )
+            if search_term:
+                search_mask = (
+                    filtered["numero_nf"].fillna("").astype(str).map(normalize_text).str.contains(search_term, na=False)
+                    | filtered["cnpj"].fillna("").astype(str).map(normalize_text).str.contains(search_term, na=False)
+                    | filtered["fornecedor"].fillna("").astype(str).map(normalize_text).str.contains(search_term, na=False)
+                )
+                filtered = filtered[search_mask].copy()
+
+            selected_status = st.session_state.get("pre_pending_status") or "Todos"
+            if selected_status != "Todos":
+                filtered = filtered[
+                    filtered["status"].fillna("").astype(str).eq(selected_status)
+                ].copy()
+
+            selected_date = st.session_state.get("pre_pending_date") or "Todas"
+            if selected_date != "Todas":
+                selected_date_obj = pd.to_datetime(
+                    selected_date, format="%d/%m/%Y", errors="coerce"
+                )
+                if not pd.isna(selected_date_obj):
+                    filtered_dates = pd.to_datetime(
+                        filtered["data_pre_nota"], errors="coerce"
+                    ).dt.date
+                    filtered = filtered[
+                        filtered_dates.eq(selected_date_obj.date())
+                    ].copy()
+
+            selected_supplier = st.session_state.get("pre_pending_supplier") or "Todos"
+            if selected_supplier != "Todos":
+                filtered = filtered[
+                    filtered["fornecedor"].fillna("").astype(str).eq(selected_supplier)
+                ].copy()
+
+            filtered = filtered.sort_values(
+                ["data_pre_nota", "numero_nf"],
+                ascending=[False, True],
+                na_position="last",
+            )
+
+            table_cols = [
+                "data_pre_nota",
+                "numero_nf",
+                "cnpj",
+                "fornecedor",
+                "status",
+                "validacao_documento",
+            ]
+
+            st.dataframe(
+                filtered[table_cols],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "data_pre_nota": st.column_config.DateColumn(
+                        "Data da pré-nota",
+                        format="DD/MM/YYYY",
+                    ),
+                    "numero_nf": "NF",
+                    "cnpj": "CNPJ",
+                    "fornecedor": st.column_config.TextColumn(
+                        "Fornecedor",
+                        width="large",
+                    ),
+                    "status": "Status",
+                    "validacao_documento": st.column_config.TextColumn(
+                        "Validação",
+                        width="medium",
+                    ),
+                },
+            )
+            st.caption(
+                f"Exibindo {len(filtered)} de {len(pending_view)} pré-nota(s) pendente(s)."
+            )
 
     with pend_mrp_tab:
         render_mrp_priority_feed("pendencias_mrp", allow_feed=False)
