@@ -357,7 +357,20 @@ with st.sidebar:
     )
     st.divider()
     st.markdown('<div class="label">Operador</div>', unsafe_allow_html=True)
-    st.session_state.operator = st.text_input("Nome do operador", value=st.session_state.operator, label_visibility="collapsed", placeholder="Informe o responsável")
+    try:
+        _usuarios_ativos = db.list_users(active_only=True) if db.configured() else []
+    except Exception:
+        _usuarios_ativos = []
+    _nomes_usuarios = [str(x.get("nome") or "").strip() for x in _usuarios_ativos if str(x.get("nome") or "").strip()]
+    if _nomes_usuarios:
+        _placeholder_operador = "Selecione o operador"
+        _opcoes_operador = [_placeholder_operador] + _nomes_usuarios
+        _operador_atual = str(st.session_state.operator or "").strip()
+        _indice_operador = _opcoes_operador.index(_operador_atual) if _operador_atual in _opcoes_operador else 0
+        _operador_escolhido = st.selectbox("Operador", _opcoes_operador, index=_indice_operador, label_visibility="collapsed", key="operador_select")
+        st.session_state.operator = "" if _operador_escolhido == _placeholder_operador else _operador_escolhido
+    else:
+        st.session_state.operator = st.text_input("Nome do operador", value=st.session_state.operator, label_visibility="collapsed", placeholder="Cadastre um usuário em Configurações")
     st.divider()
     st.markdown('<div class="label">Identidade visual</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="logo-preview">{logo_html()}</div>', unsafe_allow_html=True)
@@ -622,7 +635,7 @@ elif page == "Processamento de arquivos":
 
 
 elif page == "Configurações":
-    tab_personalizacao, tab_alimentacao = st.tabs(["Personalização", "Alimentação"])
+    tab_personalizacao, tab_alimentacao, tab_usuarios = st.tabs(["Personalização", "Alimentação", "Usuários"])
 
     with tab_personalizacao:
         st.markdown("### Personalização do aplicativo")
@@ -905,6 +918,91 @@ elif page == "Configurações":
                 except Exception:
                     pass
 
+
+
+    with tab_usuarios:
+        st.markdown("### Usuários")
+        st.caption("Cadastre os usuários operacionais que poderão ser selecionados como responsáveis pelos processamentos do aplicativo.")
+
+        with st.expander("+ NOVO USUÁRIO", expanded=False):
+            with st.form("form_novo_usuario_nf", clear_on_submit=True):
+                u1, u2 = st.columns(2)
+                novo_nome = u1.text_input("Nome do usuário")
+                novo_email = u2.text_input("E-mail (opcional)")
+                criar_usuario = st.form_submit_button("CRIAR USUÁRIO", type="primary", use_container_width=True)
+
+            if criar_usuario:
+                if not str(novo_nome or "").strip():
+                    st.error("Informe o nome do usuário.")
+                elif novo_email and ("@" not in novo_email or "." not in novo_email.split("@")[-1]):
+                    st.error("Informe um e-mail válido ou deixe o campo em branco.")
+                else:
+                    try:
+                        db.create_user(novo_nome, novo_email)
+                        st.success("Usuário criado com sucesso.")
+                        st.rerun()
+                    except Exception as exc:
+                        mensagem = str(exc)
+                        if "duplicate" in mensagem.lower() or "unique" in mensagem.lower():
+                            st.error("Já existe um usuário com esse nome.")
+                        else:
+                            st.error(f"Não foi possível criar o usuário: {exc}")
+
+        try:
+            usuarios = db.list_users() if db.configured() else []
+        except Exception as exc:
+            usuarios = []
+            st.error(f"Não foi possível carregar os usuários: {exc}")
+
+        if not usuarios:
+            st.info("Nenhum usuário cadastrado.")
+        else:
+            ativos = sum(1 for u in usuarios if bool(u.get("ativo")))
+            c1, c2 = st.columns(2)
+            c1.metric("Usuários cadastrados", len(usuarios))
+            c2.metric("Usuários ativos", ativos)
+
+            tabela_usuarios = pd.DataFrame(usuarios)
+            colunas_usuario = [x for x in ["nome", "email", "ativo", "criado_em", "atualizado_em"] if x in tabela_usuarios.columns]
+            st.dataframe(tabela_usuarios[colunas_usuario], use_container_width=True, hide_index=True)
+
+            st.markdown("#### Editar usuário")
+            mapa_usuarios = {str(u.get("nome") or u.get("email") or u.get("id")): u for u in usuarios}
+            usuario_label = st.selectbox("Selecionar usuário", list(mapa_usuarios.keys()), key="usuario_edicao_select")
+            usuario = mapa_usuarios[usuario_label]
+
+            with st.form("form_editar_usuario_nf"):
+                e1, e2 = st.columns(2)
+                nome_editado = e1.text_input("Nome", value=str(usuario.get("nome") or ""))
+                email_editado = e2.text_input("E-mail", value=str(usuario.get("email") or ""))
+                ativo_editado = st.toggle("Usuário ativo", value=bool(usuario.get("ativo")), key="usuario_ativo_toggle")
+                salvar_usuario = st.form_submit_button("SALVAR ALTERAÇÕES", type="primary", use_container_width=True)
+
+            if salvar_usuario:
+                if not nome_editado.strip():
+                    st.error("O nome do usuário não pode ficar vazio.")
+                else:
+                    try:
+                        db.update_user(str(usuario.get("id")), nome_editado, email_editado, ativo_editado)
+                        st.success("Usuário atualizado.")
+                        if st.session_state.operator == str(usuario.get("nome") or "") and not ativo_editado:
+                            st.session_state.operator = ""
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Não foi possível atualizar o usuário: {exc}")
+
+            with st.expander("Excluir usuário", expanded=False):
+                st.warning("A exclusão remove o usuário da lista de operadores. Os registros históricos já gravados permanecem preservados.")
+                confirmar_exclusao = st.checkbox("Confirmo a exclusão deste usuário", key="confirmar_exclusao_usuario")
+                if st.button("EXCLUIR USUÁRIO", disabled=not confirmar_exclusao, use_container_width=True):
+                    try:
+                        db.delete_user(str(usuario.get("id")))
+                        if st.session_state.operator == str(usuario.get("nome") or ""):
+                            st.session_state.operator = ""
+                        st.success("Usuário excluído.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Não foi possível excluir o usuário: {exc}")
 
 
 st.markdown(f'<div class="footer">{cfg["footer"]}</div>', unsafe_allow_html=True)
