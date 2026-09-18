@@ -1194,9 +1194,10 @@ elif page == "Processamento de arquivos":
                             "Fornecedor",
                             width="large",
                         ),
-                        "natureza": st.column_config.SelectboxColumn(
+                        "natureza": st.column_config.TextColumn(
                             "Natureza",
-                            options=[""] + nature_options,
+                            width="large",
+                            help="Valor livre lido do carimbo da NF. Pode ser MP, MC ou uma descrição completa.",
                         ),
                         "status": st.column_config.SelectboxColumn(
                             "Status",
@@ -1328,7 +1329,7 @@ elif page == "Configurações":
             side_sub = st.text_input("Subtítulo do menu lateral", cur["sidebar_subtitle"])
             intro = st.text_area("Texto da tela principal", cur["intro"])
             footer = st.text_input("Rodapé", cur["footer"])
-            natures = st.text_input("Naturezas internas (separadas por vírgula)", str(cur.get("naturezas") or "MP,MC"))
+            natures = st.text_input("Naturezas para atribuição rápida (separadas por vírgula)", str(cur.get("naturezas") or "MP,MC"))
             button_color = st.color_picker("Cor principal dos botões", cur["button_color"])
             save = st.form_submit_button("Salvar textos e cor", type="primary", use_container_width=True)
         if save:
