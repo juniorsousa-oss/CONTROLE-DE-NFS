@@ -1329,20 +1329,38 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
         )
 
         show = summary.copy()
+
+        # Na visão operacional, prioridade BAIXA não precisa exibir dados de
+        # necessidade MRP. Mantemos os valores internamente, mas deixamos as
+        # células vazias para leitura mais limpa da tabela.
+        low_mask = show["prioridade"].fillna("").astype(str).str.upper().eq("BAIXA")
+        show.loc[low_mask, "ops"] = ""
+        show.loc[low_mask, "data_cm"] = pd.NaT
+        show.loc[low_mask, "itens_impacto"] = None
+
+        visible_cols = [
+            "data_pre_nota",
+            "numero_nf",
+            "fornecedor",
+            "prioridade",
+            "ops",
+            "data_cm",
+            "itens_impacto",
+            "fornecedor_validacao",
+        ]
+
         st.dataframe(
-            show,
+            show[visible_cols],
             use_container_width=True,
             hide_index=True,
             column_config={
                 "data_pre_nota": st.column_config.DateColumn("Data pré-nota", format="DD/MM/YYYY"),
                 "numero_nf": "NF",
-                "cnpj": "CNPJ",
                 "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
                 "prioridade": "Prioridade",
                 "ops": st.column_config.TextColumn("OPs", width="large"),
                 "data_cm": st.column_config.DateColumn("Data CM", format="DD/MM/YYYY"),
                 "itens_impacto": "Itens impacto",
-                "data_nf": "DATA + NF",
                 "fornecedor_validacao": st.column_config.TextColumn(
                     "Fornecedor validado",
                     width="large",
@@ -3264,7 +3282,6 @@ elif page == "Pendências":
                 "cnpj",
                 "fornecedor",
                 "prioridade",
-                "data_cm",
                 "situacao_mrp",
                 "aderencia_fornecedor",
                 "validacao_documento",
