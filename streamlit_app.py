@@ -1341,12 +1341,30 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
         show = summary.copy()
 
         # Na visão operacional, prioridade BAIXA não precisa exibir dados de
-        # necessidade MRP. Mantemos os valores internamente, mas deixamos as
-        # células vazias para leitura mais limpa da tabela.
+        # necessidade MRP. Mantemos os valores internos intactos e criamos
+        # colunas apenas de exibição para que Streamlit não mostre "None".
         low_mask = show["prioridade"].fillna("").astype(str).str.upper().eq("BAIXA")
         show.loc[low_mask, "ops"] = ""
-        show.loc[low_mask, "data_cm"] = pd.NaT
-        show.loc[low_mask, "itens_impacto"] = None
+
+        show["data_cm_exibicao"] = show["data_cm"].map(
+            lambda value: (
+                normalized_business_date(value).strftime("%d/%m/%Y")
+                if normalized_business_date(value)
+                else ""
+            )
+        )
+        show["itens_impacto_exibicao"] = show["itens_impacto"].map(
+            lambda value: (
+                ""
+                if value is None or pd.isna(value)
+                else str(int(value))
+                if str(value).replace(".", "", 1).isdigit()
+                else str(value)
+            )
+        )
+
+        show.loc[low_mask, "data_cm_exibicao"] = ""
+        show.loc[low_mask, "itens_impacto_exibicao"] = ""
 
         visible_cols = [
             "data_pre_nota",
@@ -1354,8 +1372,8 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
             "fornecedor",
             "prioridade",
             "ops",
-            "data_cm",
-            "itens_impacto",
+            "data_cm_exibicao",
+            "itens_impacto_exibicao",
             "fornecedor_validacao",
         ]
 
@@ -1369,8 +1387,8 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
                 "prioridade": "Prioridade",
                 "ops": st.column_config.TextColumn("OPs", width="large"),
-                "data_cm": st.column_config.DateColumn("Data CM", format="DD/MM/YYYY"),
-                "itens_impacto": "Itens impacto",
+                "data_cm_exibicao": st.column_config.TextColumn("Data CM"),
+                "itens_impacto_exibicao": st.column_config.TextColumn("Itens impacto"),
                 "fornecedor_validacao": st.column_config.TextColumn(
                     "Fornecedor validado",
                     width="large",
