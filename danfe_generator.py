@@ -15,8 +15,8 @@ PAGE_W = 595.276
 PAGE_H = 841.89
 LINE_W = 0.185
 BLACK = (0, 0, 0)
-FONT_REGULAR = "Times-Roman"
-FONT_BOLD = "Times-Bold"
+FONT_REGULAR = "helv"
+FONT_BOLD = "hebo"
 
 # Geometria calibrada diretamente pelo DANFE de referência validado pela operação.
 # O objetivo é manter o mesmo desenho independentemente do tpImp presente no XML:
@@ -201,6 +201,7 @@ def _parse_nfe(raw_xml: bytes) -> dict:
             {
                 "code": _node_text(prod, "cProd"),
                 "desc": _node_text(prod, "xProd"),
+                "inf_ad_prod": _node_text(det, "infAdProd"),
                 "ncm": _node_text(prod, "NCM"),
                 "cst": cst_full,
                 "cfop": _node_text(prod, "CFOP"),
@@ -231,6 +232,7 @@ def _parse_nfe(raw_xml: bytes) -> dict:
         ),
         "emitente_ie": _node_text(emit, "IE"),
         "emitente_iest": _node_text(emit, "IEST"),
+        "emitente_im": _node_text(emit, "IM"),
         "emitente_end": {
             "logradouro": _node_text(emit_addr, "xLgr"),
             "numero": _node_text(emit_addr, "nro"),
@@ -430,6 +432,41 @@ def _draw_text(
     )
 
 
+def _fit_text_size(
+    value: object,
+    max_width: float,
+    max_size: float,
+    min_size: float = 4.4,
+    bold: bool = False,
+) -> float:
+    text = str(value or "")
+    size = max_size
+    while size > min_size and _text_width(text, size, bold) > max_width:
+        size -= 0.2
+    return max(min_size, size)
+
+
+def _draw_fit_text(
+    page: fitz.Page,
+    x0: float,
+    y: float,
+    x1: float,
+    value: object,
+    max_size: float = 6.321,
+    min_size: float = 4.4,
+    bold: bool = False,
+    align: str = "left",
+):
+    size = _fit_text_size(
+        value,
+        max(1.0, x1 - x0),
+        max_size,
+        min_size,
+        bold,
+    )
+    _draw_text(page, x0, y, value, size, bold, align, x1)
+
+
 def _wrap_lines(
     value: str,
     max_width: float,
@@ -624,7 +661,7 @@ def _draw_header(page: fitz.Page, data: dict, page_no: int, total_pages: int):
     _draw_line(page, 341.50, 147.77, 341.50, 169.00)
     _label(page, 20.27, 157.25, "NATUREZA DA OPERAÇÃO")
     _label(page, 343.35, 157.25, "PROTOCOLO DE AUTORIZAÇÃO DE USO")
-    _draw_text(page, 20.27, 166.67, data["natOp"], 6.321)
+    _draw_fit_text(page, 20.27, 166.67, 339.0, data["natOp"], 6.321, 4.5)
 
     protocol = data["protocolo"]
     if data["protocolo_data"]:
@@ -633,7 +670,7 @@ def _draw_header(page: fitz.Page, data: dict, page_no: int, total_pages: int):
         protocol_time = _format_time(data["protocolo_data"])
         if protocol_time:
             protocol += f" {protocol_time}"
-    _draw_text(page, 343.35, 166.67, protocol, 5.9)
+    _draw_fit_text(page, 343.35, 166.67, 573.0, protocol, 5.9, 4.5)
 
     _draw_rect(page, 18.43, 170.85, 575.04, 192.08)
     _draw_line(page, 203.04, 170.85, 203.04, 192.08)
@@ -641,9 +678,9 @@ def _draw_header(page: fitz.Page, data: dict, page_no: int, total_pages: int):
     _label(page, 20.27, 179.05, "INSCRIÇÃO ESTADUAL")
     _label(page, 204.88, 179.05, "INSC.ESTADUAL DO SUBST.TRIB.")
     _label(page, 389.50, 179.05, "CNPJ/CPF")
-    _draw_text(page, 20.27, 186.98, data["emitente_ie"], 6.321)
-    _draw_text(page, 204.88, 186.98, data["emitente_iest"], 6.321)
-    _draw_text(page, 389.50, 186.98, data["emitente_cnpj"], 6.321)
+    _draw_fit_text(page, 20.27, 186.98, 200.5, data["emitente_ie"], 6.321)
+    _draw_fit_text(page, 204.88, 186.98, 385.0, data["emitente_iest"], 6.321)
+    _draw_fit_text(page, 389.50, 186.98, 573.0, data["emitente_cnpj"], 6.321)
 
 
 def _draw_recipient(page: fitz.Page, data: dict):
@@ -655,9 +692,9 @@ def _draw_recipient(page: fitz.Page, data: dict):
     _label(page, 20.27, 209.86, "NOME/RAZÃO SOCIAL")
     _label(page, 279.66, 209.86, "CNPJ/CPF")
     _label(page, 483.66, 209.86, "DATA DE EMISSÃO")
-    _draw_text(page, 20.27, 217.92, data["destinatario"], 6.321)
-    _draw_text(page, 279.66, 217.92, data["destinatario_cnpj"], 6.321)
-    _draw_text(page, 483.66, 217.92, _format_date(data["dhEmi"]), 6.321)
+    _draw_fit_text(page, 20.27, 217.92, 274.5, data["destinatario"], 6.321)
+    _draw_fit_text(page, 279.66, 217.92, 479.0, data["destinatario_cnpj"], 6.321)
+    _draw_fit_text(page, 483.66, 217.92, 573.0, _format_date(data["dhEmi"]), 6.321)
 
     _draw_rect(page, 18.43, 219.77, 575.04, 238.23)
     _draw_line(page, 230.73, 219.77, 230.73, 238.23)
@@ -678,9 +715,9 @@ def _draw_recipient(page: fitz.Page, data: dict):
         ]
         if value
     )
-    _draw_text(page, 20.27, 235.46, full_address, 6.0)
-    _draw_text(page, 232.58, 235.46, address["bairro"], 6.321)
-    _draw_text(page, 371.04, 235.46, address["cep"], 6.321)
+    _draw_fit_text(page, 20.27, 235.46, 228.5, full_address, 6.0, 4.4)
+    _draw_fit_text(page, 232.58, 235.46, 366.0, address["bairro"], 6.321, 4.4)
+    _draw_fit_text(page, 371.04, 235.46, 479.0, address["cep"], 6.321, 4.4)
     _draw_text(page, 483.66, 235.46, _format_date(data["dhSaiEnt"]), 6.321)
 
     _draw_rect(page, 18.43, 237.31, 575.04, 256.69)
@@ -823,7 +860,15 @@ def _draw_shipping(page: fitz.Page, data: dict):
     for idx in range(6):
         _draw_rect(page, row1[idx], 354.54, row1[idx + 1], 375.77)
         _label(page, row1[idx] + 1.84, 362.74, labels1[idx])
-        _draw_text(page, row1[idx] + 1.84, 372.08, values1[idx], 5.9)
+        _draw_fit_text(
+            page,
+            row1[idx] + 1.84,
+            372.08,
+            row1[idx + 1] - 1.84,
+            values1[idx],
+            5.9,
+            4.2,
+        )
 
     row2 = [18.43, 239.96, 332.27, 424.58, 575.04]
     labels2 = ["ENDEREÇO", "MUNICIPIO", "UF", "INSCRIÇÃO ESTADUAL"]
@@ -831,7 +876,15 @@ def _draw_shipping(page: fitz.Page, data: dict):
     for idx in range(4):
         _draw_rect(page, row2[idx], 374.85, row2[idx + 1], 397.00)
         _label(page, row2[idx] + 1.84, 383.05, labels2[idx])
-        _draw_text(page, row2[idx] + 1.84, 392.39, values2[idx], 5.9)
+        _draw_fit_text(
+            page,
+            row2[idx] + 1.84,
+            392.39,
+            row2[idx + 1] - 1.84,
+            values2[idx],
+            5.9,
+            4.2,
+        )
 
     row3 = [18.43, 110.73, 203.04, 295.35, 387.66, 479.97, 575.04]
     labels3 = ["QUANTIDADE", "ESPECIE", "MARCA", "NUMERAÇÃO", "PESO BRUTO", "PESO LIQUIDO"]
@@ -849,15 +902,25 @@ def _draw_shipping(page: fitz.Page, data: dict):
         _draw_text(page, row3[idx] + 1.84, 414.54, values3[idx], 6.321)
 
 
+def _product_description(item: dict) -> str:
+    parts = [
+        str(item.get("desc") or "").strip(),
+        str(item.get("inf_ad_prod") or "").strip(),
+    ]
+    return " ".join(part for part in parts if part)
+
+
 def _product_row_height(item: dict) -> float:
     lines = _wrap_lines(
-        item["desc"],
-        PRODUCT_X[2] - PRODUCT_X[1] - 3.5,
-        5.9,
+        _product_description(item),
+        PRODUCT_X[2] - PRODUCT_X[1] - 4.0,
+        5.45,
         False,
-        3,
+        10,
     )
-    return max(11.0, len(lines) * 6.7 + 2)
+    # Espaço real entre linhas e entre itens. Evita que o separador atravesse
+    # descrição e valores, problema visível nas primeiras amostras geradas.
+    return max(15.0, len(lines) * 6.15 + 6.0)
 
 
 def _split_products(items: list[dict]) -> tuple[list[list[dict]], list[list[float]]]:
@@ -928,26 +991,28 @@ def _draw_product_table(
     for idx, value in enumerate(labels):
         _label(page, PRODUCT_X[idx] + 1.84, header_y, value)
 
-    y = data_y
+    row_top = data_y - 5.2
     for row_idx, item in enumerate(items):
         row_height = heights[row_idx]
+        baseline = row_top + 6.0
+
         description_lines = _wrap_lines(
-            item["desc"],
-            PRODUCT_X[2] - PRODUCT_X[1] - 3.5,
-            5.9,
+            _product_description(item),
+            PRODUCT_X[2] - PRODUCT_X[1] - 4.0,
+            5.45,
             False,
-            3,
+            10,
         )
 
         values = [
             item["code"],
-            item["desc"],
+            _product_description(item),
             item["ncm"],
             item["cst"],
             item["cfop"],
             item["un"],
             _format_number(item["qty"], 4),
-            _format_number(item["unit"], 4),
+            _format_number(item["unit"], 6),
             _format_number(item["total"], 2),
             _format_number(item["bc"], 2),
             _format_number(item["vicms"], 2),
@@ -959,38 +1024,48 @@ def _draw_product_table(
 
         for idx, value in enumerate(values):
             if idx == 1:
-                line_y = y
+                line_y = baseline
                 for desc_line in description_lines:
-                    _draw_text(page, PRODUCT_X[idx] + 1.84, line_y, desc_line, 5.9)
-                    line_y += 6.7
+                    _draw_text(
+                        page,
+                        PRODUCT_X[idx] + 1.84,
+                        line_y,
+                        desc_line,
+                        5.45,
+                    )
+                    line_y += 6.15
             else:
                 align = "right" if idx >= 6 else "left"
-                _draw_text(
+                max_size = 5.55 if idx >= 6 else 5.45
+                _draw_fit_text(
                     page,
-                    PRODUCT_X[idx] + 1.84,
-                    y,
+                    PRODUCT_X[idx] + 1.5,
+                    baseline,
+                    PRODUCT_X[idx + 1] - 1.5,
                     value,
-                    5.9,
+                    max_size,
+                    4.15,
                     False,
                     align,
-                    PRODUCT_X[idx + 1] - 1.5,
                 )
 
+        row_bottom = row_top + row_height
         if row_idx < len(items) - 1:
-            separator_y = y + row_height - 2
+            # Separador fino e colocado de fato ENTRE as linhas. Nas versões
+            # anteriores os traços passavam sobre valores e descrições.
             cursor = 18.8
             while cursor < 574.5:
                 _draw_line(
                     page,
                     cursor,
-                    separator_y,
-                    min(cursor + 2.0, 574.5),
-                    separator_y,
-                    0.18,
+                    row_bottom,
+                    min(cursor + 1.35, 574.5),
+                    row_bottom,
+                    0.12,
                 )
-                cursor += 4.0
+                cursor += 3.7
 
-        y += row_height
+        row_top = row_bottom
 
 
 def _draw_issqn_and_additional(page: fitz.Page, data: dict):
@@ -1003,7 +1078,7 @@ def _draw_issqn_and_additional(page: fitz.Page, data: dict):
         "VALOR DO ISSQN",
     ]
     values = [
-        "",
+        data.get("emitente_im") or "",
         data["issqn"]["vServ"],
         data["issqn"]["vBC"],
         data["issqn"]["vISS"],
@@ -1033,10 +1108,10 @@ def _draw_issqn_and_additional(page: fitz.Page, data: dict):
         340.0,
         815.5,
         data["informacoes"],
-        5.6,
+        5.75,
         False,
         "left",
-        6.3,
+        6.5,
     )
 
 
