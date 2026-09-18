@@ -18,6 +18,7 @@ from openpyxl import load_workbook
 
 import db
 from danfe_generator import (
+    apply_operational_stamp,
     danfe_file_name,
     extract_danfe_metadata,
     extract_nfe_processing_data,
@@ -1053,11 +1054,12 @@ def _build_mrp_impact(
         empty_detail = pd.DataFrame(columns=[
             "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
             "produto", "descricao", "prioridade", "ops", "data_cm",
-            "data_nf", "fornecedor_validacao",
+            "data_nf", "fornecedor_validacao", "cr", "desc_cr", "natureza",
         ])
         empty_summary = pd.DataFrame(columns=[
             "data_nf", "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
-            "fornecedor_validacao", "prioridade", "ops", "data_cm", "itens_impacto",
+            "fornecedor_validacao", "natureza", "cr", "desc_cr",
+            "prioridade", "ops", "data_cm", "itens_impacto",
         ])
         return empty_detail, empty_summary, {"cnpj_nao_localizado": 0}
 
@@ -1121,6 +1123,15 @@ def _build_mrp_impact(
         is_high = not high.empty
         oldest_cm = high["data_cm"].dropna().min() if is_high else None
         ops = _join_unique(high["ops"].tolist()) if is_high else ""
+        natureza = _join_unique(
+            group["natureza"].fillna("").astype(str).str.strip().tolist()
+        )
+        cr = _join_unique(
+            group["cr"].fillna("").astype(str).str.strip().tolist()
+        )
+        desc_cr = _join_unique(
+            group["desc_cr"].fillna("").astype(str).str.strip().tolist()
+        )
 
         summary_rows.append({
             "data_nf": group["data_nf"].iloc[0],
@@ -1129,6 +1140,9 @@ def _build_mrp_impact(
             "cnpj": group["cnpj"].iloc[0],
             "fornecedor": group["fornecedor"].iloc[0],
             "fornecedor_validacao": group["fornecedor_validacao"].iloc[0],
+            "natureza": natureza,
+            "cr": cr,
+            "desc_cr": desc_cr,
             "prioridade": "ALTA" if is_high else "BAIXA",
             "ops": ops,
             "data_cm": oldest_cm,
@@ -1370,6 +1384,9 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
             "data_pre_nota",
             "numero_nf",
             "fornecedor",
+            "natureza",
+            "cr",
+            "desc_cr",
             "prioridade",
             "ops",
             "data_cm_exibicao",
@@ -1385,6 +1402,9 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 "data_pre_nota": st.column_config.DateColumn("Data pré-nota", format="DD/MM/YYYY"),
                 "numero_nf": "NF",
                 "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
+                "natureza": st.column_config.TextColumn("Natureza", width="medium"),
+                "cr": st.column_config.TextColumn("CR", width="small"),
+                "desc_cr": st.column_config.TextColumn("Desc. CR", width="medium"),
                 "prioridade": "Prioridade",
                 "ops": st.column_config.TextColumn("OPs", width="large"),
                 "data_cm_exibicao": st.column_config.TextColumn("Data CM"),
