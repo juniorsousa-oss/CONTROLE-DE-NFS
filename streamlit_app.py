@@ -85,6 +85,8 @@ def init():
         "pre_notes": pd.DataFrame(),
         "priority_nf_numbers": set(),
         "priority_nf_keys": set(),
+        "mrp_priority_summary": pd.DataFrame(),
+        "mrp_priority_stats": {},
         "db_synced": False,
         "operator": "",
     }
@@ -265,6 +267,21 @@ def excel_bytes(frame: pd.DataFrame, sheet: str = "Dados") -> bytes:
     return buffer.getvalue()
 
 
+def set_flash(key: str, level: str, message: str) -> None:
+    st.session_state[key] = {"level": level, "message": message}
+
+
+def show_flash(key: str) -> None:
+    payload = st.session_state.pop(key, None)
+    if not isinstance(payload, dict):
+        return
+    level = str(payload.get("level") or "info")
+    message = str(payload.get("message") or "")
+    fn = getattr(st, level, st.info)
+    if message:
+        fn(message)
+
+
 def read_uploaded_table(uploaded, sheet_name: str | None = None, header_row: int = 0) -> tuple[pd.DataFrame, list[str]]:
     raw = uploaded.getvalue()
     name = uploaded.name.lower()
@@ -354,6 +371,176 @@ def standard_supplier_name(name: object) -> str:
         return ""
     matched = match_supplier("", raw, st.session_state.suppliers)
     return str(matched.get("nome_padrao") or raw).strip()
+
+
+def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
+    show_flash("_flash_mrp")
+    st.markdown("### Priorização por impacto no MRP")
+    st.write(
+        "Formato validado: **Materiais C = Código do produto**. "
+        "No relatório de Entradas/NFs: **D = Número da NF, F = Fornecedor e L = Código do material**. "
+        "Códigos e NFs são normalizados removendo zeros à esquerda."
+    )
+
+    mrp_file = st.file_uploader(
+        "Planilha de Materiais",
+        type=["csv", "xlsx", "xls", "xlt", "xltx"],
+        key=f"{key_prefix}_materials",
+    )
+    nf_items_file = st.file_uploader(
+        "Relatório de Entradas / NFs",
+        type=["csv", "xlsx", "xls", "xlt", "xltx"],
+        key=f"{key_prefix}_entries",
+    )
+
+    if mrp_file and not nf_items_file:
+        st.info(f"Planilha de Materiais selecionada: **{mrp_file.name}**. Aguardando o relatório de Entradas/NFs.")
+    elif nf_items_file and not mrp_file:
+        st.info(f"Relatório de Entradas/NFs selecionado: **{nf_items_file.name}**. Aguardando a planilha de Materiais.")
+
+    if mrp_file and nf_items_file:
+        try:
+            # Leitura sem depender da posição do cabeçalho. As regras usam letras fixas de coluna.
+            mrp, mrp_sheets = read_uploaded_table(mrp_file, header_row=None)
+            if mrp_sheets and len(mrp_sheets) > 1:
+                ms = st.selectbox("Aba Materiais", mrp_sheets, key=f"{key_prefix}_materials_sheet")
+                mrp, _ = read_uploaded_table(mrp_file, ms, header_row=None)
+
+            nf_items, nf_sheets = read_uploaded_table(nf_items_file, header_row=None)
+            if nf_sheets and len(nf_sheets) > 1:
+                ns = st.selectbox("Aba relatório de Entradas", nf_sheets, key=f"{key_prefix}_entries_sheet")
+                nf_items, _ = read_uploaded_table(nf_items_file, ns, header_row=None)
+
+            if mrp.shape[1] < 3:
+                raise ValueError("A planilha de Materiais precisa conter a coluna C.")
+            if nf_items.shape[1] < 12:
+                raise ValueError("O relatório de Entradas precisa conter pelo menos as colunas A até L.")
+
+            urgent = set()
+            for raw_value in mrp.iloc[:, 2].tolist():
+                value = normalized_material_code(raw_value)
+                if not value:
+                    continue
+                label = normalize_text(value)
+                if "CODIGO" in label and ("PRODUTO" in label or "MATERIAL" in label):
+                    continue
+                urgent.add(value)
+
+            base = pd.DataFrame({
+                "numero_nf": nf_items.iloc[:, 3].map(normalized_nf),
+                "fornecedor_entrada": nf_items.iloc[:, 5].fillna("").astype(str).str.strip(),
+                "produto": nf_items.iloc[:, 11].map(normalized_material_code),
+            })
+            base = base[
+                base["numero_nf"].ne("")
+                & base["produto"].ne("")
+                & base["fornecedor_entrada"].ne("")
+            ].copy()
+
+            hits = base[base["produto"].isin(urgent)].copy()
+            if not hits.empty:
+                hits["fornecedor_padrao"] = hits["fornecedor_entrada"].map(standard_supplier_name)
+                summary = (
+                    hits.groupby(
+                        ["numero_nf", "fornecedor_padrao", "fornecedor_entrada"],
+                        as_index=False,
+                    )
+                    .agg(itens_urgentes=("produto", "nunique"))
+                    .sort_values(["itens_urgentes", "numero_nf"], ascending=[False, True])
+                    .reset_index(drop=True)
+                )
+            else:
+                summary = pd.DataFrame(
+                    columns=["numero_nf", "fornecedor_padrao", "fornecedor_entrada", "itens_urgentes"]
+                )
+
+            stats = {
+                "materiais": len(urgent),
+                "linhas_entradas": len(base),
+                "linhas_correspondentes": len(hits),
+                "nfs": int(summary["numero_nf"].nunique()) if not summary.empty else 0,
+            }
+            st.session_state.mrp_priority_summary = summary.copy()
+            st.session_state.mrp_priority_stats = stats
+
+            a, b, d, e = st.columns(4)
+            a.metric("Materiais MRP", stats["materiais"])
+            b.metric("Linhas válidas Entradas", stats["linhas_entradas"])
+            d.metric("Correspondências", stats["linhas_correspondentes"])
+            e.metric("NFs impactadas", stats["nfs"])
+
+            if summary.empty:
+                st.warning(
+                    "Os dois relatórios foram lidos com sucesso, mas nenhum código da coluna C de Materiais "
+                    "foi encontrado na coluna L do relatório de Entradas/NFs."
+                )
+            else:
+                st.success(
+                    f"Cruzamento concluído com sucesso: {stats['linhas_correspondentes']} linha(s) "
+                    f"correspondente(s), envolvendo {stats['nfs']} NF(s)."
+                )
+                st.dataframe(
+                    summary,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "numero_nf": "NF",
+                        "fornecedor_padrao": "Fornecedor validado",
+                        "fornecedor_entrada": "Fornecedor do relatório",
+                        "itens_urgentes": "Itens MRP",
+                    },
+                )
+
+            if st.button(
+                "Aplicar prioridades ao processamento",
+                type="primary",
+                use_container_width=True,
+                disabled=summary.empty,
+                key=f"{key_prefix}_apply",
+            ):
+                keys = set()
+                for _, row in summary.iterrows():
+                    for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
+                        key = priority_key(row["numero_nf"], supplier_name)
+                        if key:
+                            keys.add(key)
+
+                st.session_state.priority_nf_keys = keys
+                st.session_state.priority_nf_numbers = set(summary["numero_nf"].astype(str).tolist())
+                st.session_state.mrp_priority_summary = summary.copy()
+                st.session_state.mrp_priority_stats = stats
+
+                if not st.session_state.analysis.empty:
+                    st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
+
+                set_flash(
+                    "_flash_mrp",
+                    "success",
+                    f"Prioridades aplicadas: {stats['nfs']} NF(s) serão identificadas como PRIORIDADE MRP quando o fornecedor também corresponder.",
+                )
+                st.rerun()
+        except Exception as exc:
+            st.error(f"Falha no cruzamento dos relatórios: {exc}")
+
+    existing = st.session_state.get("mrp_priority_summary")
+    if isinstance(existing, pd.DataFrame) and not existing.empty and not (mrp_file and nf_items_file):
+        st.markdown("#### Último cruzamento MRP da sessão")
+        st.dataframe(existing, use_container_width=True, hide_index=True)
+
+    if st.session_state.priority_nf_numbers:
+        st.info(
+            f"Há {len(st.session_state.priority_nf_numbers)} NF(s) com prioridade aplicada. "
+            "A confirmação no PDF também considera o fornecedor."
+        )
+        if st.button("Limpar prioridades atuais", key=f"{key_prefix}_clear"):
+            st.session_state.priority_nf_numbers = set()
+            st.session_state.priority_nf_keys = set()
+            st.session_state.mrp_priority_summary = pd.DataFrame()
+            st.session_state.mrp_priority_stats = {}
+            if not st.session_state.analysis.empty:
+                st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
+            set_flash("_flash_mrp", "success", "Prioridades MRP limpas.")
+            st.rerun()
 
 
 def current_pre_note_map() -> dict[str, dict]:
@@ -477,7 +664,7 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section-label">Navegação</div>', unsafe_allow_html=True)
     page = st.radio(
         "Página",
-        ["Dashboard", "Processamento de arquivos", "Configurações"],
+        ["Dashboard", "Pendências", "Processamento de arquivos", "Configurações"],
         label_visibility="collapsed",
         format_func=str.upper,
     )
@@ -633,6 +820,99 @@ if page == "Dashboard":
             use_container_width=True,
         )
 
+
+
+elif page == "Pendências":
+    st.markdown('<div class="section-title">Pendências operacionais</div>', unsafe_allow_html=True)
+    st.caption(
+        "Consolida as pré-notas que ainda não possuem documento processado e as NFs identificadas pelo cruzamento de impacto no MRP."
+    )
+
+    if db.configured():
+        try:
+            pending_records = pd.DataFrame(db.list_process_records())
+        except Exception:
+            pending_records = pd.DataFrame(st.session_state.history)
+    else:
+        pending_records = pd.DataFrame(st.session_state.history)
+
+    pre_base = st.session_state.pre_notes.copy()
+    processed_keys = set()
+    if not pending_records.empty:
+        for _, prow in pending_records.iterrows():
+            key = pre_note_key(prow.get("numero_nf"), prow.get("cnpj_fornecedor"))
+            if key:
+                processed_keys.add(key)
+
+    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
+        pre_base["chave_validacao"] = pre_base.apply(
+            lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")), axis=1
+        )
+        pending_pre = pre_base[~pre_base["chave_validacao"].isin(processed_keys)].copy()
+    else:
+        pending_pre = pd.DataFrame()
+
+    pre_keys = set()
+    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
+        pre_keys = set(pre_base["chave_validacao"].dropna().astype(str).tolist())
+
+    pdf_without_pre = pd.DataFrame()
+    if not pending_records.empty:
+        temp = pending_records.copy()
+        temp["chave_validacao"] = temp.apply(
+            lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj_fornecedor")), axis=1
+        )
+        pdf_without_pre = temp[
+            temp["chave_validacao"].ne("") & ~temp["chave_validacao"].isin(pre_keys)
+        ].copy()
+
+    mrp_summary = st.session_state.get("mrp_priority_summary")
+    mrp_count = int(mrp_summary["numero_nf"].nunique()) if isinstance(mrp_summary, pd.DataFrame) and not mrp_summary.empty else 0
+    reviewing = 0
+    if isinstance(st.session_state.analysis, pd.DataFrame) and not st.session_state.analysis.empty:
+        reviewing = int(st.session_state.analysis.get("status", pd.Series(dtype=str)).eq("REVISAR").sum())
+
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric("Pré-notas pendentes", len(pending_pre))
+    p2.metric("PDFs sem pré-nota", len(pdf_without_pre))
+    p3.metric("NFs impacto MRP", mrp_count)
+    p4.metric("Em revisão", reviewing)
+
+    pend_pre_tab, pend_mrp_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP"])
+
+    with pend_pre_tab:
+        if pre_base.empty:
+            st.info("A base de pré-notas ainda não foi carregada. Use Configurações > Alimentação > Validação Pré-notas.")
+        elif pending_pre.empty:
+            st.success("Nenhuma pré-nota pendente de documento na base atual.")
+        else:
+            st.warning(f"{len(pending_pre)} pré-nota(s) ainda não possuem PDF processado correspondente por NF + CNPJ.")
+            if "data_pre_nota" in pending_pre.columns:
+                groups = (
+                    pending_pre.groupby("data_pre_nota", dropna=False)
+                    .size()
+                    .reset_index(name="pendentes")
+                    .sort_values("data_pre_nota", ascending=False, na_position="last")
+                )
+                st.dataframe(
+                    groups,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "data_pre_nota": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "pendentes": "Pendentes",
+                    },
+                )
+            show_cols = [x for x in ["data_pre_nota", "numero_nf", "cnpj", "status"] if x in pending_pre.columns]
+            st.dataframe(pending_pre[show_cols], use_container_width=True, hide_index=True)
+
+        if not pdf_without_pre.empty:
+            with st.expander(f"PDFs processados sem pré-nota correspondente ({len(pdf_without_pre)})"):
+                cols = [x for x in ["numero_nf", "cnpj_fornecedor", "fornecedor_padrao", "arquivo_final", "processado_em"] if x in pdf_without_pre.columns]
+                st.dataframe(pdf_without_pre[cols], use_container_width=True, hide_index=True)
+
+    with pend_mrp_tab:
+        render_mrp_priority_feed("pendencias_mrp")
 
 
 elif page == "Processamento de arquivos":
@@ -906,6 +1186,7 @@ elif page == "Configurações":
         feed_pre, feed_mrp, feed_sup = st.tabs(["Validação Pré-notas", "Prioridade MRP", "Fornecedores"])
 
         with feed_pre:
+            show_flash("_flash_pre")
             st.markdown("### Validação de pré-notas")
             st.write(
                 "Formato validado: A = Data, C = Número da NF, E = CNPJ e F = Status. "
@@ -919,10 +1200,10 @@ elif page == "Configurações":
             )
             if upload:
                 try:
-                    temp, sheets = read_uploaded_table(upload, header_row=0)
+                    temp, sheets = read_uploaded_table(upload, header_row=None)
                     if sheets and len(sheets) > 1:
                         selected_sheet = st.selectbox("Aba da planilha", sheets, key="prenota_sheet")
-                        temp, _ = read_uploaded_table(upload, selected_sheet, header_row=0)
+                        temp, _ = read_uploaded_table(upload, selected_sheet, header_row=None)
 
                     if temp.shape[1] < 6:
                         raise ValueError("O relatório precisa ter pelo menos as colunas A até F.")
@@ -950,6 +1231,17 @@ elif page == "Configurações":
                         .drop(columns=["status_normalizado", "cnpj_valido"], errors="ignore")
                         .reset_index(drop=True)
                     )
+
+                    if preview.empty:
+                        st.warning(
+                            "Relatório lido, porém nenhuma linha válida com status Pré-nota lançada "
+                            "e combinação NF + CNPJ válida foi encontrada."
+                        )
+                    else:
+                        st.success(
+                            f"Relatório lido com sucesso: {len(preview)} pré-nota(s) válida(s) "
+                            f"em {preview['data_pre_nota'].nunique(dropna=True)} dia(s)."
+                        )
 
                     m1, m2, m3 = st.columns(3)
                     m1.metric("Pré-notas lançadas", len(preview))
@@ -1015,12 +1307,14 @@ elif page == "Configurações":
                                     "natureza": "",
                                 })
                             result = db.replace_pre_notes(rows, upload.name)
-                            st.success(
-                                f"Base de pré-notas atualizada: "
-                                f"{int(result.get('registros', len(rows)))} registro(s) válidos."
+                            set_flash(
+                                "_flash_pre",
+                                "success",
+                                f"Base de pré-notas atualizada com sucesso: "
+                                f"{int(result.get('registros', len(rows)))} registro(s) válido(s) gravado(s) no Supabase.",
                             )
                         else:
-                            st.success("Base de pré-notas aplicada nesta sessão.")
+                            set_flash("_flash_pre", "success", "Base de pré-notas aplicada nesta sessão.")
                         if not st.session_state.analysis.empty:
                             st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
                         st.rerun()
@@ -1074,130 +1368,11 @@ elif page == "Configurações":
 
 
         with feed_mrp:
-            st.markdown("### Priorização por impacto no MRP")
-            st.write(
-                "Formato validado: **Materiais C = Código do produto**. "
-                "No relatório de Entradas/NFs: **D = Número da NF, F = Fornecedor e L = Código do material**. "
-                "Códigos e NFs são normalizados removendo zeros à esquerda."
-            )
-            mrp_file = st.file_uploader(
-                "Planilha de Materiais",
-                type=["csv", "xlsx", "xls", "xlt", "xltx"],
-                key="mrp_priority",
-            )
-            nf_items_file = st.file_uploader(
-                "Relatório de Entradas / NFs",
-                type=["csv", "xlsx", "xls", "xlt", "xltx"],
-                key="nf_items_priority",
-            )
-
-            if mrp_file and nf_items_file:
-                try:
-                    mrp, mrp_sheets = read_uploaded_table(mrp_file, header_row=0)
-                    if mrp_sheets and len(mrp_sheets) > 1:
-                        ms = st.selectbox("Aba Materiais", mrp_sheets, key="mrp_priority_sheet")
-                        mrp, _ = read_uploaded_table(mrp_file, ms, header_row=0)
-
-                    # Os relatórios de Entradas validados possuem uma linha-título e cabeçalho na linha 2.
-                    nf_items, nf_sheets = read_uploaded_table(nf_items_file, header_row=1)
-                    if nf_sheets and len(nf_sheets) > 1:
-                        ns = st.selectbox("Aba relatório de Entradas", nf_sheets, key="nf_priority_sheet")
-                        nf_items, _ = read_uploaded_table(nf_items_file, ns, header_row=1)
-
-                    if mrp.shape[1] < 3:
-                        raise ValueError("A planilha de Materiais precisa conter a coluna C.")
-                    if nf_items.shape[1] < 12:
-                        raise ValueError("O relatório de Entradas precisa conter pelo menos as colunas A até L.")
-
-                    urgent = {
-                        normalized_material_code(x)
-                        for x in mrp.iloc[:, 2].tolist()
-                        if normalized_material_code(x)
-                    }
-
-                    base = pd.DataFrame({
-                        "numero_nf": nf_items.iloc[:, 3].map(normalized_nf),
-                        "fornecedor_entrada": nf_items.iloc[:, 5].fillna("").astype(str).str.strip(),
-                        "produto": nf_items.iloc[:, 11].map(normalized_material_code),
-                    })
-                    base = base[
-                        base["numero_nf"].ne("")
-                        & base["produto"].ne("")
-                        & base["fornecedor_entrada"].ne("")
-                    ].copy()
-
-                    hits = base[base["produto"].isin(urgent)].copy()
-                    hits["fornecedor_padrao"] = hits["fornecedor_entrada"].map(standard_supplier_name)
-
-                    summary = (
-                        hits.groupby(
-                            ["numero_nf", "fornecedor_padrao", "fornecedor_entrada"],
-                            as_index=False,
-                        )
-                        .agg(itens_urgentes=("produto", "nunique"))
-                        .sort_values(["itens_urgentes", "numero_nf"], ascending=[False, True])
-                    )
-
-                    st.dataframe(
-                        summary,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "numero_nf": "NF",
-                            "fornecedor_padrao": "Fornecedor validado",
-                            "fornecedor_entrada": "Fornecedor do relatório",
-                            "itens_urgentes": "Itens MRP",
-                        },
-                    )
-                    st.caption(
-                        f"{len(urgent)} produto(s) na planilha de Materiais → "
-                        f"{len(hits)} linha(s) correspondentes → "
-                        f"{summary['numero_nf'].nunique() if not summary.empty else 0} NF(s)."
-                    )
-
-                    if st.button(
-                        "Aplicar prioridades ao processamento",
-                        type="primary",
-                        use_container_width=True,
-                        disabled=summary.empty,
-                    ):
-                        keys = set()
-                        for _, row in summary.iterrows():
-                            for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
-                                key = priority_key(row["numero_nf"], supplier_name)
-                                if key:
-                                    keys.add(key)
-
-                        st.session_state.priority_nf_keys = keys
-                        st.session_state.priority_nf_numbers = set(
-                            summary["numero_nf"].astype(str).tolist()
-                        )
-
-                        if not st.session_state.analysis.empty:
-                            st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
-
-                        st.success(
-                            "Prioridades aplicadas usando Código do Material + NF + Fornecedor. "
-                            "As NFs identificadas serão separadas no ZIP de PRIORIDADE."
-                        )
-                        st.rerun()
-                except Exception as exc:
-                    st.error(f"Falha no cruzamento dos relatórios: {exc}")
-
-            if st.session_state.priority_nf_numbers:
-                st.info(
-                    f"Há {len(st.session_state.priority_nf_numbers)} NF(s) candidatas à prioridade. "
-                    "A confirmação no PDF também considera o fornecedor."
-                )
-                if st.button("Limpar prioridades atuais"):
-                    st.session_state.priority_nf_numbers = set()
-                    st.session_state.priority_nf_keys = set()
-                    if not st.session_state.analysis.empty:
-                        st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
-                    st.rerun()
+            render_mrp_priority_feed("config_mrp")
 
 
         with feed_sup:
+            show_flash("_flash_supplier")
             st.markdown("### Base de fornecedores")
             st.write(
                 "Formato validado do relatório FORNECEDORES: "
@@ -1319,6 +1494,13 @@ elif page == "Configurações":
                             hide_index=True,
                         )
 
+                    if clean.empty:
+                        st.warning("Relatório lido, mas nenhuma linha válida de fornecedor foi encontrada.")
+                    else:
+                        st.success(
+                            f"Relatório de fornecedores lido com sucesso: {len(clean)} CNPJ(s) válido(s) prontos para substituição."
+                        )
+
                     st.markdown("#### Prévia da nova base")
                     st.dataframe(
                         clean[
@@ -1352,14 +1534,18 @@ elif page == "Configurações":
                         if db.configured():
                             result = db.replace_suppliers(final.to_dict("records"), upload.name, stats)
                             st.session_state.suppliers = final
-                            st.success(
-                                f"Base substituída com sucesso: "
-                                f"{int(result.get('fornecedores', len(final)))} fornecedor(es)."
+                            set_flash(
+                                "_flash_supplier",
+                                "success",
+                                f"Base de fornecedores substituída com sucesso: "
+                                f"{int(result.get('fornecedores', len(final)))} fornecedor(es) gravado(s) no Supabase.",
                             )
                         else:
                             st.session_state.suppliers = final
-                            st.warning(
-                                "Base substituída somente nesta sessão porque o Supabase não está configurado."
+                            set_flash(
+                                "_flash_supplier",
+                                "warning",
+                                "Base substituída somente nesta sessão porque o Supabase não está configurado.",
                             )
                         st.rerun()
                 except Exception as exc:
