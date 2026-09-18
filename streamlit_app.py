@@ -513,39 +513,50 @@ def standard_supplier_name(name: object) -> str:
     return str(matched.get("nome_padrao") or raw).strip()
 
 
-def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
+def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -> None:
     show_flash("_flash_mrp")
     st.markdown("### Priorização por impacto no MRP")
-    st.write(
-        "Formato validado: **Materiais C = Código do produto**. "
-        "No relatório de Entradas/NFs: **D = Número da NF, F = Fornecedor e L = Código do material**. "
-        "Os arquivos são apenas selecionados primeiro; o processamento só começa ao clicar em **Cruzar relatórios**."
-    )
 
-    mrp_file = st.file_uploader(
-        "Planilha de Materiais",
-        type=["csv", "xlsx", "xls", "xlt", "xltx"],
-        key=f"{key_prefix}_materials",
-    )
-    nf_items_file = st.file_uploader(
-        "Relatório de Entradas / NFs",
-        type=["csv", "xlsx", "xls", "xlt", "xltx"],
-        key=f"{key_prefix}_entries",
-    )
+    mrp_file = None
+    nf_items_file = None
+    process = False
 
-    if mrp_file:
-        st.caption(f"Materiais selecionado: {mrp_file.name} — {len(mrp_file.getvalue()) / 1024 / 1024:.1f} MB")
-    if nf_items_file:
-        st.caption(f"Entradas/NFs selecionado: {nf_items_file.name} — {len(nf_items_file.getvalue()) / 1024 / 1024:.1f} MB")
+    if allow_feed:
+        st.write(
+            "Formato validado: **Materiais C = Código do produto**. "
+            "No relatório de Entradas/NFs: **D = Número da NF, F = Fornecedor e L = Código do material**. "
+            "Os arquivos são apenas selecionados primeiro; o processamento só começa ao clicar em **Cruzar relatórios**."
+        )
 
-    can_process = bool(mrp_file and nf_items_file)
-    process = st.button(
-        "CRUZAR RELATÓRIOS",
-        type="primary",
-        use_container_width=True,
-        disabled=not can_process,
-        key=f"{key_prefix}_process",
-    )
+        mrp_file = st.file_uploader(
+            "Planilha de Materiais",
+            type=["csv", "xlsx", "xls", "xlt", "xltx"],
+            key=f"{key_prefix}_materials",
+        )
+        nf_items_file = st.file_uploader(
+            "Relatório de Entradas / NFs",
+            type=["csv", "xlsx", "xls", "xlt", "xltx"],
+            key=f"{key_prefix}_entries",
+        )
+
+        if mrp_file:
+            st.caption(f"Materiais selecionado: {mrp_file.name} — {len(mrp_file.getvalue()) / 1024 / 1024:.1f} MB")
+        if nf_items_file:
+            st.caption(f"Entradas/NFs selecionado: {nf_items_file.name} — {len(nf_items_file.getvalue()) / 1024 / 1024:.1f} MB")
+
+        can_process = bool(mrp_file and nf_items_file)
+        process = st.button(
+            "CRUZAR RELATÓRIOS",
+            type="primary",
+            use_container_width=True,
+            disabled=not can_process,
+            key=f"{key_prefix}_process",
+        )
+    else:
+        st.info(
+            "Esta tela é somente de acompanhamento. A priorização do MRP é alimentada em "
+            "**Configurações → Alimentação → Prioridade MRP**."
+        )
 
     if process:
         try:
@@ -612,12 +623,25 @@ def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
                 st.session_state.mrp_priority_stats = stats
                 st.session_state.mrp_priority_files = (mrp_file.name, nf_items_file.name)
 
+                # A alimentação em Configurações já define imediatamente as prioridades.
+                keys = set()
+                for _, row in summary.iterrows():
+                    for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
+                        pkey = priority_key(row["numero_nf"], supplier_name)
+                        if pkey:
+                            keys.add(pkey)
+
+                st.session_state.priority_nf_keys = keys
+                st.session_state.priority_nf_numbers = set(summary["numero_nf"].astype(str).tolist())
+                if not st.session_state.analysis.empty:
+                    st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
+
             set_flash(
                 "_flash_mrp",
                 "success" if not summary.empty else "warning",
                 (
                     f"Cruzamento concluído: {stats['linhas_correspondentes']} linha(s) correspondente(s), "
-                    f"{stats['nfs']} NF(s) impactada(s)."
+                    f"{stats['nfs']} NF(s) impactada(s) e prioridade aplicada automaticamente."
                     if not summary.empty
                     else "Os dois relatórios foram processados, mas nenhum código de Materiais C foi localizado em Entradas/NFs L."
                 ),
@@ -652,8 +676,8 @@ def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
                 "itens_urgentes": "Itens MRP",
             },
         )
-        if st.button(
-            "Aplicar prioridades ao processamento",
+        if allow_feed and st.button(
+            "REAPLICAR PRIORIDADES AO PROCESSAMENTO",
             type="primary",
             use_container_width=True,
             key=f"{key_prefix}_apply",
@@ -661,9 +685,9 @@ def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
             keys = set()
             for _, row in summary.iterrows():
                 for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
-                    key = priority_key(row["numero_nf"], supplier_name)
-                    if key:
-                        keys.add(key)
+                    pkey = priority_key(row["numero_nf"], supplier_name)
+                    if pkey:
+                        keys.add(pkey)
 
             st.session_state.priority_nf_keys = keys
             st.session_state.priority_nf_numbers = set(summary["numero_nf"].astype(str).tolist())
@@ -673,7 +697,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
             set_flash(
                 "_flash_mrp",
                 "success",
-                f"Prioridades aplicadas: {len(st.session_state.priority_nf_numbers)} NF(s).",
+                f"Prioridades reaplicadas: {len(st.session_state.priority_nf_numbers)} NF(s).",
             )
             st.rerun()
 
@@ -682,7 +706,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp") -> None:
             f"Há {len(st.session_state.priority_nf_numbers)} NF(s) com prioridade aplicada. "
             "A confirmação no PDF também considera o fornecedor."
         )
-        if st.button("Limpar prioridades atuais", key=f"{key_prefix}_clear"):
+        if allow_feed and st.button("Limpar prioridades atuais", key=f"{key_prefix}_clear"):
             st.session_state.priority_nf_numbers = set()
             st.session_state.priority_nf_keys = set()
             st.session_state.mrp_priority_summary = pd.DataFrame()
@@ -1381,7 +1405,7 @@ elif page == "Pendências":
                     st.dataframe(pdf_without_pre[cols], use_container_width=True, hide_index=True)
 
     with pend_mrp_tab:
-        render_mrp_priority_feed("pendencias_mrp")
+        render_mrp_priority_feed("pendencias_mrp", allow_feed=False)
 
     with pend_process_tab:
         render_file_processing()
