@@ -1337,6 +1337,79 @@ def operational_stamp_default_size() -> tuple[float, float]:
     return 250.0, 104.0
 
 
+def apply_operational_stamp(
+    pdf_bytes: bytes,
+    data_chegada: object,
+    cr: object,
+    desc_cr: object,
+    natureza: object,
+    recebido_por: object,
+) -> bytes:
+    """Renderiza o carimbo retangular de controle interno no PDF.
+
+    Nesta etapa de homologação o bloco é colocado dentro/próximo ao quadro
+    RESERVADO AO FISCO para facilitar a validação visual. A função de desenho
+    permanece independente da posição para podermos mover o carimbo depois.
+    """
+    if not pdf_bytes:
+        return pdf_bytes
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    if doc.page_count == 0:
+        doc.close()
+        return pdf_bytes
+
+    target_page = None
+    target_label = None
+
+    for candidate in doc:
+        text = candidate.get_text("text").upper()
+        if "CONTROLE INTERNO — SETTA" in text or "CONTROLE INTERNO - SETTA" in text:
+            doc.close()
+            return pdf_bytes
+        hits = candidate.search_for("RESERVADO AO FISCO")
+        if hits:
+            target_page = candidate
+            target_label = hits[-1]
+
+    page = target_page if target_page is not None else doc[-1]
+    page_rect = page.rect
+
+    width, height = operational_stamp_default_size()
+
+    if target_label is not None:
+        # Usa a área disponível abaixo do título RESERVADO AO FISCO.
+        x0 = max(target_label.x0 - 2.0, page_rect.width * 0.565)
+        x1 = page_rect.width - 21.0
+        available_width = max(150.0, x1 - x0)
+        width = min(width, available_width)
+        x0 = x1 - width
+        y0 = target_label.y1 + 5.0
+        y1 = min(y0 + height, page_rect.height - 24.0)
+        if y1 - y0 < 76.0:
+            y0 = max(target_label.y1 + 2.0, y1 - 92.0)
+    else:
+        x1 = page_rect.width - 21.0
+        x0 = max(21.0, x1 - width)
+        y1 = page_rect.height - 24.0
+        y0 = max(21.0, y1 - height)
+
+    rect = fitz.Rect(x0, y0, x1, y1)
+    draw_operational_stamp_block(
+        page,
+        rect,
+        data_chegada=data_chegada,
+        cr=cr,
+        desc_cr=desc_cr,
+        natureza=natureza,
+        recebido_por=recebido_por,
+    )
+
+    output = doc.tobytes(garbage=4, deflate=True)
+    doc.close()
+    return output
+
+
 def generate_danfe_pdf(raw_xml: bytes) -> bytes:
     """Gera DANFE A4 usando o motor profissional e paginado.
 
