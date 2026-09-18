@@ -3021,9 +3021,36 @@ def render_file_processing():
                 try:
                     raw_xml = xml_file.getvalue()
                     meta = extract_danfe_metadata(raw_xml)
+                    xml_data = extract_nfe_processing_data(raw_xml)
 
                     pdf_bytes = generate_danfe_pdf(raw_xml)
                     pdf_name = danfe_file_name(meta)
+
+                    stamp_status = "SEM DADOS OPERACIONAIS"
+                    pending_for_stamp = current_pending_pre_notes()
+                    if isinstance(pending_for_stamp, pd.DataFrame) and not pending_for_stamp.empty:
+                        identity = _xml_prefilter_identity(xml_data)
+                        pre_match = match_document_to_pre_note(
+                            identity,
+                            pre_notes=pending_for_stamp,
+                        )
+                        if pre_match.get("matched"):
+                            pre_row = pre_match["row"]
+                            operational = operational_fields_from_nf_load(
+                                pre_row,
+                                identity,
+                            )
+                            pdf_bytes = apply_operational_stamp(
+                                pdf_bytes,
+                                data_chegada=normalized_business_date(
+                                    pre_row.get("data_pre_nota")
+                                ),
+                                cr=operational.get("cr"),
+                                desc_cr=operational.get("desc_cr"),
+                                natureza=operational.get("natureza"),
+                                recebido_por=st.session_state.operator,
+                            )
+                            stamp_status = "CARIMBO APLICADO"
 
                     outputs[pdf_name] = {
                         "bytes": pdf_bytes,
@@ -3036,6 +3063,7 @@ def render_file_processing():
                         "protocolo": meta.protocolo,
                         "status_codigo": meta.status_codigo,
                         "status_motivo": meta.status_motivo,
+                        "carimbo": stamp_status,
                     }
 
                     status_label = (
@@ -3052,6 +3080,7 @@ def render_file_processing():
                         "CNPJ": meta.cnpj_emitente,
                         "Protocolo": meta.protocolo,
                         "Status": status_label,
+                        "Carimbo": stamp_status,
                         "PDF": pdf_name,
                     })
                 except Exception as exc:
@@ -3099,6 +3128,7 @@ def render_file_processing():
                     "CNPJ": "CNPJ",
                     "Protocolo": "Protocolo",
                     "Status": st.column_config.TextColumn("Autorização", width="large"),
+                    "Carimbo": st.column_config.TextColumn("Carimbo operacional", width="medium"),
                     "PDF": st.column_config.TextColumn("Arquivo gerado", width="large"),
                 },
             )
