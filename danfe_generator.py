@@ -66,6 +66,14 @@ def _digits(value: object) -> str:
     return re.sub(r"\D+", "", str(value or ""))
 
 
+def _alnum(value: object) -> str:
+    return re.sub(r"[^0-9A-Z]+", "", str(value or "").upper())
+
+
+def _tax_id(value: object) -> str:
+    return _alnum(value)
+
+
 def _safe_name(value: str) -> str:
     value = re.sub(r'[\\/:*?"<>|]+', " ", value or "")
     value = re.sub(r"\s+", " ", value).strip()
@@ -73,11 +81,11 @@ def _safe_name(value: str) -> str:
 
 
 def _format_cnpj_cpf(value: str) -> str:
-    digits = _digits(value)
-    if len(digits) == 14:
-        return f"{digits[:2]}.{digits[2:5]}.{digits[5:8]}/{digits[8:12]}-{digits[12:]}"
-    if len(digits) == 11:
-        return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
+    raw = _tax_id(value)
+    if len(raw) == 14:
+        return f"{raw[:2]}.{raw[2:5]}.{raw[5:8]}/{raw[8:12]}-{raw[12:]}"
+    if len(raw) == 11 and raw.isdigit():
+        return f"{raw[:3]}.{raw[3:6]}.{raw[6:9]}-{raw[9:]}"
     return str(value or "")
 
 
@@ -173,11 +181,28 @@ def _parse_nfe(raw_xml: bytes) -> dict:
     dups = billing.findall(f"{NFE_NS}dup") if billing is not None else []
     payment = root.find(f".//{NFE_NS}pag/{NFE_NS}detPag")
     inf_adic = root.find(f".//{NFE_NS}infAdic")
+    inf_ad_fisco = _node_text(inf_adic, "infAdFisco")
+    inf_cpl = _node_text(inf_adic, "infCpl")
+    obs_cont = []
+    if inf_adic is not None:
+        for obs in inf_adic.findall(f"{NFE_NS}obsCont"):
+            campo = str(obs.attrib.get("xCampo") or "").strip()
+            texto = _node_text(obs, "xTexto")
+            if texto:
+                obs_cont.append(f"{campo}: {texto}" if campo else texto)
+
+    additional_parts = []
+    if inf_ad_fisco:
+        additional_parts.append(f"INFORMAÇÕES DE INTERESSE DO FISCO: {inf_ad_fisco}")
+    if inf_cpl:
+        additional_parts.append(inf_cpl)
+    if obs_cont:
+        additional_parts.extend(obs_cont)
 
     key = (inf_nfe.attrib.get("Id") or "").strip()
     if key.upper().startswith("NFE"):
         key = key[3:]
-    key = _digits(key)
+    key = _alnum(key)
 
     items = []
     for det in root.findall(f".//{NFE_NS}det"):
@@ -320,7 +345,9 @@ def _parse_nfe(raw_xml: bytes) -> dict:
             "valor": _node_text(payment, "vPag"),
         },
         "items": items,
-        "informacoes": _node_text(inf_adic, "infCpl"),
+        "informacoes_fisco": inf_ad_fisco,
+        "informacoes_complementares": inf_cpl,
+        "informacoes": "\n".join(additional_parts),
     }
 
 
@@ -363,7 +390,7 @@ def extract_nfe_processing_data(raw_xml: bytes) -> dict:
         "numero_nf": str(data.get("nf") or "").strip(),
         "serie": str(data.get("serie") or "").strip(),
         "chave_nfe": _digits(data.get("key")),
-        "cnpj_fornecedor": _digits(data.get("emitente_cnpj")),
+        "cnpj_fornecedor": _tax_id(data.get("emitente_cnpj")),
         "fornecedor_lido": str(data.get("emitente") or "").strip(),
         "data_emissao": _format_date(str(data.get("dhEmi") or "")),
         "vencimento": due_dates[0] if due_dates else None,
