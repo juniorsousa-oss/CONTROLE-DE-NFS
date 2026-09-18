@@ -18,6 +18,7 @@ from openpyxl import load_workbook
 
 import db
 from danfe_generator import (
+    apply_operational_stamp,
     danfe_file_name,
     extract_danfe_metadata,
     extract_nfe_processing_data,
@@ -39,8 +40,8 @@ SUPPLIERS_FILE = ROOT / "data" / "fornecedores.csv"
 LOGO_FILE = ROOT / "config" / "logo_setta.svg"
 TZ = ZoneInfo("America/Sao_Paulo")
 
-# MODO DE TESTES — reativar quando o fluxo estiver homologado.
-SAVE_NF_HISTORY = False
+# Persistência operacional reativada para homologação integrada.
+SAVE_NF_HISTORY = True
 ENABLE_PENDING_REPORT = True
 
 FAVICON_FILE = ROOT / "config" / "favicon_setta.b64"
@@ -69,6 +70,18 @@ DEFAULT = {
 
 def now_local() -> datetime:
     return datetime.now(TZ)
+
+
+def dataframe_records_for_db(frame: pd.DataFrame) -> list[dict]:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return []
+    return json.loads(
+        frame.to_json(
+            orient="records",
+            date_format="iso",
+            force_ascii=False,
+        )
+    )
 
 
 def load_default_logo():
@@ -138,7 +151,57 @@ def init():
             if SAVE_NF_HISTORY:
                 remote_pre_notes = db.load_pre_notes()
                 if remote_pre_notes:
-                    st.session_state.pre_notes = pd.DataFrame(remote_pre_notes)
+                    pre_frame = pd.DataFrame(remote_pre_notes)
+                    if "data_pre_nota" in pre_frame.columns:
+                        pre_frame["data_pre_nota"] = pd.to_datetime(
+                            pre_frame["data_pre_nota"],
+                            errors="coerce",
+                        ).dt.date
+                    st.session_state.pre_notes = pre_frame
+
+                remote_mrp = db.load_mrp_load()
+                if remote_mrp:
+                    detail = pd.DataFrame(remote_mrp.get("detalhe") or [])
+                    summary = pd.DataFrame(remote_mrp.get("resumo") or [])
+                    for frame in (detail, summary):
+                        for column in ("data_pre_nota", "data_cm"):
+                            if column in frame.columns:
+                                frame[column] = pd.to_datetime(
+                                    frame[column],
+                                    errors="coerce",
+                                ).dt.date
+
+                    st.session_state.mrp_impact_detail = detail
+                    st.session_state.mrp_priority_summary = summary
+                    st.session_state.mrp_priority_files = tuple(
+                        remote_mrp.get("arquivos") or []
+                    )
+                    st.session_state.mrp_priority_stats = (
+                        remote_mrp.get("stats") or {}
+                    )
+
+                    if not summary.empty:
+                        high = summary[
+                            summary["prioridade"]
+                            .fillna("")
+                            .astype(str)
+                            .str.upper()
+                            .eq("ALTA")
+                        ]
+                        st.session_state.priority_date_nf_keys = set(
+                            high.get(
+                                "data_nf",
+                                pd.Series(dtype=str),
+                            ).dropna().astype(str).tolist()
+                        )
+                        st.session_state.priority_nf_numbers = set(
+                            high.get(
+                                "numero_nf",
+                                pd.Series(dtype=str),
+                            ).dropna().astype(str).tolist()
+                        )
+
+                st.session_state.history = db.list_process_records()
             st.session_state.db_synced = True
         except Exception as exc:
             st.session_state.db_sync_error = str(exc)
@@ -2109,15 +2172,33 @@ def save_config_or_session(new_cfg: dict) -> tuple[bool, str]:
 
 
 def current_process_records_for_tests() -> pd.DataFrame:
-    """Em testes, considera somente a carga atual; em produção, usa o histórico oficial."""
+    """Retorna somente processamentos que concluíram o fluxo operacional."""
     if not SAVE_NF_HISTORY:
         return pd.DataFrame(st.session_state.get("current_test_manifest") or [])
+
     if db.configured():
         try:
-            return pd.DataFrame(db.list_process_records())
+            frame = pd.DataFrame(db.list_process_records())
         except Exception:
-            return pd.DataFrame(st.session_state.history)
-    return pd.DataFrame(st.session_state.history)
+            frame = pd.DataFrame(st.session_state.history)
+    else:
+        frame = pd.DataFrame(st.session_state.history)
+
+    if frame.empty or "status" not in frame.columns:
+        return frame
+
+    completed = {
+        "REALIZADO",
+        "ENVIADO",
+        "PDF CRIADO",
+    }
+    return frame[
+        frame["status"]
+        .fillna("")
+        .astype(str)
+        .str.upper()
+        .isin(completed)
+    ].copy()
 
 
 def current_pending_pre_notes() -> pd.DataFrame:
