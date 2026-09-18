@@ -1260,6 +1260,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
             display = preview[
                 [
                     "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
+                    "natureza", "cr", "desc_cr",
                     "produto", "descricao", "prioridade", "ops", "data_cm",
                 ]
             ].copy()
@@ -1275,6 +1276,9 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     "numero_nf": "NF",
                     "cnpj": "CNPJ",
                     "fornecedor": st.column_config.TextColumn("FORNECEDOR", width="large"),
+                    "natureza": st.column_config.TextColumn("NATUREZA", width="medium"),
+                    "cr": st.column_config.TextColumn("CR", width="small"),
+                    "desc_cr": st.column_config.TextColumn("DESC. CR", width="medium"),
                     "produto": "PRODUTO",
                     "descricao": st.column_config.TextColumn("DESCRIÇÃO", width="large"),
                     "prioridade": "PRIORIDADE",
