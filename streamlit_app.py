@@ -1818,6 +1818,8 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     pre_dates = []
     pre_link_status = []
     pre_supplier_scores = []
+    resolved_natures = []
+    nature_sources = []
 
     for _, row in out.iterrows():
         pre_match = match_document_to_pre_note(row)
@@ -1839,6 +1841,18 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
             and str(mrp_row.get("prioridade") or "").upper() == "ALTA"
         )
 
+        current_nature = str(row.get("natureza") or "").strip().upper()
+        nature_source = str(row.get("natureza_origem") or "").strip()
+
+        if not current_nature:
+            loaded_nature, loaded_source = nature_from_nf_load(
+                pre_row,
+                row,
+            )
+            if loaded_nature:
+                current_nature = loaded_nature
+                nature_source = loaded_source
+
         priority_flags.append(priority)
         pre_status.append(str(pre_row.get("status") or "") if pre_row else "")
         pre_dates.append(pre_row.get("data_pre_nota") if pre_row else None)
@@ -1850,12 +1864,16 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
                 or 0
             )
         )
+        resolved_natures.append(current_nature)
+        nature_sources.append(nature_source)
 
     out["prioridade_mrp"] = priority_flags
     out["pre_nota_status"] = pre_status
     out["pre_nota_em"] = pre_dates
     out["vinculo_mrp_status"] = pre_link_status
     out["vinculo_fornecedor_score"] = pre_supplier_scores
+    out["natureza"] = resolved_natures
+    out["natureza_origem"] = nature_sources
     return out
 
 
