@@ -728,6 +728,19 @@ def match_mrp_to_pre_note(
         result["score_fornecedor"] = best_score
         return result
 
+    if len(candidates) > 1:
+        second = candidates.iloc[1]
+        second_score = int(second["_score_supplier"])
+        if (
+            supplier_validation_name(best.get("_supplier_pre"))
+            != supplier_validation_name(second.get("_supplier_pre"))
+            and second_score >= min_supplier_score
+            and best_score - second_score <= 3
+        ):
+            result["situacao"] = "CORRESPONDÊNCIA AMBÍGUA"
+            result["score_fornecedor"] = best_score
+            return result
+
     result.update(
         matched=True,
         situacao="OK",
