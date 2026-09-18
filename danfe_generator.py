@@ -4,7 +4,7 @@ import math
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 
 import fitz
 
@@ -1157,6 +1157,121 @@ def _draw_void_watermark(page: fitz.Page, data: dict):
             color=(0.75, 0.75, 0.75),
             overlay=True,
         )
+
+
+STAMP_BLUE = (0.08, 0.48, 0.78)
+
+
+def _stamp_date(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.strftime("%d/%m/%y")
+    if isinstance(value, date):
+        return value.strftime("%d/%m/%y")
+
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(raw[:10], fmt).strftime("%d/%m/%y")
+        except Exception:
+            pass
+    return raw
+
+
+def apply_operational_stamp(
+    pdf_bytes: bytes,
+    data_chegada: object,
+    cr: object,
+    desc_cr: object,
+    natureza: object,
+    recebido_por: object,
+) -> bytes:
+    """Aplica no DANFE o carimbo operacional usado pela Setta.
+
+    Modelo recuperado dos DANFEs históricos:
+    DATA DE CHEGADA
+    CR
+    DESC CR
+    NATUREZA
+    RECEBIDO POR
+
+    O carimbo é aplicado em azul dentro de RESERVADO AO FISCO, sem borda,
+    como no modelo manual/TOTVS utilizado anteriormente.
+    """
+    if not pdf_bytes:
+        return pdf_bytes
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    if doc.page_count == 0:
+        doc.close()
+        return pdf_bytes
+
+    page = doc[0]
+    page_rect = page.rect
+
+    date_text = _stamp_date(data_chegada)
+    cr_text = str(cr or "").strip()
+    desc_text = str(desc_cr or "").strip()
+    nature_text = str(natureza or "").strip().upper()
+    receiver_text = str(recebido_por or "").strip().upper()
+
+    stamp_text = "\n".join([
+        f"DATA DE CHEGADA: {date_text}",
+        f"CR: {cr_text}",
+        f"DESC CR: {desc_text}",
+        f"NATUREZA: {nature_text}",
+        f"RECEBIDO POR {receiver_text}".rstrip(),
+    ])
+
+    # Procura o bloco RESERVADO AO FISCO do próprio DANFE. Isso permite
+    # aplicar o mesmo carimbo tanto no DANFE gerado pelo app quanto em PDFs
+    # originais de fornecedores com pequenas diferenças de layout.
+    hits = page.search_for("RESERVADO AO FISCO")
+    if hits:
+        label = hits[0]
+        x0 = max(label.x0 + 12, page_rect.width * 0.56)
+        y0 = min(label.y1 + 23, page_rect.height - 115)
+    else:
+        x0 = page_rect.width * 0.58
+        y0 = page_rect.height * 0.79
+
+    x1 = page_rect.width - 18
+    y1 = page_rect.height - 24
+
+    # Garante área mínima sem sair da página.
+    if x1 - x0 < 150:
+        x0 = max(18, x1 - 205)
+    if y1 - y0 < 65:
+        y0 = max(18, y1 - 95)
+
+    rect = fitz.Rect(x0, y0, x1, y1)
+
+    # O histórico usa texto azul, sans-serif, sem moldura.
+    # Reduz automaticamente a fonte apenas quando Natureza/Descrição CR
+    # forem longas demais para o bloco disponível.
+    inserted = -1
+    font_size = 9.2
+    while font_size >= 6.8:
+        inserted = page.insert_textbox(
+            rect,
+            stamp_text,
+            fontsize=font_size,
+            fontname="helv",
+            color=STAMP_BLUE,
+            lineheight=1.12,
+            overlay=True,
+        )
+        if inserted >= 0:
+            break
+        font_size -= 0.4
+
+    output = doc.tobytes(garbage=4, deflate=True)
+    doc.close()
+    return output
 
 
 def generate_danfe_pdf(raw_xml: bytes) -> bytes:
