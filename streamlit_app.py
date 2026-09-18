@@ -2981,10 +2981,10 @@ def render_file_processing():
     with tab_danfe:
         st.markdown("### XML → DANFE")
         st.caption(
-            "Geração do DANFE diretamente do XML da NF-e modelo 55 com motor paginado: "
-            "layout inspirado no padrão Protheus, cálculo automático de altura dos produtos, quebra de página, "
-            "repetição do cabeçalho e controle interno SETTA. Os XMLs e PDFs ficam somente nesta sessão "
-            "e não são gravados no Supabase."
+            "Geração do DANFE da NF-e modelo 55 baseada no MOC 7.0 / Anexo II: A4 retrato, "
+            "margens regulamentares, fonte Times, CODE-128, paginação de produtos e repetição do "
+            "cabeçalho fiscal. O quadro RESERVADO AO FISCO permanece livre; o controle SETTA é "
+            "preenchido no canhoto. Os XMLs e PDFs ficam somente nesta sessão."
         )
 
         xml_files = st.file_uploader(
@@ -3032,6 +3032,7 @@ def render_file_processing():
                     pdf_name = danfe_file_name(meta)
 
                     stamp_status = "SEM DADOS OPERACIONAIS"
+                    compliance_status = "MOC 7.0 / NF-e 55"
                     pending_for_stamp = current_pending_pre_notes()
                     if isinstance(pending_for_stamp, pd.DataFrame) and not pending_for_stamp.empty:
                         identity = _xml_prefilter_identity(xml_data)
@@ -3058,7 +3059,7 @@ def render_file_processing():
                                     or st.session_state.operator
                                 ),
                             )
-                            stamp_status = "CARIMBO APLICADO"
+                            stamp_status = "CONTROLE SETTA PREENCHIDO"
 
                     outputs[pdf_name] = {
                         "bytes": pdf_bytes,
@@ -3072,6 +3073,7 @@ def render_file_processing():
                         "status_codigo": meta.status_codigo,
                         "status_motivo": meta.status_motivo,
                         "carimbo": stamp_status,
+                        "conformidade": compliance_status,
                     }
 
                     status_label = (
@@ -3088,7 +3090,8 @@ def render_file_processing():
                         "CNPJ": meta.cnpj_emitente,
                         "Protocolo": meta.protocolo,
                         "Status": status_label,
-                        "Carimbo": stamp_status,
+                        "Controle SETTA": stamp_status,
+                        "Conformidade": compliance_status,
                         "PDF": pdf_name,
                     })
                 except Exception as exc:
@@ -3136,7 +3139,8 @@ def render_file_processing():
                     "CNPJ": "CNPJ",
                     "Protocolo": "Protocolo",
                     "Status": st.column_config.TextColumn("Autorização", width="large"),
-                    "Carimbo": st.column_config.TextColumn("Carimbo operacional", width="medium"),
+                    "Controle SETTA": st.column_config.TextColumn("Controle interno", width="medium"),
+                    "Conformidade": st.column_config.TextColumn("Padrão", width="medium"),
                     "PDF": st.column_config.TextColumn("Arquivo gerado", width="large"),
                 },
             )
