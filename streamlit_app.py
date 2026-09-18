@@ -2131,10 +2131,35 @@ def make_zip_outputs(df: pd.DataFrame):
                     raise ValueError(f"Nome final vazio ou duplicado: {final_name}")
                 used.add(final_name)
 
-                # Controle interno SETTA ainda NÃO é inserido no DANFE.
-                # Os dados ficam preservados no processamento para decidirmos
-                # posteriormente a posição definitiva do retângulo.
-                archive.writestr(final_name, item["bytes"])
+                # A DANFE/arquivo base já está pronto neste ponto. O controle
+                # interno é aplicado somente agora, como segunda camada PDF,
+                # sem participar da interpretação/renderização fiscal do XML.
+                data_chegada = (
+                    normalized_business_date(row.get("pre_nota_em"))
+                    or normalized_business_date(row.get("pre_nota_data"))
+                )
+                recebedor = str(
+                    row.get("pre_nota_recebedor")
+                    or row.get("recebedor")
+                    or ""
+                ).strip()
+                cr = str(row.get("cr") or "").strip()
+                desc_cr = str(row.get("desc_cr") or "").strip()
+
+                final_pdf_bytes = item["bytes"]
+                stamp_applied = False
+                if any([data_chegada, cr, desc_cr, nature, recebedor]):
+                    final_pdf_bytes = apply_operational_stamp(
+                        final_pdf_bytes,
+                        data_chegada=data_chegada,
+                        cr=cr,
+                        desc_cr=desc_cr,
+                        natureza=nature,
+                        recebido_por=recebedor,
+                    )
+                    stamp_applied = True
+
+                archive.writestr(final_name, final_pdf_bytes)
 
                 manifest.append(
                     {
@@ -2154,11 +2179,17 @@ def make_zip_outputs(df: pd.DataFrame):
                         "pre_nota_em": str(row.get("pre_nota_em") or "") or None,
                         "metodo_fornecedor": str(row.metodo_fornecedor),
                         "confianca": int(row.confianca),
-                        "status": "PDF CRIADO",
+                        "status": "REALIZADO",
                         "operador": operator or None,
                         "recebido_em": processed_at,
                         "pdf_criado_em": processed_at,
                         "processado_em": processed_at,
+                        "cr": cr or None,
+                        "desc_cr": desc_cr or None,
+                        "recebedor": recebedor or None,
+                        "origem_dados": str(row.get("origem_dados") or "").strip() or None,
+                        "data_chegada": data_chegada.isoformat() if data_chegada else None,
+                        "carimbo_aplicado": stamp_applied,
                     }
                 )
         suffix = " - PRIORIDADE" if priority else ""
@@ -3095,8 +3126,9 @@ def render_file_processing():
         st.caption(
             "Geração do DANFE da NF-e modelo 55 baseada no MOC 7.0 / Anexo II: A4 retrato, "
             "margens regulamentares, fonte Times, CODE-128, paginação de produtos e repetição do "
-            "cabeçalho fiscal. O quadro RESERVADO AO FISCO permanece livre; o controle SETTA é "
-            "preenchido no canhoto. Os XMLs e PDFs ficam somente nesta sessão."
+            "cabeçalho fiscal. Primeiro é gerada a camada fiscal exclusivamente a partir do XML; "
+            "depois o controle interno SETTA é aplicado como segunda camada PDF, provisoriamente "
+            "na área RESERVADO AO FISCO. Os XMLs e PDFs ficam somente nesta sessão."
         )
 
         xml_files = st.file_uploader(
@@ -3144,7 +3176,8 @@ def render_file_processing():
                     pdf_name = danfe_file_name(meta)
 
                     stamp_status = "SEM DADOS OPERACIONAIS"
-                    compliance_status = "MOC 7.0 / NF-e 55"
+                    compliance_status = "MOC 7.0 / NF-e 55 + CAMADA INTERNA"
+                    stamp_applied = False
                     pending_for_stamp = current_pending_pre_notes()
                     if isinstance(pending_for_stamp, pd.DataFrame) and not pending_for_stamp.empty:
                         identity = _xml_prefilter_identity(xml_data)
@@ -3158,17 +3191,37 @@ def render_file_processing():
                                 pre_row,
                                 identity,
                             )
-                            stamp_status = (
-                                "DADOS DO CONTROLE INTERNO PRONTOS — NÃO APLICADO"
-                                if any([
-                                    normalized_business_date(pre_row.get("data_pre_nota")),
-                                    operational.get("cr"),
-                                    operational.get("desc_cr"),
-                                    operational.get("natureza"),
-                                    str(pre_row.get("recebedor") or "").strip(),
-                                ])
-                                else "SEM DADOS OPERACIONAIS"
+                            data_chegada = normalized_business_date(
+                                pre_row.get("data_pre_nota")
                             )
+                            recebedor = str(
+                                pre_row.get("recebedor") or ""
+                            ).strip()
+                            cr = str(operational.get("cr") or "").strip()
+                            desc_cr = str(
+                                operational.get("desc_cr") or ""
+                            ).strip()
+                            natureza = str(
+                                operational.get("natureza") or ""
+                            ).strip().upper()
+
+                            if any([
+                                data_chegada,
+                                cr,
+                                desc_cr,
+                                natureza,
+                                recebedor,
+                            ]):
+                                pdf_bytes = apply_operational_stamp(
+                                    pdf_bytes,
+                                    data_chegada=data_chegada,
+                                    cr=cr,
+                                    desc_cr=desc_cr,
+                                    natureza=natureza,
+                                    recebido_por=recebedor,
+                                )
+                                stamp_applied = True
+                                stamp_status = "APLICADO — CAMADA INTERNA PÓS-XML"
 
                     outputs[pdf_name] = {
                         "bytes": pdf_bytes,
@@ -3182,6 +3235,7 @@ def render_file_processing():
                         "status_codigo": meta.status_codigo,
                         "status_motivo": meta.status_motivo,
                         "carimbo": stamp_status,
+                        "carimbo_aplicado": stamp_applied,
                         "conformidade": compliance_status,
                     }
 
@@ -3405,7 +3459,18 @@ if page == "Dashboard":
             records[col] = pd.to_datetime(records[col], errors="coerce")
 
     received = int(records.get("recebido_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-    pre_done = int(records.get("pre_nota_status", pd.Series("", index=records.index)).fillna("").astype(str).str.strip().ne("").sum())
+    completed_status = (
+        records.get("status", pd.Series("", index=records.index))
+        .fillna("")
+        .astype(str)
+        .str.upper()
+        .isin({"REALIZADO", "ENVIADO", "PDF CRIADO"})
+    )
+    linked_pre_note = records.get(
+        "pre_nota_em",
+        pd.Series(pd.NaT, index=records.index),
+    ).notna()
+    pre_done = int((completed_status & linked_pre_note).sum())
     created = int(records.get("pdf_criado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
     sent = int(records.get("enviado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
 
