@@ -567,8 +567,10 @@ def supplier_validation_name(value: object) -> str:
     raw = str(value or "").strip()
     if not raw or raw.upper() == "NÃO LOCALIZADO":
         return ""
-    standard = standard_supplier_name(raw)
-    return normalize_text(standard or raw)
+    # A validação do vínculo usa o nome efetivamente presente nos relatórios.
+    # A base de fornecedores pode complementar o nome da pré-nota quando necessário,
+    # mas não deve substituir os dois lados por uma inferência fuzzy antes da comparação.
+    return normalize_text(raw)
 
 
 def supplier_similarity(name_a: object, name_b: object) -> int:
@@ -2695,7 +2697,7 @@ elif page == "Configurações":
             show_flash("_flash_pre")
             st.markdown("### Validação de pré-notas")
             st.write(
-                "Formato validado: A = Data, C = Número da NF, E = CNPJ e F = Status. "
+                "Formato validado: A = Data, C = Número da NF, D = Fornecedor, E = CNPJ e F = Status. "
                 "Somente registros com status **Pré-nota lançada** entram na base. "
                 "Carregue o arquivo, valide a prévia e confirme a carga."
             )
@@ -2729,6 +2731,7 @@ elif page == "Configurações":
                                     temp.iloc[:, 0], errors="coerce", dayfirst=True
                                 ).dt.date,
                                 "numero_nf": temp.iloc[:, 2].map(normalized_nf),
+                                "fornecedor": temp.iloc[:, 3].fillna("").astype(str).str.strip(),
                                 "cnpj": temp.iloc[:, 4].map(digits_only),
                                 "status": temp.iloc[:, 5].fillna("").astype(str).str.strip(),
                             })
@@ -2738,17 +2741,23 @@ elif page == "Configurações":
                                 normalized["status_normalizado"].eq("PRE-NOTA LANCADA")
                             ].copy()
                             only_pre["cnpj_valido"] = only_pre["cnpj"].map(valid_cnpj)
+                            only_pre["fornecedor_valido"] = (
+                                only_pre["fornecedor"].fillna("").astype(str).str.strip().ne("")
+                            )
+                            only_pre["data_valida"] = only_pre["data_pre_nota"].notna()
 
                             invalid_count = int(
                                 (
                                     only_pre["numero_nf"].eq("")
-                                    | ~only_pre["cnpj_valido"]
+                                    | ~only_pre["fornecedor_valido"]
+                                    | ~only_pre["data_valida"]
                                 ).sum()
                             )
 
                             preview = only_pre[
                                 only_pre["numero_nf"].ne("")
-                                & only_pre["cnpj_valido"]
+                                & only_pre["fornecedor_valido"]
+                                & only_pre["data_valida"]
                             ].copy()
                             preview = (
                                 preview.sort_values(
@@ -2756,9 +2765,17 @@ elif page == "Configurações":
                                     ascending=[False, True],
                                     na_position="last",
                                 )
-                                .drop_duplicates(["numero_nf", "cnpj"], keep="last")
+                                .drop_duplicates(
+                                    ["data_pre_nota", "numero_nf", "fornecedor"],
+                                    keep="last",
+                                )
                                 .drop(
-                                    columns=["status_normalizado", "cnpj_valido"],
+                                    columns=[
+                                        "status_normalizado",
+                                        "cnpj_valido",
+                                        "fornecedor_valido",
+                                        "data_valida",
+                                    ],
                                     errors="ignore",
                                 )
                                 .reset_index(drop=True)
@@ -2790,7 +2807,7 @@ elif page == "Configurações":
                 st.markdown(f"#### Conferência da carga — {preview_name}")
                 if invalid_count:
                     st.warning(
-                        f"{invalid_count} registro(s) com NF ou CNPJ inválido foram ignorados na validação."
+                        f"{invalid_count} registro(s) sem Data, NF ou Fornecedor válido foram ignorados na validação."
                     )
 
                 st.dataframe(
@@ -2803,6 +2820,7 @@ elif page == "Configurações":
                         ),
                         "numero_nf": "NF",
                         "cnpj": "CNPJ",
+                        "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
                         "status": "Status",
                     },
                 )
