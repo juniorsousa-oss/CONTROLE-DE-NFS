@@ -358,7 +358,7 @@ def extract_danfe_metadata(raw_xml: bytes) -> DanfeMetadata:
         serie=data["serie"],
         chave=data["key"],
         emitente=data["emitente"],
-        cnpj_emitente=_digits(data["emitente_cnpj"]),
+        cnpj_emitente=_tax_id(data["emitente_cnpj"]),
         destinatario=data["destinatario"],
         data_emissao=data["dhEmi"],
         protocolo=data["protocolo"],
