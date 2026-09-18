@@ -1418,18 +1418,10 @@ elif page == "Pendências":
             # Barra de pesquisa no mesmo padrão visual do fluxo operacional.
             if "pre_pending_search" not in st.session_state:
                 st.session_state.pre_pending_search = ""
-            if "pre_pending_status" not in st.session_state:
-                st.session_state.pre_pending_status = "Todos"
             if "pre_pending_date" not in st.session_state:
                 st.session_state.pre_pending_date = "Todas"
             if "pre_pending_supplier" not in st.session_state:
                 st.session_state.pre_pending_supplier = "Todos"
-
-            status_options = ["Todos"] + sorted(
-                pending_view["status"].fillna("").astype(str).loc[
-                    lambda s: s.str.strip().ne("")
-                ].unique().tolist()
-            )
 
             date_values = sorted(
                 [
@@ -1449,27 +1441,21 @@ elif page == "Pendências":
 
             def _clear_pre_pending_filters():
                 st.session_state.pre_pending_search = ""
-                st.session_state.pre_pending_status = "Todos"
                 st.session_state.pre_pending_date = "Todas"
                 st.session_state.pre_pending_supplier = "Todos"
 
             with st.container(border=True):
-                f1, f2, f3, f4 = st.columns([1.6, 1, 1, 1])
+                f1, f2, f3 = st.columns([1.7, 1, 1.3])
                 f1.text_input(
                     "Buscar NF / CNPJ / fornecedor",
                     key="pre_pending_search",
                 )
                 f2.selectbox(
-                    "Status",
-                    status_options,
-                    key="pre_pending_status",
-                )
-                f3.selectbox(
                     "Data da pré-nota",
                     date_options,
                     key="pre_pending_date",
                 )
-                f4.selectbox(
+                f3.selectbox(
                     "Fornecedor",
                     supplier_options,
                     key="pre_pending_supplier",
@@ -1501,12 +1487,6 @@ elif page == "Pendências":
                     | filtered["fornecedor"].fillna("").astype(str).map(normalize_text).str.contains(search_term, na=False)
                 )
                 filtered = filtered[search_mask].copy()
-
-            selected_status = st.session_state.get("pre_pending_status") or "Todos"
-            if selected_status != "Todos":
-                filtered = filtered[
-                    filtered["status"].fillna("").astype(str).eq(selected_status)
-                ].copy()
 
             selected_date = st.session_state.get("pre_pending_date") or "Todas"
             if selected_date != "Todas":
