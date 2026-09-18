@@ -985,6 +985,8 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 st.session_state.priority_nf_doc_keys = set(
                     high.get("nf_cnpj", pd.Series(dtype=str)).dropna().astype(str).tolist()
                 )
+                # Limpa a chave legada por fornecedor: a regra oficial passa a ser NF_CNPJ.
+                st.session_state.priority_nf_keys = set()
                 st.session_state.priority_nf_numbers = set(
                     high.get("numero_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
                 )
