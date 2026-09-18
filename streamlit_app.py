@@ -1384,56 +1384,130 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     st.rerun()
 
 
-def current_pre_note_map() -> dict[str, dict]:
+def match_document_to_pre_note(
+    document_row: pd.Series | dict,
+    min_supplier_score: int = 82,
+) -> dict:
     frame = st.session_state.pre_notes
+    result = {
+        "matched": False,
+        "situacao": "PRÉ-NOTA NÃO LOCALIZADA",
+        "score_fornecedor": 0,
+        "row": None,
+    }
     if not isinstance(frame, pd.DataFrame) or frame.empty:
-        return {}
-    result = {}
-    for _, row in frame.iterrows():
-        key = pre_note_key(row.get("numero_nf"), row.get("cnpj"))
-        if key:
-            result[key] = row.to_dict()
+        return result
+
+    nf = normalized_nf(document_row.get("numero_nf"))
+    if not nf:
+        result["situacao"] = "NF INVÁLIDA"
+        return result
+
+    candidates = frame[
+        frame["numero_nf"].map(normalized_nf).eq(nf)
+    ].copy()
+    if candidates.empty:
+        return result
+
+    supplier_names = [
+        str(document_row.get("fornecedor_padrao") or "").strip(),
+        str(document_row.get("fornecedor_lido") or "").strip(),
+    ]
+    supplier_names = [name for name in supplier_names if name]
+    if not supplier_names:
+        result["situacao"] = "FORNECEDOR DO PDF NÃO LOCALIZADO"
+        return result
+
+    candidates["_supplier_pre"] = candidates.apply(pre_supplier_name, axis=1)
+    candidates["_score_supplier"] = candidates["_supplier_pre"].map(
+        lambda pre_name: max(
+            [supplier_similarity(pre_name, doc_name) for doc_name in supplier_names]
+            or [0]
+        )
+    )
+    candidates = candidates.sort_values("_score_supplier", ascending=False)
+
+    best = candidates.iloc[0]
+    best_score = int(best["_score_supplier"])
+    if best_score < min_supplier_score:
+        result["situacao"] = "FORNECEDOR DIVERGENTE"
+        result["score_fornecedor"] = best_score
+        return result
+
+    if len(candidates) > 1:
+        second = candidates.iloc[1]
+        second_score = int(second["_score_supplier"])
+        if (
+            supplier_validation_name(best.get("_supplier_pre"))
+            != supplier_validation_name(second.get("_supplier_pre"))
+            and second_score >= min_supplier_score
+            and best_score - second_score <= 3
+        ):
+            result["situacao"] = "CORRESPONDÊNCIA AMBÍGUA"
+            result["score_fornecedor"] = best_score
+            return result
+
+    result.update(
+        matched=True,
+        situacao="OK",
+        score_fornecedor=best_score,
+        row=best.to_dict(),
+    )
     return result
 
 
 def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
+
     out = df.copy()
-    priority_numbers = set(st.session_state.priority_nf_numbers or set())
-    priority_keys = set(st.session_state.get("priority_nf_keys") or set())
-    priority_doc_keys = set(st.session_state.get("priority_nf_doc_keys") or set())
-    pmap = current_pre_note_map()
+    mrp_summary = st.session_state.get("mrp_priority_summary")
+    if not isinstance(mrp_summary, pd.DataFrame):
+        mrp_summary = pd.DataFrame()
 
-    priority_flags, pre_status, pre_dates = [], [], []
+    priority_flags = []
+    pre_status = []
+    pre_dates = []
+    pre_link_status = []
+    pre_supplier_scores = []
+
     for _, row in out.iterrows():
-        num = normalized_nf(row.get("numero_nf"))
-        cnpj = digits_only(row.get("cnpj_fornecedor"))
-        doc_key = f"{num}_{cnpj}" if num and cnpj else ""
-        pre = pmap.get(pre_note_key(num, cnpj), {})
+        pre_match = match_document_to_pre_note(row)
+        pre_row = pre_match.get("row") if pre_match.get("matched") else None
 
-        std_supplier = str(row.get("fornecedor_padrao") or "").strip()
-        read_supplier = str(row.get("fornecedor_lido") or "").strip()
-        keys = {
-            priority_key(num, std_supplier),
-            priority_key(num, read_supplier),
-        }
-        keys.discard("")
-
-        if priority_doc_keys:
-            priority = doc_key in priority_doc_keys
-        elif priority_keys:
-            priority = any(k in priority_keys for k in keys)
+        if pre_row:
+            mrp_match = match_pre_note_to_mrp(pre_row, mrp_summary)
         else:
-            priority = num in priority_numbers
+            mrp_match = {
+                "matched": False,
+                "situacao": pre_match.get("situacao") or "PRÉ-NOTA NÃO LOCALIZADA",
+                "score_fornecedor": pre_match.get("score_fornecedor") or 0,
+                "row": None,
+            }
+
+        mrp_row = mrp_match.get("row") if mrp_match.get("matched") else None
+        priority = bool(
+            mrp_row
+            and str(mrp_row.get("prioridade") or "").upper() == "ALTA"
+        )
 
         priority_flags.append(priority)
-        pre_status.append(str(pre.get("status") or ""))
-        pre_dates.append(pre.get("data_pre_nota") or None)
+        pre_status.append(str(pre_row.get("status") or "") if pre_row else "")
+        pre_dates.append(pre_row.get("data_pre_nota") if pre_row else None)
+        pre_link_status.append(str(mrp_match.get("situacao") or ""))
+        pre_supplier_scores.append(
+            int(
+                mrp_match.get("score_fornecedor")
+                or pre_match.get("score_fornecedor")
+                or 0
+            )
+        )
 
     out["prioridade_mrp"] = priority_flags
     out["pre_nota_status"] = pre_status
     out["pre_nota_em"] = pre_dates
+    out["vinculo_mrp_status"] = pre_link_status
+    out["vinculo_fornecedor_score"] = pre_supplier_scores
     return out
 
 
