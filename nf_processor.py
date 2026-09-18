@@ -176,7 +176,7 @@ def extract_emitter_name(text: str) -> str:
     return ""
 
 
-def extract_due_dates(text: str) -> list[date]:
+def extract_due_dates(text: str, reference_aamm: str = "") -> list[date]:
     normalized = strip_accents_upper(text)
     start = next(
         (
@@ -212,16 +212,45 @@ def extract_due_dates(text: str) -> list[date]:
     if dates:
         return sorted(set(dates))
 
-    # Contingência segura: alguns DANFEs não preservam o bloco FATURA no texto,
-    # mas mantêm o rótulo VENCIMENTO/VENCTO/VCTO próximo da data.
+    # Alguns DANFEs recebem o vencimento pelo carimbo operacional.
+    # Nesse caso pode vir apenas como "VENC. 09/10", sem o ano.
     labeled = re.compile(
-        r"(?:VENCIMENTO|VENCTO|VCTO|VENC\.)\s*[:\-]?\s*"
-        r"([0-3]\d)/([01]\d)/(20\d{2})",
+        r"(?:VENCIMENTO|VENCTO|VCTO|VENC\.?)\s*[:\-]?\s*"
+        r"([0-3]?\d)[/\.\-]([01]?\d)(?:[/\.\-](\d{2,4}))?",
         flags=re.IGNORECASE,
     )
+
+    ref_year = None
+    ref_month = None
+    aamm = digits_only(reference_aamm)
+    if len(aamm) == 4:
+        try:
+            ref_year = 2000 + int(aamm[:2])
+            ref_month = int(aamm[2:4])
+        except ValueError:
+            ref_year = None
+            ref_month = None
+
     for d, m, y in labeled.findall(normalized):
         try:
-            dates.append(date(int(y), int(m), int(d)))
+            day = int(d)
+            month = int(m)
+
+            if y:
+                year = int(y)
+                if year < 100:
+                    year += 2000
+            elif ref_year is not None:
+                year = ref_year
+                # Se a NF for do fim do ano e o vencimento cair em mês anterior,
+                # trata como virada para o ano seguinte.
+                if ref_month is not None and month < ref_month:
+                    year += 1
+            else:
+                # Sem ano explícito e sem referência segura, não inventa a data.
+                continue
+
+            dates.append(date(year, month, day))
         except ValueError:
             pass
 
@@ -464,7 +493,7 @@ def process_nf_pdf(
     serie = key_info.get("serie") or extract_series(text)
     cnpj = key_info.get("cnpj") or extract_emitter_cnpj(text)
     emitter = extract_emitter_name(text)
-    due_dates = extract_due_dates(text)
+    due_dates = extract_due_dates(text, key_info.get("aamm", ""))
     due = due_dates[0] if due_dates else None
     nature = extract_internal_nature(text, allowed_natures)
     nature_from_stamp_ocr = False
