@@ -1159,16 +1159,19 @@ def _draw_void_watermark(page: fitz.Page, data: dict):
         )
 
 
-STAMP_BLUE = (0.08, 0.48, 0.78)
+STAMP_BORDER = (0.28, 0.31, 0.35)
+STAMP_FILL = (0.965, 0.968, 0.972)
+STAMP_HEADER = (0.90, 0.91, 0.93)
+STAMP_TEXT = (0.08, 0.09, 0.11)
 
 
 def _stamp_date(value: object) -> str:
     if value is None:
         return ""
     if isinstance(value, datetime):
-        return value.strftime("%d/%m/%y")
+        return value.strftime("%d/%m/%Y")
     if isinstance(value, date):
-        return value.strftime("%d/%m/%y")
+        return value.strftime("%d/%m/%Y")
 
     raw = str(value or "").strip()
     if not raw:
@@ -1176,10 +1179,23 @@ def _stamp_date(value: object) -> str:
 
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y"):
         try:
-            return datetime.strptime(raw[:10], fmt).strftime("%d/%m/%y")
+            return datetime.strptime(raw[:10], fmt).strftime("%d/%m/%Y")
         except Exception:
             pass
     return raw
+
+
+def _stamp_fit_size(value: str, width: float, preferred: float = 7.0, minimum: float = 5.2) -> float:
+    size = preferred
+    while size > minimum:
+        if fitz.get_text_length(
+            str(value or ""),
+            fontname="helv",
+            fontsize=size,
+        ) <= width:
+            return size
+        size -= 0.2
+    return minimum
 
 
 def apply_operational_stamp(
@@ -1190,17 +1206,10 @@ def apply_operational_stamp(
     natureza: object,
     recebido_por: object,
 ) -> bytes:
-    """Aplica no DANFE o carimbo operacional usado pela Setta.
+    """Aplica o quadro CONTROLE INTERNO — SETTA no DANFE final.
 
-    Modelo recuperado dos DANFEs históricos:
-    DATA DE CHEGADA
-    CR
-    DESC CR
-    NATUREZA
-    RECEBIDO POR
-
-    O carimbo é aplicado em azul dentro de RESERVADO AO FISCO, sem borda,
-    como no modelo manual/TOTVS utilizado anteriormente.
+    O conteúdo segue o antigo carimbo operacional, mas o visual é neutro,
+    corporativo e independente do antigo carimbo azul.
     """
     if not pdf_bytes:
         return pdf_bytes
@@ -1213,14 +1222,8 @@ def apply_operational_stamp(
     page = doc[0]
     page_rect = page.rect
 
-    # PDFs históricos podem já vir carimbados pelo TOTVS. Não sobrepõe um
-    # segundo carimbo nesses casos.
     existing_text = page.get_text("text").upper()
-    if (
-        "DATA DE CHEGADA:" in existing_text
-        and "DESC CR:" in existing_text
-        and "RECEBIDO POR" in existing_text
-    ):
+    if "CONTROLE INTERNO" in existing_text and "RECEBIDO POR" in existing_text:
         doc.close()
         return pdf_bytes
 
@@ -1230,55 +1233,102 @@ def apply_operational_stamp(
     nature_text = str(natureza or "").strip().upper()
     receiver_text = str(recebido_por or "").strip().upper()
 
-    stamp_text = "\n".join([
-        f"DATA DE CHEGADA: {date_text}",
-        f"CR: {cr_text}",
-        f"DESC CR: {desc_text}",
-        f"NATUREZA: {nature_text}",
-        f"RECEBIDO POR {receiver_text}".rstrip(),
-    ])
-
-    # Procura o bloco RESERVADO AO FISCO do próprio DANFE. Isso permite
-    # aplicar o mesmo carimbo tanto no DANFE gerado pelo app quanto em PDFs
-    # originais de fornecedores com pequenas diferenças de layout.
+    # Preferência: lado direito do bloco RESERVADO AO FISCO.
     hits = page.search_for("RESERVADO AO FISCO")
     if hits:
-        label = hits[0]
-        x0 = max(label.x0 + 12, page_rect.width * 0.56)
-        y0 = min(label.y1 + 23, page_rect.height - 115)
+        label = hits[-1]
+        x0 = max(label.x0 + 2, page_rect.width * 0.565)
+        y0 = label.y1 + 7
     else:
-        x0 = page_rect.width * 0.58
+        x0 = page_rect.width * 0.57
         y0 = page_rect.height * 0.79
 
-    x1 = page_rect.width - 18
-    y1 = page_rect.height - 24
+    x1 = page_rect.width - 21
+    max_y1 = page_rect.height - 25
+    card_h = 92
+    y1 = min(y0 + card_h, max_y1)
+    if y1 - y0 < 78:
+        y0 = max(20, y1 - 92)
 
-    # Garante área mínima sem sair da página.
-    if x1 - x0 < 150:
-        x0 = max(18, x1 - 205)
-    if y1 - y0 < 65:
-        y0 = max(18, y1 - 95)
+    card = fitz.Rect(x0, y0, x1, y1)
+    page.draw_rect(
+        card,
+        color=STAMP_BORDER,
+        fill=STAMP_FILL,
+        width=0.6,
+        overlay=True,
+    )
 
-    rect = fitz.Rect(x0, y0, x1, y1)
+    header_h = 17
+    header = fitz.Rect(x0, y0, x1, y0 + header_h)
+    page.draw_rect(
+        header,
+        color=STAMP_BORDER,
+        fill=STAMP_HEADER,
+        width=0.6,
+        overlay=True,
+    )
+    page.insert_textbox(
+        fitz.Rect(x0 + 5, y0 + 3.5, x1 - 5, y0 + header_h - 1),
+        "CONTROLE INTERNO — SETTA",
+        fontsize=7.6,
+        fontname="hebo",
+        color=STAMP_TEXT,
+        align=0,
+        overlay=True,
+    )
 
-    # O histórico usa texto azul, sans-serif, sem moldura.
-    # Reduz automaticamente a fonte apenas quando Natureza/Descrição CR
-    # forem longas demais para o bloco disponível.
-    inserted = -1
-    font_size = 9.2
-    while font_size >= 6.8:
-        inserted = page.insert_textbox(
-            rect,
-            stamp_text,
-            fontsize=font_size,
-            fontname="helv",
-            color=STAMP_BLUE,
-            lineheight=1.12,
+    rows = [
+        ("DATA DE CHEGADA", date_text),
+        ("CR", cr_text),
+        ("DESC. CR", desc_text),
+        ("NATUREZA", nature_text),
+        ("RECEBIDO POR", receiver_text),
+    ]
+    body_top = y0 + header_h
+    row_h = (y1 - body_top) / len(rows)
+    label_w = min(78, (x1 - x0) * 0.34)
+
+    for idx, (label_text, value_text) in enumerate(rows):
+        ry0 = body_top + idx * row_h
+        ry1 = body_top + (idx + 1) * row_h
+        if idx:
+            page.draw_line(
+                fitz.Point(x0, ry0),
+                fitz.Point(x1, ry0),
+                color=(0.78, 0.79, 0.81),
+                width=0.35,
+                overlay=True,
+            )
+        page.draw_line(
+            fitz.Point(x0 + label_w, ry0),
+            fitz.Point(x0 + label_w, ry1),
+            color=(0.78, 0.79, 0.81),
+            width=0.35,
             overlay=True,
         )
-        if inserted >= 0:
-            break
-        font_size -= 0.4
+        page.insert_textbox(
+            fitz.Rect(x0 + 4, ry0 + 2.6, x0 + label_w - 3, ry1 - 1),
+            label_text,
+            fontsize=5.1,
+            fontname="hebo",
+            color=(0.35, 0.37, 0.40),
+            align=0,
+            overlay=True,
+        )
+        value_size = _stamp_fit_size(
+            value_text,
+            max(20, x1 - (x0 + label_w) - 8),
+        )
+        page.insert_textbox(
+            fitz.Rect(x0 + label_w + 4, ry0 + 2.2, x1 - 4, ry1 - 1),
+            value_text,
+            fontsize=value_size,
+            fontname="helv",
+            color=STAMP_TEXT,
+            align=0,
+            overlay=True,
+        )
 
     output = doc.tobytes(garbage=4, deflate=True)
     doc.close()
@@ -1286,46 +1336,15 @@ def apply_operational_stamp(
 
 
 def generate_danfe_pdf(raw_xml: bytes) -> bytes:
+    """Gera DANFE A4 usando o motor profissional e paginado.
+
+    O XML é normalizado por _parse_nfe; a camada visual fica isolada em
+    danfe_renderer.py para que layout, medição de texto e paginação não
+    contaminem a interpretação fiscal.
+    """
     data = _parse_nfe(raw_xml)
-    product_pages, height_pages = _split_products(data["items"])
-    total_pages = len(product_pages)
-
-    doc = fitz.open()
-
-    first = doc.new_page(width=PAGE_W, height=PAGE_H)
-    _draw_header(first, data, 1, total_pages)
-    _draw_recipient(first, data)
-    _draw_billing(first, data)
-    _draw_taxes(first, data)
-    _draw_shipping(first, data)
-    _draw_product_table(
-        first,
-        product_pages[0],
-        height_pages[0],
-        top=427.46,
-        bottom=645.31,
-        title_y=426.79,
-        header_y=436.02,
-        data_y=445.44,
-    )
-    _draw_issqn_and_additional(first, data)
-    _draw_void_watermark(first, data)
-
-    for page_idx in range(1, total_pages):
-        page = doc.new_page(width=PAGE_W, height=PAGE_H)
-        _draw_continuation(
-            page,
-            data,
-            page_idx + 1,
-            total_pages,
-            product_pages[page_idx],
-            height_pages[page_idx],
-        )
-        _draw_void_watermark(page, data)
-
-    output = doc.tobytes(garbage=4, deflate=True)
-    doc.close()
-    return output
+    from danfe_renderer import render_danfe_pdf
+    return render_danfe_pdf(data)
 
 
 def danfe_file_name(meta: DanfeMetadata) -> str:
