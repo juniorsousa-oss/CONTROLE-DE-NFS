@@ -2730,7 +2730,7 @@ def render_file_processing():
                         "natureza": st.column_config.TextColumn(
                             "Natureza",
                             width="large",
-                            help="Valor livre lido do carimbo da NF. Pode ser MP, MC ou uma descrição completa.",
+                            help="Natureza buscada primeiro na carga de NFs (STSUP01, coluna Natureza). Pode ser ajustada manualmente se necessário.",
                         ),
                         "status": st.column_config.SelectboxColumn(
                             "Status",
@@ -2776,7 +2776,31 @@ def render_file_processing():
                     )
                     updated = apply_cross_checks(updated)
                     updated = recalc(updated)
+
+                    # Clicar em Aplicar correções representa a confirmação do
+                    # operador. Se a linha ficou completa após as correções,
+                    # aprova automaticamente; linhas ainda inválidas continuam
+                    # como REVISAR pelo recalc.
+                    for idx in treatment_editor.index:
+                        validation = str(
+                            updated.loc[idx, "validacao"]
+                            if idx in updated.index
+                            else ""
+                        ).strip()
+                        final_name = str(
+                            updated.loc[idx, "nome_sugerido"]
+                            if idx in updated.index
+                            else ""
+                        ).strip()
+                        if idx in updated.index and not validation and final_name:
+                            updated.loc[idx, "status"] = "APROVADO"
+
+                    updated = recalc(updated)
                     st.session_state.analysis = updated
+
+                    # Limpa o estado do editor para a próxima renderização usar
+                    # exatamente os dados já salvos no DataFrame.
+                    st.session_state.pop("treatment_editor", None)
                     st.rerun()
 
             merged = st.session_state.analysis.copy()
