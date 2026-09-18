@@ -1264,15 +1264,37 @@ elif page == "Configurações":
 
                     duplicate_rows = valid[valid["cnpj"].duplicated(keep=False)].copy()
                     conflict_cnpjs = []
-                    for cnpj, group in duplicate_rows.groupby("cnpj"):
-                        if group["nome_padrao"].map(normalize_text).nunique() > 1:
+                    preferred_rows = []
+
+                    for cnpj, group in valid.groupby("cnpj", sort=False):
+                        if len(group) == 1:
+                            preferred_rows.append(group.iloc[0])
+                            continue
+
+                        compact_names = [
+                            re.sub(r"[^A-Z0-9]", "", normalize_text(name))
+                            for name in group["nome_padrao"].tolist()
+                        ]
+                        base_name = min(compact_names, key=len)
+                        equivalent = all(
+                            name == base_name
+                            or name.startswith(base_name)
+                            or base_name.startswith(name)
+                            for name in compact_names
+                        )
+
+                        if equivalent:
+                            # Para o mesmo CNPJ, prefere a Razão Social mais curta/limpa.
+                            chosen_idx = group["nome_padrao"].map(
+                                lambda x: len(normalize_text(x))
+                            ).idxmin()
+                            preferred_rows.append(group.loc[chosen_idx])
+                        else:
                             conflict_cnpjs.append(cnpj)
 
-                    clean = (
-                        valid[~valid["cnpj"].isin(conflict_cnpjs)]
-                        .drop_duplicates("cnpj", keep="last")
-                        .copy()
-                    )
+                    clean = pd.DataFrame(preferred_rows).copy()
+                    if not clean.empty:
+                        clean = clean[~clean["cnpj"].isin(conflict_cnpjs)].copy()
 
                     s1, s2, s3, s4 = st.columns(4)
                     s1.metric("Linhas do relatório", len(incoming))
