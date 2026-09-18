@@ -2275,9 +2275,11 @@ elif page == "Pendências":
                 pending_view["aderencia_fornecedor"] = 0
 
             mrp_errors = int(
-                ~pending_view["situacao_mrp"].eq("OK")
-                & ~pending_view["situacao_mrp"].eq("IMPACTO MRP NÃO CARREGADO")
-            ).sum()
+                (
+                    ~pending_view["situacao_mrp"].eq("OK")
+                    & ~pending_view["situacao_mrp"].eq("IMPACTO MRP NÃO CARREGADO")
+                ).sum()
+            )
             if mrp_errors:
                 st.error(
                     f"{mrp_errors} pré-nota(s) não tiveram correspondência segura no Impacto MRP. "
