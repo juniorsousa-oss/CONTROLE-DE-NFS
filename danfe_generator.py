@@ -1023,12 +1023,11 @@ def _draw_void_watermark(page: fitz.Page, data: dict):
     if data["tpAmb"] == "2" or not data["protocolo"]:
         text = "SEM VALOR FISCAL"
         page.insert_text(
-            (145, 500),
+            (155, 500),
             text,
             fontsize=42,
             fontname=FONT_BOLD,
             color=(0.75, 0.75, 0.75),
-            rotate=45,
             overlay=True,
         )
 
@@ -1071,7 +1070,9 @@ def generate_danfe_pdf(raw_xml: bytes) -> bytes:
         )
         _draw_void_watermark(page, data)
 
-    return doc.tobytes(garbage=4, deflate=True)
+    output = doc.tobytes(garbage=4, deflate=True)
+    doc.close()
+    return output
 
 
 def danfe_file_name(meta: DanfeMetadata) -> str:
