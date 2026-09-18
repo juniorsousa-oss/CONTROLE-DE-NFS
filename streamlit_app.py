@@ -580,9 +580,31 @@ def supplier_similarity(name_a: object, name_b: object) -> int:
         return 0
     if a == b:
         return 100
-    if len(a) >= 6 and len(b) >= 6 and (a in b or b in a):
-        return 96
-    return int(round(fuzz.token_set_ratio(a, b)))
+
+    # Combina comparação por conjunto e por ordem de palavras para evitar
+    # falsos positivos como um nome muito curto contido em outro fornecedor.
+    set_score = float(fuzz.token_set_ratio(a, b))
+    sort_score = float(fuzz.token_sort_ratio(a, b))
+    score = int(round((set_score * 0.55) + (sort_score * 0.45)))
+
+    a_tokens = set(a.split())
+    b_tokens = set(b.split())
+    common = a_tokens & b_tokens
+    min_tokens = min(len(a_tokens), len(b_tokens))
+    max_tokens = max(len(a_tokens), len(b_tokens))
+
+    # Quando os nomes compartilham pelo menos duas palavras relevantes e
+    # possuem boa cobertura mútua, reforça a equivalência sem aceitar siglas
+    # isoladas como correspondência automática.
+    if (
+        len(common) >= 2
+        and min_tokens >= 2
+        and max_tokens > 0
+        and len(common) / max_tokens >= 0.60
+    ):
+        score = max(score, 90)
+
+    return min(100, max(0, score))
 
 
 def pre_supplier_name(row: pd.Series | dict) -> str:
