@@ -1725,6 +1725,85 @@ def match_document_to_pre_note(
     return result
 
 
+def nature_from_nf_load(
+    pre_row: pd.Series | dict | None,
+    document_row: pd.Series | dict,
+    min_supplier_score: int = 82,
+) -> tuple[str, str]:
+    """Busca a natureza operacional na carga STSUP01/Impacto MRP.
+
+    A natureza vem da coluna I do relatório de NFs já carregado em
+    mrp_impact_detail. O vínculo segue Data + NF e valida fornecedor.
+    """
+    detail = st.session_state.get("mrp_impact_detail")
+    if not isinstance(detail, pd.DataFrame) or detail.empty:
+        return "", "CARGA DE NFs NÃO DISPONÍVEL"
+
+    if not pre_row:
+        return "", "PRÉ-NOTA NÃO LOCALIZADA"
+
+    key = date_nf_key(
+        pre_row.get("data_pre_nota"),
+        document_row.get("numero_nf") or pre_row.get("numero_nf"),
+    )
+    if not key:
+        return "", "DATA/NF INVÁLIDA"
+
+    candidates = detail[
+        detail["data_nf"].fillna("").astype(str).eq(key)
+    ].copy()
+    if candidates.empty:
+        return "", "NF NÃO LOCALIZADA NA CARGA"
+
+    supplier_names = [
+        pre_supplier_name(pre_row),
+        str(document_row.get("fornecedor_padrao") or "").strip(),
+        str(document_row.get("fornecedor_lido") or "").strip(),
+    ]
+    supplier_names = [name for name in supplier_names if name]
+
+    if supplier_names and "fornecedor" in candidates.columns:
+        candidates["_nature_supplier_score"] = candidates["fornecedor"].map(
+            lambda value: max(
+                [supplier_similarity(value, name) for name in supplier_names] or [0]
+            )
+        )
+        strong = candidates[
+            candidates["_nature_supplier_score"] >= min_supplier_score
+        ].copy()
+        if not strong.empty:
+            candidates = strong
+
+    if "natureza" not in candidates.columns:
+        return "", "COLUNA NATUREZA AUSENTE"
+
+    natures = (
+        candidates["natureza"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.upper()
+    )
+    natures = natures[
+        natures.ne("")
+        & ~natures.isin({"NAN", "NONE", "NULL"})
+    ]
+
+    if natures.empty:
+        return "", "NATUREZA NÃO INFORMADA NA CARGA"
+
+    # Usa a ocorrência mais frequente. Se houver mais de uma natureza,
+    # registra isso como origem divergente para conferência visual.
+    counts = natures.value_counts()
+    selected = str(counts.index[0]).strip()
+    source = (
+        "CARGA NF"
+        if len(counts) == 1
+        else f"CARGA NF — {len(counts)} NATUREZAS ENCONTRADAS"
+    )
+    return selected, source
+
+
 def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
