@@ -16,6 +16,11 @@ from PIL import Image
 from openpyxl import load_workbook
 
 import db
+from danfe_generator import (
+    danfe_file_name,
+    extract_danfe_metadata,
+    generate_danfe_pdf,
+)
 from nf_processor import (
     build_final_name,
     digits_only,
@@ -87,6 +92,9 @@ def init():
         "analysis": pd.DataFrame(),
         "pdfs": {},
         "zip_outputs": {},
+        "danfe_outputs": {},
+        "danfe_results": [],
+        "danfe_errors": [],
         "history": [],
         "current_test_manifest": [],
         "pre_notes": pd.DataFrame(),
@@ -1249,7 +1257,7 @@ def current_process_records_for_tests() -> pd.DataFrame:
 
 def render_file_processing():
     st.markdown('<div class="section-title">Processamento de arquivos</div>', unsafe_allow_html=True)
-    tab_nf, tab_cte = st.tabs(["NFs", "CTEs"])
+    tab_nf, tab_danfe, tab_cte = st.tabs(["NFs", "XML → DANFE", "CTEs"])
 
     with tab_nf:
         st.markdown(f'<div class="intro">{cfg["intro"]}</div>', unsafe_allow_html=True)
@@ -1518,6 +1526,188 @@ def render_file_processing():
 
             for zip_name, zip_bytes in st.session_state.zip_outputs.items():
                 st.download_button(f"Baixar {zip_name}", zip_bytes, file_name=zip_name, mime="application/zip", type="primary", use_container_width=True, key=f"download_{zip_name}")
+
+
+    with tab_danfe:
+        st.markdown("### XML → DANFE")
+        st.caption(
+            "Geração do DANFE diretamente do XML da NF-e modelo 55, mantendo os dados fiscais do XML "
+            "e o padrão visual fixo definido para o aplicativo. Os XMLs e PDFs gerados ficam somente "
+            "nesta sessão e não são gravados no Supabase."
+        )
+
+        xml_files = st.file_uploader(
+            "Selecione ou arraste os XMLs das NF-e",
+            type=["xml"],
+            accept_multiple_files=True,
+            key="danfe_xml_uploads",
+        )
+
+        d1, d2 = st.columns([4, 1])
+        generate_danfe = d1.button(
+            "GERAR DANFEs",
+            type="primary",
+            use_container_width=True,
+            disabled=not xml_files,
+            key="generate_danfe_batch",
+        )
+        clear_danfe = d2.button(
+            "Limpar",
+            use_container_width=True,
+            key="clear_danfe_batch",
+        )
+
+        if clear_danfe:
+            st.session_state.danfe_outputs = {}
+            st.session_state.danfe_results = []
+            st.session_state.danfe_errors = []
+            st.rerun()
+
+        if generate_danfe:
+            outputs = {}
+            results = []
+            errors = []
+
+            progress = st.progress(0, text="Gerando DANFEs...")
+            total_files = len(xml_files)
+
+            for idx, xml_file in enumerate(xml_files, start=1):
+                try:
+                    raw_xml = xml_file.getvalue()
+                    meta = extract_danfe_metadata(raw_xml)
+
+                    pdf_bytes = generate_danfe_pdf(raw_xml)
+                    pdf_name = danfe_file_name(meta)
+
+                    outputs[pdf_name] = {
+                        "bytes": pdf_bytes,
+                        "xml_name": xml_file.name,
+                        "numero_nf": meta.numero_nf,
+                        "serie": meta.serie,
+                        "emitente": meta.emitente,
+                        "cnpj": meta.cnpj_emitente,
+                        "chave": meta.chave,
+                        "protocolo": meta.protocolo,
+                        "status_codigo": meta.status_codigo,
+                        "status_motivo": meta.status_motivo,
+                    }
+
+                    status_label = (
+                        f"{meta.status_codigo} - {meta.status_motivo}"
+                        if meta.status_codigo
+                        else "SEM PROTOCOLO NO XML"
+                    )
+
+                    results.append({
+                        "XML": xml_file.name,
+                        "NF": meta.numero_nf,
+                        "Série": meta.serie,
+                        "Emitente": meta.emitente,
+                        "CNPJ": meta.cnpj_emitente,
+                        "Protocolo": meta.protocolo,
+                        "Status": status_label,
+                        "PDF": pdf_name,
+                    })
+                except Exception as exc:
+                    errors.append({
+                        "arquivo": xml_file.name,
+                        "erro": str(exc),
+                    })
+
+                progress.progress(
+                    idx / total_files,
+                    text=f"{idx}/{total_files} — {xml_file.name}",
+                )
+
+            progress.empty()
+            st.session_state.danfe_outputs = outputs
+            st.session_state.danfe_results = results
+            st.session_state.danfe_errors = errors
+
+            if outputs:
+                st.success(
+                    f"{len(outputs)} DANFE(s) gerado(s) com sucesso. "
+                    "Os arquivos estão prontos para conferência e download."
+                )
+            if errors:
+                st.warning(
+                    f"{len(errors)} XML(s) não puderam ser convertidos. "
+                    "Veja os detalhes abaixo."
+                )
+
+        danfe_results = st.session_state.get("danfe_results") or []
+        danfe_errors = st.session_state.get("danfe_errors") or []
+        danfe_outputs = st.session_state.get("danfe_outputs") or {}
+
+        if danfe_results:
+            st.markdown("#### Conferência dos DANFEs gerados")
+            st.dataframe(
+                pd.DataFrame(danfe_results),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "XML": st.column_config.TextColumn("XML de origem", width="medium"),
+                    "NF": "NF",
+                    "Série": "Série",
+                    "Emitente": st.column_config.TextColumn("Emitente", width="large"),
+                    "CNPJ": "CNPJ",
+                    "Protocolo": "Protocolo",
+                    "Status": st.column_config.TextColumn("Autorização", width="large"),
+                    "PDF": st.column_config.TextColumn("Arquivo gerado", width="large"),
+                },
+            )
+
+        if danfe_errors:
+            with st.expander(
+                f"XMLs com erro ({len(danfe_errors)})",
+                expanded=True,
+            ):
+                st.dataframe(
+                    pd.DataFrame(danfe_errors),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "arquivo": "Arquivo",
+                        "erro": st.column_config.TextColumn("Erro", width="large"),
+                    },
+                )
+
+        if danfe_outputs:
+            st.markdown("#### Arquivos para download")
+
+            if len(danfe_outputs) > 1:
+                batch_buffer = io.BytesIO()
+                with zipfile.ZipFile(
+                    batch_buffer,
+                    "w",
+                    zipfile.ZIP_DEFLATED,
+                ) as archive:
+                    for pdf_name, item in danfe_outputs.items():
+                        archive.writestr(pdf_name, item["bytes"])
+
+                st.download_button(
+                    "BAIXAR TODOS OS DANFEs (.ZIP)",
+                    batch_buffer.getvalue(),
+                    file_name=f"DANFEs_{now_local():%Y%m%d_%H%M%S}.zip",
+                    mime="application/zip",
+                    type="primary",
+                    use_container_width=True,
+                    key="download_all_danfes",
+                )
+
+            for pos, (pdf_name, item) in enumerate(danfe_outputs.items(), start=1):
+                label = (
+                    f"Baixar NF {item.get('numero_nf') or '-'} — "
+                    f"{item.get('emitente') or pdf_name}"
+                )
+                st.download_button(
+                    label,
+                    item["bytes"],
+                    file_name=pdf_name,
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key=f"download_danfe_{pos}_{pdf_name}",
+                )
 
 
     with tab_cte:
