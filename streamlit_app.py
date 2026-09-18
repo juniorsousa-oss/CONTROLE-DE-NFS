@@ -1816,6 +1816,13 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
         elif pdf_result is not None and row.get("vencimento"):
             notes.append("Vencimento mantido da leitura do PDF.")
 
+        natureza_fiscal = str(xml_data.get("natureza_fiscal") or "").strip()
+        if natureza_fiscal:
+            notes.append(
+                f"Natureza fiscal do XML: {natureza_fiscal}. "
+                "Ela não substitui a natureza interna operacional."
+            )
+
         status_code = str(xml_data.get("status_codigo") or "").strip()
         if status_code == "100":
             notes.append("Identidade fiscal confirmada pelo XML autorizado.")
@@ -2213,6 +2220,8 @@ def render_file_processing():
                 )
 
         frame = st.session_state.analysis.copy()
+        if not frame.empty and "origem_dados" not in frame.columns:
+            frame["origem_dados"] = "PDF"
         if frame.empty:
             st.info("Nenhum lote analisado nesta sessão.")
         else:
@@ -2826,7 +2835,7 @@ elif page == "Pendências":
         unsafe_allow_html=True,
     )
     st.caption(
-        "Centraliza a conferência de pré-notas, o impacto no MRP e o processamento dos PDFs em um único fluxo operacional."
+        "Centraliza a conferência de pré-notas, o impacto no MRP e o processamento de XMLs/PDFs em um único fluxo operacional."
     )
 
     pending_records = current_process_records_for_tests()
