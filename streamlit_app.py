@@ -2073,7 +2073,10 @@ def make_zip_outputs(df: pd.DataFrame):
                     cr=row.get("cr"),
                     desc_cr=row.get("desc_cr"),
                     natureza=row.get("natureza"),
-                    recebido_por=operator,
+                    recebido_por=(
+                        str(row.get("pre_nota_recebedor") or "").strip()
+                        or operator
+                    ),
                 )
                 archive.writestr(final_name, final_pdf)
 
@@ -2315,6 +2318,7 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
 
     row["origem_dados"] = source_mode
     row["pre_nota_data"] = normalized_business_date(pre_row.get("data_pre_nota"))
+    row["pre_nota_recebedor"] = str(pre_row.get("recebedor") or "").strip()
     row["pre_nota_fornecedor"] = pre_supplier_name(pre_row)
     row["pre_nota_cnpj"] = digits_only(pre_row.get("cnpj"))
     row["leitura"] = source_mode
@@ -3048,7 +3052,10 @@ def render_file_processing():
                                 cr=operational.get("cr"),
                                 desc_cr=operational.get("desc_cr"),
                                 natureza=operational.get("natureza"),
-                                recebido_por=st.session_state.operator,
+                                recebido_por=(
+                                    str(pre_row.get("recebedor") or "").strip()
+                                    or st.session_state.operator
+                                ),
                             )
                             stamp_status = "CARIMBO APLICADO"
 
@@ -3445,6 +3452,8 @@ elif page == "Pendências":
                 pending_view["fornecedor"].ne(""),
                 supplier_fallback,
             ).replace("", "NÃO LOCALIZADO")
+            if "recebedor" not in pending_view.columns:
+                pending_view["recebedor"] = ""
             pending_view["validacao_documento"] = "PENDENTE DE DOCUMENTO"
             pending_view["data_nf"] = pending_view.apply(
                 lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
@@ -3627,6 +3636,7 @@ elif page == "Pendências":
                 "numero_nf",
                 "cnpj",
                 "fornecedor",
+                "recebedor",
                 "prioridade",
                 "situacao_mrp",
                 "aderencia_fornecedor",
@@ -3647,6 +3657,10 @@ elif page == "Pendências":
                     "fornecedor": st.column_config.TextColumn(
                         "Fornecedor",
                         width="large",
+                    ),
+                    "recebedor": st.column_config.TextColumn(
+                        "Recebedor",
+                        width="medium",
                     ),
                     "prioridade": "Prioridade",
                     "data_cm": st.column_config.DateColumn(
@@ -3830,7 +3844,7 @@ elif page == "Configurações":
             show_flash("_flash_pre")
             st.markdown("### Validação de pré-notas")
             st.write(
-                "Formato validado: A = Data, C = Número da NF, D = Fornecedor, E = CNPJ e F = Status. "
+                "Formato validado: A = Data, B = Recebedor, C = Número da NF, D = Fornecedor, E = CNPJ e F = Status. "
                 "Somente registros com status **Pré-nota lançada** entram na base. "
                 "Carregue o arquivo, valide a prévia e confirme a carga."
             )
@@ -3863,6 +3877,7 @@ elif page == "Configurações":
                                 "data_pre_nota": pd.to_datetime(
                                     temp.iloc[:, 0], errors="coerce", dayfirst=True
                                 ).dt.date,
+                                "recebedor": temp.iloc[:, 1].fillna("").astype(str).str.strip(),
                                 "numero_nf": temp.iloc[:, 2].map(normalized_nf),
                                 "fornecedor": temp.iloc[:, 3].fillna("").astype(str).str.strip(),
                                 "cnpj": temp.iloc[:, 4].map(digits_only),
@@ -3952,6 +3967,7 @@ elif page == "Configurações":
                             "Data", format="DD/MM/YYYY"
                         ),
                         "numero_nf": "NF",
+                        "recebedor": st.column_config.TextColumn("Recebedor", width="medium"),
                         "cnpj": "CNPJ",
                         "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
                         "status": "Status",
