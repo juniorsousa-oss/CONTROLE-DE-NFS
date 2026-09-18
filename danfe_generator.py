@@ -1233,10 +1233,11 @@ def apply_operational_stamp(
     natureza: object,
     recebido_por: object,
 ) -> bytes:
-    """Aplica o quadro CONTROLE INTERNO — SETTA no DANFE final.
+    """Preenche os campos adicionais do canhoto usados pela SETTA.
 
-    O conteúdo segue o antigo carimbo operacional, mas o visual é neutro,
-    corporativo e independente do antigo carimbo azul.
+    O quadro RESERVADO AO FISCO permanece intocado. O controle interno é
+    tratado como informação adicional do canhoto, posição permitida pelo
+    Portal Nacional da NF-e.
     """
     if not pdf_bytes:
         return pdf_bytes
@@ -1246,126 +1247,91 @@ def apply_operational_stamp(
         doc.close()
         return pdf_bytes
 
-    # Procura o bloco RESERVADO AO FISCO em todas as páginas. No motor
-    # dinâmico, dados adicionais podem migrar para a última página quando a
-    # tabela de produtos ocupa mais espaço.
-    target_page = None
-    target_label = None
-
-    for candidate in doc:
-        candidate_text = candidate.get_text("text").upper()
-        if "CONTROLE INTERNO" in candidate_text and "RECEBIDO POR" in candidate_text:
-            doc.close()
-            return pdf_bytes
-
-        hits = candidate.search_for("RESERVADO AO FISCO")
-        if hits:
-            target_page = candidate
-            target_label = hits[-1]
-
-    page = target_page if target_page is not None else doc[-1]
-    page_rect = page.rect
-
     date_text = _stamp_date(data_chegada)
     cr_text = str(cr or "").strip()
     desc_text = str(desc_cr or "").strip()
     nature_text = str(natureza or "").strip().upper()
     receiver_text = str(recebido_por or "").strip().upper()
 
-    if target_label is not None:
-        label = target_label
-        x0 = max(label.x0 + 2, page_rect.width * 0.565)
-        y0 = label.y1 + 7
-    else:
-        x0 = page_rect.width * 0.57
-        y0 = page_rect.height * 0.79
+    target_page = None
+    control_label = None
+    date_label = None
 
-    x1 = page_rect.width - 21
-    max_y1 = page_rect.height - 25
-    card_h = 92
-    y1 = min(y0 + card_h, max_y1)
-    if y1 - y0 < 78:
-        y0 = max(20, y1 - 92)
+    for candidate in doc:
+        page_text = candidate.get_text("text").upper()
 
-    card = fitz.Rect(x0, y0, x1, y1)
-    page.draw_rect(
-        card,
-        color=STAMP_BORDER,
-        fill=STAMP_FILL,
-        width=0.6,
-        overlay=True,
-    )
+        # DANFEs históricos já carimbados não recebem uma segunda marcação.
+        if (
+            "DATA DE CHEGADA:" in page_text
+            and "DESC CR:" in page_text
+            and "RECEBIDO POR" in page_text
+        ):
+            doc.close()
+            return pdf_bytes
 
-    header_h = 17
-    header = fitz.Rect(x0, y0, x1, y0 + header_h)
-    page.draw_rect(
-        header,
-        color=STAMP_BORDER,
-        fill=STAMP_HEADER,
-        width=0.6,
-        overlay=True,
-    )
-    page.insert_textbox(
-        fitz.Rect(x0 + 5, y0 + 3.5, x1 - 5, y0 + header_h - 1),
-        "CONTROLE INTERNO — SETTA",
-        fontsize=7.6,
-        fontname="hebo",
-        color=STAMP_TEXT,
-        align=0,
-        overlay=True,
-    )
+        control_hits = candidate.search_for("CONTROLE INTERNO")
+        if control_hits and target_page is None:
+            target_page = candidate
+            control_label = control_hits[0]
 
-    rows = [
-        ("DATA DE CHEGADA", date_text),
-        ("CR", cr_text),
-        ("DESC. CR", desc_text),
-        ("NATUREZA", nature_text),
-        ("RECEBIDO POR", receiver_text),
-    ]
-    body_top = y0 + header_h
-    row_h = (y1 - body_top) / len(rows)
-    label_w = min(78, (x1 - x0) * 0.34)
+        date_hits = candidate.search_for("DATA DE RECEBIMENTO")
+        if date_hits and date_label is None:
+            date_label = date_hits[0]
 
-    for idx, (label_text, value_text) in enumerate(rows):
-        ry0 = body_top + idx * row_h
-        ry1 = body_top + (idx + 1) * row_h
-        if idx:
-            page.draw_line(
-                fitz.Point(x0, ry0),
-                fitz.Point(x1, ry0),
-                color=(0.78, 0.79, 0.81),
-                width=0.35,
+    page = target_page if target_page is not None else doc[0]
+
+    # Preenche DATA DE RECEBIMENTO do canhoto oficial.
+    if date_label is not None:
+        page.insert_textbox(
+            fitz.Rect(
+                date_label.x0,
+                date_label.y1 + 1.0,
+                min(date_label.x0 + 105.0, page.rect.width - 20),
+                date_label.y1 + 14.0,
+            ),
+            date_text,
+            fontsize=8.0,
+            fontname="Times-Bold",
+            color=BLACK,
+            align=0,
+            overlay=True,
+        )
+
+    if control_label is not None:
+        # A faixa criada pelo renderer possui 5 células:
+        # título | CR | Desc. CR | Natureza | Recebido por.
+        x0 = max(18.4, control_label.x0 - 3.0)
+        y0 = max(0.0, control_label.y0 - 2.2)
+        y1 = y0 + 24.0
+        widths = [94.0, 62.0, 112.0, 165.0]
+        points = [x0]
+        for width in widths:
+            points.append(points[-1] + width)
+        points.append(page.rect.width - 18.4)
+
+        values = ["", cr_text, desc_text, nature_text, receiver_text]
+
+        for idx, value in enumerate(values):
+            if idx == 0 or not value:
+                continue
+            vx0 = points[idx] + 3.0
+            vx1 = points[idx + 1] - 3.0
+            size = _stamp_fit_size(
+                value,
+                max(10.0, vx1 - vx0),
+                preferred=7.2,
+                minimum=5.2,
+            )
+            page.insert_textbox(
+                fitz.Rect(vx0, y0 + 9.0, vx1, y1 - 1.0),
+                value,
+                fontsize=size,
+                fontname="Times-Bold" if idx in {1, 3} else "Times-Roman",
+                color=BLACK,
+                align=0,
+                lineheight=1.0,
                 overlay=True,
             )
-        page.draw_line(
-            fitz.Point(x0 + label_w, ry0),
-            fitz.Point(x0 + label_w, ry1),
-            color=(0.78, 0.79, 0.81),
-            width=0.35,
-            overlay=True,
-        )
-        page.insert_textbox(
-            fitz.Rect(x0 + 4, ry0 + 2.6, x0 + label_w - 3, ry1 - 1),
-            label_text,
-            fontsize=5.1,
-            fontname="hebo",
-            color=(0.35, 0.37, 0.40),
-            align=0,
-            overlay=True,
-        )
-        value_size = _stamp_fit_size(
-            value_text,
-            max(20, x1 - (x0 + label_w) - 8),
-        )
-        page.insert_textbox(
-            fitz.Rect(x0 + label_w + 4, ry0 + 2.2, x1 - 4, ry1 - 1),
-            value_text,
-            fontsize=value_size,
-            fontname="helv",
-            color=STAMP_TEXT,
-            align=0,
-            overlay=True,
-        )
 
     output = doc.tobytes(garbage=4, deflate=True)
     doc.close()
