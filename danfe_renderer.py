@@ -26,8 +26,10 @@ MID = (0.48, 0.48, 0.48)
 LIGHT = (0.94, 0.94, 0.94)
 VERY_LIGHT = (0.975, 0.975, 0.975)
 
-FONT = "helv"
-FONT_BOLD = "hebo"
+# MOC 7.0 Anexo II, item 3.7: Times New Roman ou Courier New.
+# PyMuPDF disponibiliza a família Times como fonte PDF base.
+FONT = "Times-Roman"
+FONT_BOLD = "Times-Bold"
 BORDER = 0.42
 
 PRODUCT_X = [
@@ -230,40 +232,152 @@ def _section_title(page, y, title):
     _line(page, MARGIN, y + 10, RIGHT, y + 10, 0.55, DARK)
 
 
-def _code128_values(digits: str) -> list[int]:
-    digits = "".join(ch for ch in str(digits or "") if ch.isdigit())
-    if len(digits) % 2:
-        digits = "0" + digits
-    values = [105]
-    values.extend(int(digits[i:i+2]) for i in range(0, len(digits), 2))
-    checksum = (values[0] + sum(v * i for i, v in enumerate(values[1:], 1))) % 103
+def _code128_a_value(char: str) -> int:
+    code = ord(char)
+    if 32 <= code <= 95:
+        return code - 32
+    if 0 <= code <= 31:
+        return code + 64
+    raise ValueError(f"Caractere não suportado no CODE-128A: {char!r}")
+
+
+def _code128_values(raw_key: str) -> list[int]:
+    """Codifica chave de acesso em CODE-128C e alterna para A quando necessário.
+
+    O MOC vigente exige CODE-128C para chave numérica. A NT conjunta de CNPJ
+    alfanumérico prevê modelo híbrido C/A quando houver letras na chave.
+    """
+    key = "".join(ch for ch in str(raw_key or "").upper() if ch.isalnum())
+    if len(key) != 44:
+        raise ValueError(
+            f"Chave de acesso deve possuir 44 posições; recebidas {len(key)}."
+        )
+
+    # Começa em C quando possível, como no padrão tradicional.
+    values = [105]  # Start C
+    mode = "C"
+    i = 0
+
+    while i < len(key):
+        if mode == "C":
+            if i + 1 < len(key) and key[i].isdigit() and key[i + 1].isdigit():
+                values.append(int(key[i:i + 2]))
+                i += 2
+                continue
+
+            # Troca para A para letras ou um dígito isolado.
+            values.append(101)  # Code A
+            mode = "A"
+            continue
+
+        # Em A, volta para C quando houver sequência numérica de pelo menos
+        # quatro dígitos; isso preserva a compactação do padrão C.
+        numeric_run = 0
+        while (
+            i + numeric_run < len(key)
+            and key[i + numeric_run].isdigit()
+        ):
+            numeric_run += 1
+
+        if numeric_run >= 4:
+            if numeric_run % 2:
+                values.append(_code128_a_value(key[i]))
+                i += 1
+            values.append(99)  # Code C
+            mode = "C"
+            continue
+
+        values.append(_code128_a_value(key[i]))
+        i += 1
+
+    checksum = (
+        values[0]
+        + sum(value * idx for idx, value in enumerate(values[1:], 1))
+    ) % 103
     return [*values, checksum, 106]
 
 
 def _barcode(page, rect, key):
     x0, y0, x1, y1 = rect
     values = _code128_values(key)
-    if not values:
-        return
     patterns = [CODE128_PATTERNS[v] for v in values]
-    modules = sum(sum(int(c) for c in p) for p in patterns)
-    if not modules:
-        return
-    unit = (x1 - x0) / modules
-    x = x0
+
+    pattern_modules = sum(
+        sum(int(char) for char in pattern)
+        for pattern in patterns
+    )
+    quiet_modules = 10
+    total_modules = pattern_modules + (quiet_modules * 2)
+
+    width = x1 - x0
+    height = y1 - y0
+    # MOC: largura total mínima de 6 cm em laser/jato de tinta,
+    # altura mínima de 0,8 cm e módulo mínimo de 0,02 cm.
+    min_width_pt = 60.0 / 25.4 * 72.0
+    min_height_pt = 8.0 / 25.4 * 72.0
+    min_module_pt = 0.2 / 25.4 * 72.0
+
+    if width < min_width_pt:
+        raise ValueError(
+            "Área do código de barras inferior aos 6 cm mínimos do MOC."
+        )
+    if height < min_height_pt:
+        raise ValueError(
+            "Altura do código de barras inferior aos 0,8 cm mínimos do MOC."
+        )
+
+    module = width / total_modules
+    if module < min_module_pt:
+        raise ValueError(
+            "Módulo do código de barras inferior a 0,02 cm."
+        )
+
+    cursor = x0 + quiet_modules * module
+
     for pattern in patterns:
         black = True
-        for ch in pattern:
-            w = int(ch) * unit
+        for char in pattern:
+            bar_width = int(char) * module
             if black:
                 page.draw_rect(
-                    fitz.Rect(x, y0, x + w, y1),
+                    fitz.Rect(cursor, y0, cursor + bar_width, y1),
                     color=None,
                     fill=BLACK,
                     overlay=True,
                 )
-            x += w
+            cursor += bar_width
             black = not black
+
+
+def _validate_payload(data: dict) -> None:
+    required = {
+        "nf": "Número da NF-e",
+        "serie": "Série",
+        "key": "Chave de acesso",
+        "emitente": "Emitente",
+        "emitente_cnpj": "CNPJ/CPF do emitente",
+        "destinatario": "Destinatário",
+    }
+    missing = [
+        label
+        for key, label in required.items()
+        if not str(data.get(key) or "").strip()
+    ]
+    if missing:
+        raise ValueError(
+            "XML não possui dados mínimos para o DANFE: "
+            + ", ".join(missing)
+        )
+
+    key = "".join(
+        ch
+        for ch in str(data.get("key") or "").upper()
+        if ch.isalnum()
+    )
+    if len(key) != 44:
+        raise ValueError(
+            f"Chave de acesso inválida: esperado 44 posições, encontrado {len(key)}."
+        )
 
 
 def _draw_receipt(page, data, y):
