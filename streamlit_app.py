@@ -631,7 +631,7 @@ def _clean_mrp_nf_cached(
         total_raw += 1
 
         tes = str(values[9] or "").strip()
-        if not re.fullmatch(r"\d{3}", tes):
+        if re.fullmatch(r"\d{3}", tes):
             dropped_tes += 1
             return
 
@@ -857,7 +857,8 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
             "Carregue os dois relatórios. Antes do confronto, o aplicativo reduz as bases para somente "
             "os campos necessários: Materiais usa **B Projeto, C Produto e F Data CM**; Entradas/NFs usa "
             "**A, D, E, F, G, H, I, L, M e AE**. No relatório de NFs são mantidos apenas os últimos "
-            "**30 dias** e registros com **TES de exatamente 3 dígitos**."
+            "**30 dias** e são mantidos somente os registros cujo **TES NÃO seja um código de exatamente 3 dígitos** "
+            "(na prática, normalmente TES em branco)."
         )
 
         material_file = st.file_uploader(
@@ -932,7 +933,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
             st.markdown("#### Conferência da carga")
             st.caption(
                 f"Materiais: {stats.get('linhas_origem', 0)} linha(s) de origem. "
-                f"Base de NFs após TES + 30 dias: {stats.get('linhas_30_dias_tes', 0)} linha(s). "
+                f"Base de NFs após 30 dias + exclusão de TES com 3 dígitos: {stats.get('linhas_30_dias_tes', 0)} linha(s). "
                 f"CNPJs não localizados pelo código do fornecedor: {stats.get('cnpj_nao_localizado', 0)}."
             )
 
