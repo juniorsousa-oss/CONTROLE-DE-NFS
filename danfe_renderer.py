@@ -12,6 +12,14 @@ MARGIN = 18.4
 RIGHT = PAGE_W - MARGIN
 BOTTOM = PAGE_H - 22.0
 
+# Posições-base inspiradas no DANFE padrão Protheus/TOTVS usado como referência.
+# A primeira folha mantém ISSQN e Dados Adicionais na faixa inferior; a área de
+# produtos cresce até esse limite e continua em novas páginas quando necessário.
+FIRST_PRODUCT_BOTTOM = 646.0
+ISSQN_TOP = 654.0
+ADDITIONAL_TOP = 684.0
+ADDITIONAL_BOTTOM = 818.0
+
 BLACK = (0, 0, 0)
 DARK = (0.13, 0.13, 0.13)
 MID = (0.48, 0.48, 0.48)
@@ -640,31 +648,120 @@ def _draw_product_rows(page, items, heights, y, bottom):
     return y
 
 
+
+def _extend_product_grid(page, y, bottom):
+    if bottom <= y:
+        return
+    _rect(page, (MARGIN, y, RIGHT, bottom), width=0.25, color=(0.72, 0.72, 0.72))
+    for x in PRODUCT_X[1:-1]:
+        _line(page, x, y, x, bottom, 0.25, (0.72, 0.72, 0.72))
+
+
+def _draw_issqn(page, data, y=ISSQN_TOP):
+    _section_title(page, y, "CÁLCULO DO ISSQN")
+    y += 13
+    h = 21.0
+    values = [
+        ("INSCRIÇÃO MUNICIPAL", data.get("emitente_im") or ""),
+        ("VALOR TOTAL DOS SERVIÇOS", _fmt_number(data["issqn"].get("vServ")) if data["issqn"].get("vServ") else ""),
+        ("BASE DE CÁLCULO DO ISSQN", _fmt_number(data["issqn"].get("vBC")) if data["issqn"].get("vBC") else ""),
+        ("VALOR DO ISSQN", _fmt_number(data["issqn"].get("vISS")) if data["issqn"].get("vISS") else ""),
+    ]
+    x = MARGIN
+    for label, value in values:
+        x1 = x + (RIGHT - MARGIN) / 4
+        _cell(page, (x, y, x1, y + h), label, value, 5.8, False, "right" if label != "INSCRIÇÃO MUNICIPAL" else "left")
+        x = x1
+    return y + h
+
+
+def _draw_additional_fixed(page, data, lines):
+    y = ADDITIONAL_TOP
+    _section_title(page, y, "DADOS ADICIONAIS")
+    y += 13
+    h = ADDITIONAL_BOTTOM - y
+    xmid = MARGIN + 326.0
+    _rect(page, (MARGIN, y, xmid, y + h))
+    _rect(page, (xmid, y, RIGHT, y + h))
+    _label(page, MARGIN + 3, y + 8, "INFORMAÇÕES COMPLEMENTARES")
+    _label(page, xmid + 3, y + 8, "RESERVADO AO FISCO")
+    _textbox(
+        page,
+        (MARGIN + 3, y + 12, xmid - 3, y + h - 3),
+        "\n".join(lines),
+        5.25,
+        False,
+        0,
+        BLACK,
+        1.03,
+    )
+    return y + h
+
+
 def _compact_header_height():
-    return 96.0
+    return 138.0
 
 
 def _draw_compact_header(page, data, y, page_no, total_pages):
-    h = _compact_header_height()
-    _rect(page, (MARGIN, y, RIGHT, y + h))
-    left = MARGIN + 250
-    center = left + 105
-    _line(page, left, y, left, y + h)
-    _line(page, center, y, center, y + h)
-    _text(page, MARGIN + 5, y + 15, data["emitente"], 8.3, True)
-    _fit_text(page, MARGIN + 5, y + 29, left - 5, data["emitente_cnpj"], 6.3, 5.0)
-    _fit_text(page, left + 4, y + 18, center - 4, "DANFE", 13.0, 10.0, True, "center")
-    _fit_text(page, left + 4, y + 36, center - 4, f"Nº {_fmt_nf(data['nf'])}", 6.8, 5.2, True, "center")
-    _fit_text(page, left + 4, y + 49, center - 4, f"SÉRIE {data['serie']}", 6.0, 5.0, True, "center")
-    _fit_text(page, left + 4, y + 63, center - 4, f"FOLHA {page_no}/{total_pages}", 6.0, 5.0, True, "center")
-    _barcode(page, (center + 12, y + 9, RIGHT - 12, y + 31), data["key"])
+    # Cabeçalho das páginas seguintes reproduz a lógica do Protheus:
+    # emitente + DANFE + chave, seguido de natureza/protocolo e inscrições.
+    top_h = 92.0
+    left = MARGIN + 230
+    center = left + 96
+
+    _rect(page, (MARGIN, y, left, y + top_h))
+    _rect(page, (left, y, center, y + top_h))
+    _rect(page, (center, y, RIGHT, y + top_h))
+
+    _text(page, MARGIN + 5, y + 14, "Identificação do emitente", 5.0, True, MID)
+    _fit_text(page, MARGIN + 5, y + 28, left - 5, data["emitente"], 8.0, 5.4, True, "center")
+    a = data["emitente_end"]
+    address = ", ".join(v for v in [a["logradouro"], a["numero"]] if v)
+    _fit_text(page, MARGIN + 5, y + 44, left - 5, address, 5.5, 4.2, False, "center")
+    _fit_text(page, MARGIN + 5, y + 56, left - 5, f"{a['municipio']}/{a['uf']}", 5.4, 4.2, False, "center")
+    _fit_text(page, MARGIN + 5, y + 68, left - 5, f"Fone: {a['fone']}" if a["fone"] else "", 5.2, 4.0, False, "center")
+
+    _fit_text(page, left + 4, y + 18, center - 4, "DANFE", 13.5, 10.0, True, "center")
+    _textbox(
+        page,
+        (left + 5, y + 23, center - 5, y + 48),
+        "Documento Auxiliar da\nNota Fiscal Eletrônica",
+        5.0,
+        False,
+        1,
+    )
+    _fit_text(page, left + 4, y + 60, center - 4, f"Nº {_fmt_nf(data['nf'])}", 6.5, 5.0, True, "center")
+    _fit_text(page, left + 4, y + 71, center - 4, f"SÉRIE {data['serie']}", 5.8, 4.8, True, "center")
+    _fit_text(page, left + 4, y + 82, center - 4, f"FOLHA {page_no}/{total_pages}", 5.8, 4.8, True, "center")
+
+    _barcode(page, (center + 13, y + 8, RIGHT - 13, y + 31), data["key"])
     grouped = " ".join(data["key"][i:i+4] for i in range(0, len(data["key"]), 4))
-    _fit_text(page, center + 8, y + 44, RIGHT - 8, grouped, 6.8, 4.8, True)
-    _fit_text(page, center + 8, y + 58, RIGHT - 8, data["natOp"], 5.7, 4.3)
-    _fit_text(page, center + 8, y + 72, RIGHT - 8, data["protocolo"], 5.3, 4.1)
-    _line(page, MARGIN, y + h - 14, RIGHT, y + h - 14, 0.35, MID)
-    _fit_text(page, MARGIN + 5, y + h - 4, RIGHT - 5, data["destinatario"], 5.8, 4.4)
-    return y + h + 6
+    _fit_text(page, center + 8, y + 45, RIGHT - 8, "CHAVE DE ACESSO DA NF-e", 5.2, 4.3, True)
+    _fit_text(page, center + 8, y + 57, RIGHT - 8, grouped, 6.6, 4.8, True)
+    _textbox(
+        page,
+        (center + 8, y + 63, RIGHT - 8, y + 88),
+        "Consulta de autenticidade no portal nacional da NF-e\nwww.nfe.fazenda.gov.br/portal",
+        5.0,
+        False,
+    )
+
+    y2 = y + top_h + 4
+    w = RIGHT - MARGIN
+    split = MARGIN + w * 0.57
+    _cell(page, (MARGIN, y2, split, y2 + 20), "NATUREZA DA OPERAÇÃO", data["natOp"], 5.8)
+    protocol = data["protocolo"]
+    if data["protocolo_data"]:
+        protocol += f" - {_fmt_date(data['protocolo_data'])}"
+    _cell(page, (split, y2, RIGHT, y2 + 20), "PROTOCOLO DE AUTORIZAÇÃO DE USO", protocol, 5.3)
+    y2 += 20
+    x1 = MARGIN + w / 3
+    x2 = MARGIN + 2 * w / 3
+    _cell(page, (MARGIN, y2, x1, y2 + 20), "INSCRIÇÃO ESTADUAL", data["emitente_ie"])
+    _cell(page, (x1, y2, x2, y2 + 20), "INSC. ESTADUAL DO SUBST. TRIB.", data["emitente_iest"])
+    _cell(page, (x2, y2, RIGHT, y2 + 20), "CNPJ / CPF", data["emitente_cnpj"])
+
+    return y + _compact_header_height() + 6
 
 
 def _additional_lines(data):
@@ -719,71 +816,73 @@ def _first_static_end(data):
 def _paginate(data):
     items = data.get("items") or []
     heights = [_row_height(item) for item in items]
+
     first_start = _first_static_end(data) + 13 + _product_header_height()
     cont_start = MARGIN + _compact_header_height() + 6 + 13 + _product_header_height()
-    row_bottom = BOTTOM - 4
+
+    additional_lines = _additional_lines(data)
+    # O bloco inferior da 1ª página comporta aproximadamente 17 linhas no
+    # padrão de fonte adotado. O excesso segue para páginas adicionais.
+    first_additional_capacity = 17
+    first_additional = additional_lines[:first_additional_capacity]
+    extra_additional = additional_lines[first_additional_capacity:]
 
     plans = []
     idx = 0
-    # primeira página
+
     first_items, first_heights = [], []
     used = first_start
     while idx < len(items):
         h = heights[idx]
-        if first_items and used + h > row_bottom:
+        if first_items and used + h > FIRST_PRODUCT_BOTTOM:
             break
-        if not first_items and used + h > row_bottom:
-            # item enorme: permite uma linha na página, sem cortar; textbox reduz.
-            h = max(15.5, row_bottom - used)
+        if not first_items and used + h > FIRST_PRODUCT_BOTTOM:
+            h = max(15.5, FIRST_PRODUCT_BOTTOM - used)
         first_items.append(items[idx])
         first_heights.append(h)
         used += h
         idx += 1
-    plans.append(PagePlan(first_items, first_heights, True))
+
+    plans.append(
+        PagePlan(
+            first_items,
+            first_heights,
+            True,
+            additional_lines=first_additional,
+        )
+    )
 
     while idx < len(items):
         page_items, page_heights = [], []
         used = cont_start
         while idx < len(items):
             h = heights[idx]
-            if page_items and used + h > row_bottom:
+            if page_items and used + h > BOTTOM:
                 break
-            if not page_items and used + h > row_bottom:
-                h = max(15.5, row_bottom - used)
+            if not page_items and used + h > BOTTOM:
+                h = max(15.5, BOTTOM - used)
             page_items.append(items[idx])
             page_heights.append(h)
             used += h
             idx += 1
         plans.append(PagePlan(page_items, page_heights, False))
 
-    # Informações adicionais: tenta colocar na última página após os itens.
-    lines = _additional_lines(data)
-    footer_h = _additional_height(lines) + 13
-    last = plans[-1]
-
-    if last.first:
-        start = _first_static_end(data) + 13 + _product_header_height()
-    else:
-        start = MARGIN + _compact_header_height() + 6 + 13 + _product_header_height()
-    used = start + sum(last.row_heights)
-
-    if used + 10 + footer_h <= BOTTOM:
-        last.additional_lines = lines
-    else:
-        # Página extra de dados adicionais; suporta info complementar extensa.
-        per_page_lines = max(20, int((BOTTOM - (MARGIN + _compact_header_height() + 35)) / 6.0))
-        if not lines:
-            lines = [""]
-        for pos in range(0, len(lines), per_page_lines):
+    if extra_additional:
+        per_page_lines = max(
+            25,
+            int((BOTTOM - (MARGIN + _compact_header_height() + 45)) / 5.8),
+        )
+        for pos in range(0, len(extra_additional), per_page_lines):
             plans.append(
                 PagePlan(
                     [],
                     [],
                     False,
-                    additional_lines=lines[pos:pos + per_page_lines],
+                    additional_lines=extra_additional[pos:pos + per_page_lines],
                     additional_only=True,
                 )
             )
+
     return plans
 
 
@@ -794,6 +893,7 @@ def render_danfe_pdf(data: dict) -> bytes:
 
     for page_index, plan in enumerate(plans, start=1):
         page = doc.new_page(width=PAGE_W, height=PAGE_H)
+
         if plan.first:
             y = MARGIN
             y = _draw_receipt(page, data, y)
@@ -803,17 +903,62 @@ def render_danfe_pdf(data: dict) -> bytes:
             y = _draw_billing(page, data, y)
             y = _draw_taxes(page, data, y)
             y = _draw_shipping(page, data, y)
+
+            y = _draw_product_header(page, y)
+            y = _draw_product_rows(
+                page,
+                plan.items,
+                plan.row_heights,
+                y,
+                FIRST_PRODUCT_BOTTOM,
+            )
+            _extend_product_grid(page, y, FIRST_PRODUCT_BOTTOM)
+            _draw_issqn(page, data)
+            _draw_additional_fixed(
+                page,
+                data,
+                plan.additional_lines or [],
+            )
+
         else:
             y = MARGIN
-            y = _draw_compact_header(page, data, y, page_index, total_pages)
+            y = _draw_compact_header(
+                page,
+                data,
+                y,
+                page_index,
+                total_pages,
+            )
 
-        if not plan.additional_only:
-            y = _draw_product_header(page, y)
-            y = _draw_product_rows(page, plan.items, plan.row_heights, y, BOTTOM - 4)
-
-        if plan.additional_lines is not None:
-            y += 8
-            _draw_additional(page, data, y, plan.additional_lines, max_height=BOTTOM - y - 2)
+            if plan.additional_only:
+                lines = plan.additional_lines or []
+                _section_title(page, y, "DADOS ADICIONAIS")
+                y += 13
+                xmid = MARGIN + 326.0
+                _rect(page, (MARGIN, y, xmid, BOTTOM))
+                _rect(page, (xmid, y, RIGHT, BOTTOM))
+                _label(page, MARGIN + 3, y + 8, "INFORMAÇÕES COMPLEMENTARES")
+                _label(page, xmid + 3, y + 8, "RESERVADO AO FISCO")
+                _textbox(
+                    page,
+                    (MARGIN + 3, y + 12, xmid - 3, BOTTOM - 3),
+                    "\n".join(lines),
+                    5.25,
+                    False,
+                    0,
+                    BLACK,
+                    1.03,
+                )
+            else:
+                y = _draw_product_header(page, y)
+                y = _draw_product_rows(
+                    page,
+                    plan.items,
+                    plan.row_heights,
+                    y,
+                    BOTTOM - 4,
+                )
+                _extend_product_grid(page, y, BOTTOM - 4)
 
         if data.get("tpAmb") == "2" or not data.get("protocolo"):
             _textbox(
