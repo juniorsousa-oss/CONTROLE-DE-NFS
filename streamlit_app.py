@@ -116,9 +116,10 @@ def init():
             remote_suppliers = db.load_suppliers()
             if remote_suppliers:
                 st.session_state.suppliers = supplier_dataframe(pd.DataFrame(remote_suppliers))
-            remote_pre_notes = db.load_pre_notes()
-            if remote_pre_notes:
-                st.session_state.pre_notes = pd.DataFrame(remote_pre_notes)
+            if SAVE_NF_HISTORY:
+                remote_pre_notes = db.load_pre_notes()
+                if remote_pre_notes:
+                    st.session_state.pre_notes = pd.DataFrame(remote_pre_notes)
             st.session_state.db_synced = True
         except Exception as exc:
             st.session_state.db_sync_error = str(exc)
@@ -128,6 +129,17 @@ init()
 if not SAVE_NF_HISTORY:
     # Histórico oficial permanece vazio durante os testes.
     st.session_state.history = []
+
+    # Limpa uma única vez qualquer base antiga de pré-notas carregada do banco.
+    # Depois disso, novas cargas ficam somente na sessão para permitir os testes.
+    _pre_test_reset_key = "_pre_notes_test_reset_20260918_v1"
+    if not st.session_state.get(_pre_test_reset_key):
+        st.session_state.pre_notes = pd.DataFrame()
+        st.session_state.pre_import_preview = pd.DataFrame()
+        st.session_state.pre_import_invalid_count = 0
+        st.session_state.pre_import_name = ""
+        st.session_state[_pre_test_reset_key] = True
+
 cfg = st.session_state.cfg
 
 
@@ -1715,7 +1727,8 @@ elif page == "Configurações":
                 ):
                     try:
                         st.session_state.pre_notes = preview.copy()
-                        if db.configured():
+
+                        if SAVE_NF_HISTORY and db.configured():
                             rows = []
                             for _, row in preview.iterrows():
                                 rows.append({
@@ -1734,6 +1747,11 @@ elif page == "Configurações":
                                 f"Base de pré-notas atualizada com sucesso: "
                                 f"{int(result.get('registros', len(rows)))} registro(s) gravado(s)."
                             )
+                        elif not SAVE_NF_HISTORY:
+                            message = (
+                                "Base de pré-notas aplicada somente nesta sessão de testes. "
+                                "Nada foi gravado no Supabase."
+                            )
                         else:
                             message = "Base de pré-notas aplicada nesta sessão."
 
@@ -1748,7 +1766,11 @@ elif page == "Configurações":
                         st.error(f"Falha ao gravar base de pré-notas: {exc}")
 
             pre = st.session_state.pre_notes.copy()
-            if not pre.empty:
+            if pre.empty:
+                st.info(
+                    "Base de pré-notas vazia. Carregue e valide o novo relatório acima para iniciar este teste."
+                )
+            else:
                 processed = current_process_records_for_tests()
 
                 processed_keys = set()
