@@ -338,6 +338,41 @@ def extract_danfe_metadata(raw_xml: bytes) -> DanfeMetadata:
     )
 
 
+def extract_nfe_processing_data(raw_xml: bytes) -> dict:
+    """Extrai os dados fiscais usados pelo fluxo operacional de NF.
+
+    O XML é tratado como fonte prioritária para identidade fiscal e duplicatas.
+    A natureza fiscal (natOp) é mantida separada da natureza interna operacional.
+    """
+    data = _parse_nfe(raw_xml)
+
+    due_dates = []
+    for dup in data.get("duplicatas") or []:
+        raw_due = str(dup.get("vencimento") or "").strip()
+        if not raw_due:
+            continue
+        try:
+            due_dates.append(datetime.strptime(raw_due[:10], "%Y-%m-%d").date())
+        except Exception:
+            continue
+
+    due_dates = sorted(set(due_dates))
+    return {
+        "numero_nf": str(data.get("nf") or "").strip(),
+        "serie": str(data.get("serie") or "").strip(),
+        "chave_nfe": _digits(data.get("key")),
+        "cnpj_fornecedor": _digits(data.get("emitente_cnpj")),
+        "fornecedor_lido": str(data.get("emitente") or "").strip(),
+        "data_emissao": _format_date(str(data.get("dhEmi") or "")),
+        "vencimento": due_dates[0] if due_dates else None,
+        "vencimentos": due_dates,
+        "natureza_fiscal": str(data.get("natOp") or "").strip(),
+        "protocolo": str(data.get("protocolo") or "").strip(),
+        "status_codigo": str(data.get("status_codigo") or "").strip(),
+        "status_motivo": str(data.get("status_motivo") or "").strip(),
+    }
+
+
 def _draw_line(page: fitz.Page, x0: float, y0: float, x1: float, y1: float, width: float = LINE_W):
     page.draw_line(
         fitz.Point(x0, y0),
