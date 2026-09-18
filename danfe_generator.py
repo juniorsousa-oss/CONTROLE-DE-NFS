@@ -1225,117 +1225,116 @@ def _stamp_fit_size(value: str, width: float, preferred: float = 7.0, minimum: f
     return minimum
 
 
-def apply_operational_stamp(
-    pdf_bytes: bytes,
+def draw_operational_stamp_block(
+    page: fitz.Page,
+    rect: fitz.Rect,
     data_chegada: object,
     cr: object,
     desc_cr: object,
     natureza: object,
     recebido_por: object,
-) -> bytes:
-    """Preenche os campos adicionais do canhoto usados pela SETTA.
+) -> None:
+    """Desenha o componente retangular de CONTROLE INTERNO — SETTA.
 
-    O quadro RESERVADO AO FISCO permanece intocado. O controle interno é
-    tratado como informação adicional do canhoto, posição permitida pelo
-    Portal Nacional da NF-e.
+    Esta função NÃO escolhe posição e NÃO é chamada pelo fluxo atual.
+    Ela ficará pronta para uso quando a posição definitiva for validada.
     """
-    if not pdf_bytes:
-        return pdf_bytes
+    x0, y0, x1, y1 = rect
+    if x1 <= x0 or y1 <= y0:
+        raise ValueError("Área inválida para o controle interno.")
 
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    if doc.page_count == 0:
-        doc.close()
-        return pdf_bytes
+    page.draw_rect(
+        rect,
+        color=STAMP_BORDER,
+        fill=(1, 1, 1),
+        width=0.75,
+        overlay=True,
+    )
 
-    date_text = _stamp_date(data_chegada)
-    cr_text = str(cr or "").strip()
-    desc_text = str(desc_cr or "").strip()
-    nature_text = str(natureza or "").strip().upper()
-    receiver_text = str(recebido_por or "").strip().upper()
+    title_h = 18.0
+    title_rect = fitz.Rect(x0, y0, x1, min(y1, y0 + title_h))
+    page.draw_rect(
+        title_rect,
+        color=STAMP_BORDER,
+        fill=STAMP_HEADER,
+        width=0.75,
+        overlay=True,
+    )
+    page.insert_textbox(
+        fitz.Rect(x0 + 6, y0 + 4, x1 - 6, y0 + title_h - 2),
+        "CONTROLE INTERNO — SETTA",
+        fontsize=8.0,
+        fontname="Times-Bold",
+        color=STAMP_TEXT,
+        align=0,
+        overlay=True,
+    )
 
-    target_page = None
-    control_label = None
-    date_label = None
+    rows = [
+        ("DATA DE CHEGADA", _stamp_date(data_chegada)),
+        ("CR", str(cr or "").strip()),
+        ("DESC. CR", str(desc_cr or "").strip()),
+        ("NATUREZA", str(natureza or "").strip().upper()),
+        ("RECEBIDO POR", str(recebido_por or "").strip().upper()),
+    ]
 
-    for candidate in doc:
-        page_text = candidate.get_text("text").upper()
+    body_top = y0 + title_h
+    body_h = max(1.0, y1 - body_top)
+    row_h = body_h / len(rows)
+    label_w = min(92.0, (x1 - x0) * 0.36)
 
-        # DANFEs históricos já carimbados não recebem uma segunda marcação.
-        if (
-            "DATA DE CHEGADA:" in page_text
-            and "DESC CR:" in page_text
-            and "RECEBIDO POR" in page_text
-        ):
-            doc.close()
-            return pdf_bytes
+    for idx, (label, value) in enumerate(rows):
+        ry0 = body_top + idx * row_h
+        ry1 = body_top + (idx + 1) * row_h
 
-        control_hits = candidate.search_for("CONTROLE INTERNO")
-        if control_hits and target_page is None:
-            target_page = candidate
-            control_label = control_hits[0]
+        if idx:
+            page.draw_line(
+                fitz.Point(x0, ry0),
+                fitz.Point(x1, ry0),
+                color=(0.76, 0.76, 0.76),
+                width=0.35,
+                overlay=True,
+            )
 
-        date_hits = candidate.search_for("DATA DE RECEBIMENTO")
-        if date_hits and date_label is None:
-            date_label = date_hits[0]
+        page.draw_line(
+            fitz.Point(x0 + label_w, ry0),
+            fitz.Point(x0 + label_w, ry1),
+            color=(0.76, 0.76, 0.76),
+            width=0.35,
+            overlay=True,
+        )
 
-    page = target_page if target_page is not None else doc[0]
-
-    # Preenche DATA DE RECEBIMENTO do canhoto oficial.
-    if date_label is not None:
         page.insert_textbox(
-            fitz.Rect(
-                date_label.x0,
-                date_label.y1 + 1.0,
-                min(date_label.x0 + 105.0, page.rect.width - 20),
-                date_label.y1 + 14.0,
-            ),
-            date_text,
-            fontsize=8.0,
+            fitz.Rect(x0 + 5, ry0 + 3, x0 + label_w - 4, ry1 - 2),
+            label,
+            fontsize=5.4,
             fontname="Times-Bold",
-            color=BLACK,
+            color=(0.25, 0.25, 0.25),
             align=0,
             overlay=True,
         )
 
-    if control_label is not None:
-        # A faixa criada pelo renderer possui 5 células:
-        # título | CR | Desc. CR | Natureza | Recebido por.
-        x0 = max(18.4, control_label.x0 - 3.0)
-        y0 = max(0.0, control_label.y0 - 2.2)
-        y1 = y0 + 24.0
-        widths = [94.0, 62.0, 112.0, 165.0]
-        points = [x0]
-        for width in widths:
-            points.append(points[-1] + width)
-        points.append(page.rect.width - 18.4)
+        value_size = _stamp_fit_size(
+            value,
+            max(15.0, x1 - (x0 + label_w) - 10),
+            preferred=7.2,
+            minimum=5.4,
+        )
+        page.insert_textbox(
+            fitz.Rect(x0 + label_w + 5, ry0 + 3, x1 - 5, ry1 - 2),
+            value,
+            fontsize=value_size,
+            fontname="Times-Roman",
+            color=STAMP_TEXT,
+            align=0,
+            lineheight=1.0,
+            overlay=True,
+        )
 
-        values = ["", cr_text, desc_text, nature_text, receiver_text]
 
-        for idx, value in enumerate(values):
-            if idx == 0 or not value:
-                continue
-            vx0 = points[idx] + 3.0
-            vx1 = points[idx + 1] - 3.0
-            size = _stamp_fit_size(
-                value,
-                max(10.0, vx1 - vx0),
-                preferred=7.2,
-                minimum=5.2,
-            )
-            page.insert_textbox(
-                fitz.Rect(vx0, y0 + 9.0, vx1, y1 - 1.0),
-                value,
-                fontsize=size,
-                fontname="Times-Bold" if idx in {1, 3} else "Times-Roman",
-                color=BLACK,
-                align=0,
-                lineheight=1.0,
-                overlay=True,
-            )
-
-    output = doc.tobytes(garbage=4, deflate=True)
-    doc.close()
-    return output
+def operational_stamp_default_size() -> tuple[float, float]:
+    """Tamanho sugerido do retângulo, em pontos PDF (largura, altura)."""
+    return 250.0, 104.0
 
 
 def generate_danfe_pdf(raw_xml: bytes) -> bytes:
