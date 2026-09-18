@@ -227,20 +227,41 @@ def parse_natures() -> list[str]:
 def recalc(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
+
+    def cell_text(value: object) -> str:
+        try:
+            if value is None or pd.isna(value):
+                return ""
+        except Exception:
+            pass
+        return str(value).strip()
+
     out = df.copy()
     names, stats, issues = [], [], []
+
     for _, row in out.iterrows():
         due = row.get("vencimento")
+
+        # Pandas transforma datas ausentes em NaT. NaT se comporta como data em
+        # alguns testes de tipo, mas lança ValueError ao chamar strftime().
+        try:
+            if due is None or pd.isna(due):
+                due = None
+        except Exception:
+            pass
+
         if isinstance(due, (pd.Timestamp, datetime)):
             due = due.date()
         elif isinstance(due, str) and due.strip():
             parsed = pd.to_datetime(due, errors="coerce", dayfirst=True)
             due = None if pd.isna(parsed) else parsed.date()
-        num = str(row.get("numero_nf") or "").strip()
-        supplier = str(row.get("fornecedor_padrao") or "").strip()
-        nature = str(row.get("natureza") or "").strip().upper()
+
+        num = cell_text(row.get("numero_nf"))
+        supplier = cell_text(row.get("fornecedor_padrao"))
+        nature = cell_text(row.get("natureza")).upper()
+
         missing = []
-        if not due:
+        if due is None:
             missing.append("vencimento")
         if not digits_only(num):
             missing.append("número NF")
@@ -248,10 +269,20 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
             missing.append("fornecedor")
         if not nature:
             missing.append("natureza")
+
         names.append(build_final_name(due, num, supplier))
-        current = str(row.get("status") or "REVISAR")
-        stats.append("REVISAR" if any(x in missing for x in ["vencimento", "número NF", "fornecedor"]) else (current if current in {"APROVADO", "REVISAR"} else "REVISAR"))
-        issues.append("Campos pendentes: " + ", ".join(missing) if missing else "")
+
+        current = cell_text(row.get("status")) or "REVISAR"
+        stats.append(
+            "REVISAR"
+            if any(x in missing for x in ["vencimento", "número NF", "fornecedor"])
+            else (current if current in {"APROVADO", "REVISAR"} else "REVISAR")
+        )
+        issues.append(
+            "Campos pendentes: " + ", ".join(missing)
+            if missing else ""
+        )
+
     out["nome_sugerido"] = names
     out["status"] = stats
     out["validacao"] = issues
