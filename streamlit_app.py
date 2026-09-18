@@ -1135,12 +1135,14 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     priority_numbers = set(st.session_state.priority_nf_numbers or set())
     priority_keys = set(st.session_state.get("priority_nf_keys") or set())
+    priority_doc_keys = set(st.session_state.get("priority_nf_doc_keys") or set())
     pmap = current_pre_note_map()
 
     priority_flags, pre_status, pre_dates = [], [], []
     for _, row in out.iterrows():
         num = normalized_nf(row.get("numero_nf"))
         cnpj = digits_only(row.get("cnpj_fornecedor"))
+        doc_key = f"{num}_{cnpj}" if num and cnpj else ""
         pre = pmap.get(pre_note_key(num, cnpj), {})
 
         std_supplier = str(row.get("fornecedor_padrao") or "").strip()
@@ -1150,7 +1152,10 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
             priority_key(num, read_supplier),
         }
         keys.discard("")
-        if priority_keys:
+
+        if priority_doc_keys:
+            priority = doc_key in priority_doc_keys
+        elif priority_keys:
             priority = any(k in priority_keys for k in keys)
         else:
             priority = num in priority_numbers
