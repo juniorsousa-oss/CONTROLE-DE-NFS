@@ -154,26 +154,40 @@ st.markdown(
 .block-container{max-width:1780px!important;padding-top:3.2rem!important;padding-left:2.7rem!important;padding-right:2.7rem!important;padding-bottom:3rem!important;width:100%!important}
 section[data-testid="stSidebar"]{background:#fff!important;border-right:1px solid #e8ebf0!important}
 section[data-testid="stSidebar"] .block-container{padding-top:1.6rem!important;padding-left:1rem!important;padding-right:1rem!important}
-.brand,.info,.intro,.setta-logo-card,.kpi-card,.panel{background:#fff;border:1px solid #e5e8ee;border-radius:14px}
-.brand{padding:.9rem 1rem;margin:0 0 1.05rem;background:#f8fafc}.brand b{font-size:.92rem;color:#111827;font-weight:800}.brand small{color:#6b7280;font-size:.75rem}
-.label{margin:.25rem 0 .45rem;color:#374151;font-size:.76rem;font-weight:800;text-transform:uppercase;letter-spacing:.055em}
-.logo-preview{width:100%;min-height:82px;display:flex;justify-content:center;align-items:center;margin:.65rem 0 .5rem;padding:.65rem .8rem;background:#fff;border:1px dashed #d1d5db;border-radius:10px;box-sizing:border-box;overflow:hidden}
-.logo-preview img{display:block;width:auto;height:auto;max-width:140px;max-height:62px;object-fit:contain}
-.info{padding:.75rem .85rem;background:#f8fafc;color:#6b7280;font-size:.76rem;line-height:1.55}
-section[data-testid="stSidebar"] div[role="radiogroup"]{display:flex;flex-direction:column;gap:.58rem}
-section[data-testid="stSidebar"] div[role="radiogroup"] label{position:relative;width:100%;min-height:48px;display:flex!important;align-items:center!important;padding:.66rem .8rem .66rem 1rem!important;margin:0!important;border:1px solid #e2e8f0!important;border-radius:12px;background:#fff!important;box-shadow:0 2px 8px rgba(15,23,42,.035)!important;cursor:pointer;box-sizing:border-box;transition:.12s ease}
-section[data-testid="stSidebar"] div[role="radiogroup"] label>div:first-child{display:none!important}
-section[data-testid="stSidebar"] div[role="radiogroup"] label p{margin:0!important;color:#334155!important;font-size:.86rem!important;line-height:1.2!important;font-weight:700!important}
-section[data-testid="stSidebar"] div[role="radiogroup"] label:hover{transform:translateY(-1px);border-color:#cbd5e1!important;background:#fbfdff!important;box-shadow:0 5px 14px rgba(15,23,42,.07)!important}
+.intro,.setta-logo-card,.kpi-card,.panel{background:#fff;border:1px solid #e5e8ee;border-radius:14px}
+
+.sidebar-brand{background:#f8fafc;border:1px solid #e5e8ee;border-radius:12px;padding:.9rem 1rem;margin:0 0 1.05rem 0}
+.sidebar-brand-title{font-size:.92rem;font-weight:800;color:#111827;letter-spacing:-.01em}
+.sidebar-brand-sub{margin-top:.18rem;font-size:.75rem;color:#6b7280}
+.sidebar-section-label{margin:.25rem 0 .45rem 0;color:#374151;font-size:.76rem;font-weight:800;text-transform:uppercase;letter-spacing:.055em}
+.sidebar-logo-preview{width:100%;min-height:82px;display:flex;justify-content:center;align-items:center;margin:.65rem 0 .5rem 0;padding:.65rem .8rem;background:#fff;border:1px dashed #d1d5db;border-radius:10px;box-sizing:border-box;overflow:hidden}
+.sidebar-logo-preview img{display:block;width:auto;height:auto;max-width:140px;max-height:62px;object-fit:contain}
+.sidebar-info-card{background:#f8fafc;border:1px solid #e5e8ee;border-radius:10px;padding:.75rem .85rem;color:#6b7280;font-size:.76rem;line-height:1.55}
+
+section[data-testid="stSidebar"] div[role="radiogroup"]{display:flex;flex-direction:column;gap:.34rem}
+section[data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"],
+section[data-testid="stSidebar"] div[role="radiogroup"] [data-testid="stMarkdownContainer"] + div{position:absolute!important;opacity:0!important;pointer-events:none!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] label{position:relative;width:100%;min-height:42px;display:flex!important;align-items:center!important;padding:.56rem .72rem .56rem .88rem!important;margin:0!important;border:1px solid transparent!important;border-radius:10px!important;background:transparent!important;cursor:pointer;transition:background .14s ease,border-color .14s ease,box-shadow .14s ease,transform .14s ease;box-sizing:border-box}
+section[data-testid="stSidebar"] div[role="radiogroup"] label>div:first-child{position:absolute!important;opacity:0!important;width:0!important;height:0!important;overflow:hidden!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] label p{margin:0!important;font-size:.83rem!important;font-weight:600!important;color:#374151!important;line-height:1.2!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover{background:#f8fafc!important;border-color:#e5e7eb!important;transform:translateX(1px)}
 section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked){background:#111827!important;border-color:#111827!important;box-shadow:0 5px 14px rgba(17,24,39,.14)!important}
 section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked)::before{content:"";position:absolute;left:.42rem;top:50%;width:4px;height:20px;border-radius:999px;background:#ef4444;transform:translateY(-50%)}
-section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p{color:#fff!important}
+section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p{color:#fff!important;font-weight:700!important}
+
+[data-testid="stAppViewContainer"] > .main,
+[data-testid="stAppViewContainer"] .main,
+[data-testid="stMain"],
+.stMain{width:100%!important;max-width:100%!important;margin-left:0!important;margin-right:0!important}
+[data-testid="stAppViewContainer"] .main .block-container,
+[data-testid="stMain"] .block-container,
+.stMain .block-container{width:100%!important;max-width:100%!important;margin-left:0!important;margin-right:0!important}
 section[data-testid="stSidebar"][aria-expanded="false"]{width:0!important;min-width:0!important;max-width:0!important;flex-basis:0!important}
-.setta-logo-card{width:100%;min-height:128px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #e5e8ee;border-radius:16px;box-shadow:0 4px 14px rgba(24,39,75,.08);box-sizing:border-box;margin:0 0 2.55rem;padding:1.1rem 2rem}
+
+.setta-logo-card{width:100%;min-height:128px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #e5e8ee;border-radius:16px;box-shadow:0 4px 14px rgba(24,39,75,.08);box-sizing:border-box;margin:0 0 2.55rem 0;padding:1.1rem 2rem}
 .setta-logo-card img{display:block;width:auto;height:auto;max-width:205px;max-height:86px;object-fit:contain}.fallback{font-size:2rem;letter-spacing:.08em}
 .app-title{margin:0!important;padding:0!important;font-size:2.55rem!important;line-height:1.08!important;font-weight:800!important;letter-spacing:-.04em!important;color:#050505!important}
-.app-brand-line{display:flex;align-items:center;gap:.45rem;margin-top:.06rem}.app-brand-bar{display:inline-block;width:4px;height:.98em;background:#0b0b0b;border-radius:1px;flex:0 0 4px}
-.app-sub{margin-top:.72rem!important;margin-bottom:2rem!important;color:#4f5661!important;font-size:.94rem!important;line-height:1.45!important}
+.app-sub{margin-top:.72rem!important;margin-bottom:1.65rem!important;color:#4f5661!important;font-size:.94rem!important;line-height:1.35!important}
 .section-title{margin:0 0 1rem!important;color:#0f172a!important;font-size:1.28rem!important;font-weight:800!important;letter-spacing:-.02em}
 .intro{padding:.9rem 1rem;color:#555c66;margin-bottom:1rem;box-shadow:0 3px 12px rgba(15,23,42,.035)}
 .kpi-card{position:relative;min-height:116px;padding:16px 18px 15px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;box-shadow:0 4px 16px rgba(15,23,42,.055);overflow:hidden;transition:transform .12s ease,box-shadow .12s ease}
@@ -380,8 +394,14 @@ def save_config_or_session(new_cfg: dict) -> tuple[bool, str]:
 
 
 with st.sidebar:
-    st.markdown(f'<div class="brand"><b>{cfg["sidebar_title"]}</b><br><small>{cfg["sidebar_subtitle"]}</small></div>', unsafe_allow_html=True)
-    st.markdown('<div class="label">Navegação</div>', unsafe_allow_html=True)
+    st.markdown(
+        f'''<div class="sidebar-brand">
+            <div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>
+            <div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="sidebar-section-label">Navegação</div>', unsafe_allow_html=True)
     page = st.radio(
         "Página",
         ["Dashboard", "Processamento de arquivos", "Configurações"],
@@ -389,7 +409,7 @@ with st.sidebar:
         format_func=str.upper,
     )
     st.divider()
-    st.markdown('<div class="label">Operador</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-section-label">Operador</div>', unsafe_allow_html=True)
     try:
         _usuarios_ativos = db.list_users(active_only=True) if db.configured() else []
     except Exception:
@@ -405,15 +425,15 @@ with st.sidebar:
     else:
         st.session_state.operator = st.text_input("Nome do operador", value=st.session_state.operator, label_visibility="collapsed", placeholder="Cadastre um usuário em Configurações")
     st.divider()
-    st.markdown('<div class="label">Identidade visual</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="logo-preview">{logo_html()}</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-section-label">Identidade visual</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sidebar-logo-preview">{logo_html()}</div>', unsafe_allow_html=True)
     st.caption("Logo, títulos e cores ficam em Configurações.")
     st.divider()
     status = db.db_status()
     db_text = "Conectado" if status["configured"] else "Aguardando chave"
-    st.markdown('<div class="label">Informações</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sidebar-section-label">Informações</div>', unsafe_allow_html=True)
     st.markdown(
-        f'<div class="info"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e → conferência → ZIP<br><br><b>Versão</b><br>Protótipo 0.2</div>',
+        f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e → conferência → ZIP<br><br><b>Versão</b><br>Protótipo 0.2</div>',
         unsafe_allow_html=True,
     )
     if st.session_state.get("db_sync_error"):
@@ -421,10 +441,13 @@ with st.sidebar:
 
 st.markdown(f'<div class="setta-logo-card">{logo_html()}</div>', unsafe_allow_html=True)
 st.markdown(
-    f'<div class="app-title">{cfg["title"]}<div class="app-brand-line"><span class="app-brand-bar"></span><span>SETTA</span></div></div>',
+    f'<h1 class="app-title">{cfg["title"]} | SETTA</h1>',
     unsafe_allow_html=True,
 )
-st.markdown(f'<div class="app-sub">{cfg["subtitle"]}</div>', unsafe_allow_html=True)
+st.markdown(
+    f'<p class="app-sub">{cfg["subtitle"]}</p>',
+    unsafe_allow_html=True,
+)
 
 
 if page == "Dashboard":
