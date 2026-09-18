@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+from rapidfuzz import fuzz
 from PIL import Image
 from openpyxl import load_workbook
 
@@ -521,6 +522,194 @@ def pre_note_key(numero_nf, cnpj) -> str:
     nf = normalized_nf(numero_nf)
     doc = digits_only(cnpj)
     return f"{nf}|{doc}" if nf and doc else ""
+
+
+def normalized_business_date(value) -> date | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    parsed = pd.to_datetime(value, errors="coerce", dayfirst=True)
+    return None if pd.isna(parsed) else parsed.date()
+
+
+def date_nf_key(data_pre_nota, numero_nf) -> str:
+    op_date = normalized_business_date(data_pre_nota)
+    nf = normalized_nf(numero_nf)
+    return f"{op_date.isoformat()}|{nf}" if op_date and nf else ""
+
+
+def supplier_name_from_cnpj(cnpj: object) -> str:
+    doc = digits_only(cnpj)
+    if not doc:
+        return ""
+    suppliers = supplier_dataframe(st.session_state.suppliers)
+    if suppliers.empty:
+        return ""
+    hit = suppliers[
+        suppliers["cnpj"].map(digits_only).eq(doc)
+        & suppliers["ativo"].fillna(True).astype(bool)
+    ]
+    if hit.empty:
+        return ""
+    return str(hit.iloc[0].get("nome_padrao") or "").strip()
+
+
+def supplier_validation_name(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw or raw.upper() == "NÃO LOCALIZADO":
+        return ""
+    standard = standard_supplier_name(raw)
+    return normalize_text(standard or raw)
+
+
+def supplier_similarity(name_a: object, name_b: object) -> int:
+    a = supplier_validation_name(name_a)
+    b = supplier_validation_name(name_b)
+    if not a or not b:
+        return 0
+    if a == b:
+        return 100
+    if len(a) >= 6 and len(b) >= 6 and (a in b or b in a):
+        return 96
+    return int(round(fuzz.token_set_ratio(a, b)))
+
+
+def pre_supplier_name(row: pd.Series | dict) -> str:
+    direct = str(row.get("fornecedor") or "").strip()
+    if direct and direct.upper() != "NÃO LOCALIZADO":
+        return direct
+    return supplier_name_from_cnpj(row.get("cnpj"))
+
+
+def match_pre_note_to_mrp(
+    pre_row: pd.Series | dict,
+    summary: pd.DataFrame,
+    min_supplier_score: int = 82,
+) -> dict:
+    result = {
+        "matched": False,
+        "situacao": "NÃO LOCALIZADA NO IMPACTO MRP",
+        "score_fornecedor": 0,
+        "row": None,
+    }
+    if not isinstance(summary, pd.DataFrame) or summary.empty:
+        result["situacao"] = "IMPACTO MRP NÃO CARREGADO"
+        return result
+
+    key = date_nf_key(pre_row.get("data_pre_nota"), pre_row.get("numero_nf"))
+    if not key:
+        result["situacao"] = "DATA OU NF INVÁLIDA"
+        return result
+
+    if "data_nf" not in summary.columns:
+        return result
+
+    candidates = summary[summary["data_nf"].astype(str).eq(key)].copy()
+    if candidates.empty:
+        return result
+
+    pre_supplier = pre_supplier_name(pre_row)
+    if not pre_supplier:
+        result["situacao"] = "FORNECEDOR DA PRÉ-NOTA NÃO LOCALIZADO"
+        return result
+
+    candidates["_score_supplier"] = candidates["fornecedor"].map(
+        lambda value: supplier_similarity(pre_supplier, value)
+    )
+    candidates = candidates.sort_values(
+        ["_score_supplier", "prioridade", "data_cm"],
+        ascending=[False, True, True],
+        na_position="last",
+    )
+
+    best = candidates.iloc[0]
+    best_score = int(best["_score_supplier"])
+
+    if best_score < min_supplier_score:
+        result["situacao"] = "FORNECEDOR DIVERGENTE"
+        result["score_fornecedor"] = best_score
+        return result
+
+    if len(candidates) > 1:
+        second_score = int(candidates.iloc[1]["_score_supplier"])
+        best_supplier = supplier_validation_name(best.get("fornecedor"))
+        second_supplier = supplier_validation_name(candidates.iloc[1].get("fornecedor"))
+        if (
+            best_supplier != second_supplier
+            and second_score >= min_supplier_score
+            and best_score - second_score <= 3
+        ):
+            result["situacao"] = "CORRESPONDÊNCIA AMBÍGUA"
+            result["score_fornecedor"] = best_score
+            return result
+
+    result.update(
+        matched=True,
+        situacao="OK",
+        score_fornecedor=best_score,
+        row=best.to_dict(),
+    )
+    return result
+
+
+def match_mrp_to_pre_note(
+    mrp_row: pd.Series | dict,
+    pre_notes: pd.DataFrame,
+    min_supplier_score: int = 82,
+) -> dict:
+    result = {
+        "matched": False,
+        "situacao": "AUSENTE NAS PRÉ-NOTAS",
+        "score_fornecedor": 0,
+        "row": None,
+    }
+    if not isinstance(pre_notes, pd.DataFrame) or pre_notes.empty:
+        return result
+
+    key = date_nf_key(mrp_row.get("data_pre_nota"), mrp_row.get("numero_nf"))
+    if not key:
+        result["situacao"] = "DATA OU NF INVÁLIDA"
+        return result
+
+    candidates = pre_notes.copy()
+    candidates["_data_nf"] = candidates.apply(
+        lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
+        axis=1,
+    )
+    candidates = candidates[candidates["_data_nf"].eq(key)].copy()
+    if candidates.empty:
+        return result
+
+    mrp_supplier = str(mrp_row.get("fornecedor") or "").strip()
+    candidates["_supplier_pre"] = candidates.apply(pre_supplier_name, axis=1)
+    candidates["_score_supplier"] = candidates["_supplier_pre"].map(
+        lambda value: supplier_similarity(value, mrp_supplier)
+    )
+    candidates = candidates.sort_values("_score_supplier", ascending=False)
+
+    best = candidates.iloc[0]
+    best_score = int(best["_score_supplier"])
+
+    if best_score < min_supplier_score:
+        result["situacao"] = "FORNECEDOR DIVERGENTE"
+        result["score_fornecedor"] = best_score
+        return result
+
+    result.update(
+        matched=True,
+        situacao="OK",
+        score_fornecedor=best_score,
+        row=best.to_dict(),
+    )
+    return result
 
 
 def priority_key(numero_nf, fornecedor) -> str:
