@@ -124,6 +124,9 @@ def init():
 
 
 init()
+if not SAVE_NF_HISTORY:
+    # Evita que registros temporários de testes anteriores permaneçam na sessão.
+    st.session_state.history = []
 cfg = st.session_state.cfg
 
 
@@ -801,9 +804,9 @@ def save_config_or_session(new_cfg: dict) -> tuple[bool, str]:
 
 
 def current_process_records_for_tests() -> pd.DataFrame:
-    """Em testes, usa somente registros temporários da sessão; em produção, usa o Supabase."""
+    """Histórico só existe quando a persistência oficial estiver habilitada."""
     if not SAVE_NF_HISTORY:
-        return pd.DataFrame(st.session_state.history)
+        return pd.DataFrame()
     if db.configured():
         try:
             return pd.DataFrame(db.list_process_records())
@@ -1057,11 +1060,8 @@ def render_file_processing():
                     outputs, manifest = make_zip_outputs(merged)
                     st.session_state.zip_outputs = outputs
 
-                    # Em modo de testes mantemos apenas um histórico temporário da sessão
-                    # para permitir validar Pré-notas/Pendências/MRP. Nada é persistido no Supabase.
-                    st.session_state.history.extend(manifest)
-
                     if SAVE_NF_HISTORY:
+                        st.session_state.history.extend(manifest)
                         if db.configured():
                             try:
                                 db.save_process_records(manifest)
@@ -1072,8 +1072,8 @@ def render_file_processing():
                             st.success("ZIPs criados. Histórico mantido nesta sessão; nenhum PDF foi salvo em banco.")
                     else:
                         st.success(
-                            "ZIPs criados em modo de testes. Os registros ficam somente nesta sessão "
-                            "para testar as conferências e não são gravados no Supabase."
+                            "ZIPs criados em modo de testes. Nenhum registro desta execução foi salvo "
+                            "na sessão nem no Supabase."
                         )
                 except Exception as exc:
                     st.error(f"Falha ao gerar ZIP: {exc}")
@@ -1323,7 +1323,18 @@ elif page == "Pendências":
     pend_pre_tab, pend_mrp_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP", "Processamento de arquivos"])
 
     with pend_pre_tab:
-        if pre_base.empty:
+        if not SAVE_NF_HISTORY:
+            st.info(
+                "A conferência histórica de pré-notas está temporariamente desabilitada durante os testes. "
+                "Nenhum processamento anterior ou desta sessão será considerado aqui. "
+                "Ela voltará automaticamente quando o salvamento do histórico no banco for reativado."
+            )
+            if not pre_base.empty:
+                st.caption(
+                    f"Base atual de pré-notas carregada: {len(pre_base)} registro(s). "
+                    "A base continua disponível para os testes, mas não é comparada com histórico de PDFs."
+                )
+        elif pre_base.empty:
             st.info("A base de pré-notas ainda não foi carregada. Use Configurações > Alimentação > Validação Pré-notas.")
         elif pending_pre.empty:
             st.success("Nenhuma pré-nota pendente de documento na base atual.")
@@ -1348,10 +1359,10 @@ elif page == "Pendências":
             show_cols = [x for x in ["data_pre_nota", "numero_nf", "cnpj", "status"] if x in pending_pre.columns]
             st.dataframe(pending_pre[show_cols], use_container_width=True, hide_index=True)
 
-        if not pdf_without_pre.empty:
-            with st.expander(f"PDFs processados sem pré-nota correspondente ({len(pdf_without_pre)})"):
-                cols = [x for x in ["numero_nf", "cnpj_fornecedor", "fornecedor_padrao", "arquivo_final", "processado_em"] if x in pdf_without_pre.columns]
-                st.dataframe(pdf_without_pre[cols], use_container_width=True, hide_index=True)
+            if not pdf_without_pre.empty:
+                with st.expander(f"PDFs processados sem pré-nota correspondente ({len(pdf_without_pre)})"):
+                    cols = [x for x in ["numero_nf", "cnpj_fornecedor", "fornecedor_padrao", "arquivo_final", "processado_em"] if x in pdf_without_pre.columns]
+                    st.dataframe(pdf_without_pre[cols], use_container_width=True, hide_index=True)
 
     with pend_mrp_tab:
         render_mrp_priority_feed("pendencias_mrp")
