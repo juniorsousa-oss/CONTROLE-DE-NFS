@@ -18,7 +18,6 @@ from openpyxl import load_workbook
 
 import db
 from danfe_generator import (
-    apply_operational_stamp,
     danfe_file_name,
     extract_danfe_metadata,
     extract_nfe_processing_data,
@@ -2064,21 +2063,10 @@ def make_zip_outputs(df: pd.DataFrame):
                     raise ValueError(f"Nome final vazio ou duplicado: {final_name}")
                 used.add(final_name)
 
-                final_pdf = apply_operational_stamp(
-                    item["bytes"],
-                    data_chegada=(
-                        normalized_business_date(row.get("pre_nota_em"))
-                        or normalized_business_date(row.get("pre_nota_data"))
-                    ),
-                    cr=row.get("cr"),
-                    desc_cr=row.get("desc_cr"),
-                    natureza=row.get("natureza"),
-                    recebido_por=(
-                        str(row.get("pre_nota_recebedor") or "").strip()
-                        or operator
-                    ),
-                )
-                archive.writestr(final_name, final_pdf)
+                # Controle interno SETTA ainda NÃO é inserido no DANFE.
+                # Os dados ficam preservados no processamento para decidirmos
+                # posteriormente a posição definitiva do retângulo.
+                archive.writestr(final_name, item["bytes"])
 
                 manifest.append(
                     {
@@ -3046,20 +3034,17 @@ def render_file_processing():
                                 pre_row,
                                 identity,
                             )
-                            pdf_bytes = apply_operational_stamp(
-                                pdf_bytes,
-                                data_chegada=normalized_business_date(
-                                    pre_row.get("data_pre_nota")
-                                ),
-                                cr=operational.get("cr"),
-                                desc_cr=operational.get("desc_cr"),
-                                natureza=operational.get("natureza"),
-                                recebido_por=(
-                                    str(pre_row.get("recebedor") or "").strip()
-                                    or st.session_state.operator
-                                ),
+                            stamp_status = (
+                                "DADOS DO CONTROLE INTERNO PRONTOS — NÃO APLICADO"
+                                if any([
+                                    normalized_business_date(pre_row.get("data_pre_nota")),
+                                    operational.get("cr"),
+                                    operational.get("desc_cr"),
+                                    operational.get("natureza"),
+                                    str(pre_row.get("recebedor") or "").strip(),
+                                ])
+                                else "SEM DADOS OPERACIONAIS"
                             )
-                            stamp_status = "CONTROLE SETTA PREENCHIDO"
 
                     outputs[pdf_name] = {
                         "bytes": pdf_bytes,
