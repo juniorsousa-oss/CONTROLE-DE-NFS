@@ -1490,6 +1490,20 @@ def match_document_to_pre_note(
         result["score_fornecedor"] = best_score
         return result
 
+    strong_candidates = candidates[
+        candidates["_score_supplier"] >= min_supplier_score
+    ].copy()
+    if len(strong_candidates) > 1:
+        strong_dates = {
+            normalized_business_date(value)
+            for value in strong_candidates["data_pre_nota"].tolist()
+            if normalized_business_date(value) is not None
+        }
+        if len(strong_dates) > 1:
+            result["situacao"] = "CORRESPONDÊNCIA AMBÍGUA ENTRE DATAS"
+            result["score_fornecedor"] = best_score
+            return result
+
     if len(candidates) > 1:
         second = candidates.iloc[1]
         second_score = int(second["_score_supplier"])
