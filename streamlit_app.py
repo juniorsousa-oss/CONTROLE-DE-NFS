@@ -20,11 +20,13 @@ import db
 from danfe_generator import (
     danfe_file_name,
     extract_danfe_metadata,
+    extract_nfe_processing_data,
     generate_danfe_pdf,
 )
 from nf_processor import (
     build_final_name,
     digits_only,
+    inspect_nf_pdf_identity,
     process_nf_pdf,
     supplier_dataframe,
     valid_cnpj,
@@ -93,6 +95,8 @@ def init():
         "analysis": pd.DataFrame(),
         "pdfs": {},
         "zip_outputs": {},
+        "prefilter_rejected": [],
+        "prefilter_stats": {},
         "danfe_outputs": {},
         "danfe_results": [],
         "danfe_errors": [],
@@ -1424,8 +1428,9 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
 def match_document_to_pre_note(
     document_row: pd.Series | dict,
     min_supplier_score: int = 82,
+    pre_notes: pd.DataFrame | None = None,
 ) -> dict:
-    frame = st.session_state.pre_notes
+    frame = pre_notes if isinstance(pre_notes, pd.DataFrame) else st.session_state.pre_notes
     result = {
         "matched": False,
         "situacao": "PRÉ-NOTA NÃO LOCALIZADA",
@@ -1620,6 +1625,196 @@ def current_process_records_for_tests() -> pd.DataFrame:
         except Exception:
             return pd.DataFrame(st.session_state.history)
     return pd.DataFrame(st.session_state.history)
+
+
+def current_pending_pre_notes() -> pd.DataFrame:
+    """Retorna exatamente a base ainda pendente na tela de Pré-notas pendentes."""
+    base = st.session_state.pre_notes
+    if not isinstance(base, pd.DataFrame) or base.empty:
+        return pd.DataFrame()
+
+    pending = base.copy()
+    processed = current_process_records_for_tests()
+    processed_keys = set()
+
+    if isinstance(processed, pd.DataFrame) and not processed.empty:
+        for _, row in processed.iterrows():
+            key = pre_note_key(row.get("numero_nf"), row.get("cnpj_fornecedor"))
+            if key:
+                processed_keys.add(key)
+
+    pending["_process_key"] = pending.apply(
+        lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")),
+        axis=1,
+    )
+    if processed_keys:
+        pending = pending[
+            ~pending["_process_key"].isin(processed_keys)
+        ].copy()
+
+    return pending.drop(columns=["_process_key"], errors="ignore").reset_index(drop=True)
+
+
+def pending_document_group_key(pre_row: pd.Series | dict) -> str:
+    base = date_nf_key(pre_row.get("data_pre_nota"), pre_row.get("numero_nf"))
+    supplier = supplier_validation_name(pre_supplier_name(pre_row))
+    cnpj = digits_only(pre_row.get("cnpj"))
+    return f"{base}|{supplier or cnpj}" if base else ""
+
+
+def _xml_prefilter_identity(xml_data: dict) -> dict:
+    supplier_read = str(xml_data.get("fornecedor_lido") or "").strip()
+    supplier_match = match_supplier(
+        str(xml_data.get("cnpj_fornecedor") or ""),
+        supplier_read,
+        st.session_state.suppliers,
+    )
+    supplier_standard = str(
+        supplier_match.get("nome_padrao") or supplier_read
+    ).strip()
+    return {
+        "numero_nf": normalized_nf(xml_data.get("numero_nf")),
+        "cnpj_fornecedor": str(xml_data.get("cnpj_fornecedor") or ""),
+        "fornecedor_lido": supplier_read,
+        "fornecedor_padrao": supplier_standard,
+    }
+
+
+def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
+    """Monta uma única NF processada usando XML, PDF ou a combinação dos dois."""
+    pre_row = group["pre"]
+    xml_item = group["xmls"][0] if group.get("xmls") else None
+    pdf_item = group["pdfs"][0] if group.get("pdfs") else None
+
+    pdf_result = None
+    if pdf_item:
+        pdf_result = process_nf_pdf(
+            pdf_item["name"],
+            pdf_item["raw"],
+            st.session_state.suppliers,
+            ocr_fallback=True,
+            allowed_natures=parse_natures(),
+        )
+
+    if pdf_result is not None:
+        row = pdf_result.to_dict()
+        output_bytes = pdf_item["raw"]
+        source_name = pdf_item["name"]
+    else:
+        row = {
+            "file_id": uuid.uuid4().hex[:16],
+            "arquivo_original": xml_item["name"],
+            "tipo": "NF-e",
+            "chave_nfe": "",
+            "numero_nf": "",
+            "serie": "",
+            "cnpj_fornecedor": "",
+            "fornecedor_lido": "",
+            "fornecedor_padrao": "",
+            "vencimento": None,
+            "natureza": "",
+            "metodo_fornecedor": "",
+            "confianca": 0,
+            "leitura": "XML",
+            "status": "REVISAR",
+            "nome_sugerido": "",
+            "observacao": "",
+        }
+        output_bytes = generate_danfe_pdf(xml_item["raw"])
+        source_name = xml_item["name"]
+
+    notes = []
+    source_mode = "PDF"
+
+    if xml_item:
+        xml_data = xml_item["data"]
+        source_mode = "XML + PDF" if pdf_item else "XML"
+
+        supplier_read = str(xml_data.get("fornecedor_lido") or "").strip()
+        supplier_match = match_supplier(
+            str(xml_data.get("cnpj_fornecedor") or ""),
+            supplier_read,
+            st.session_state.suppliers,
+        )
+        pre_supplier = pre_supplier_name(pre_row)
+        supplier_standard = str(
+            supplier_match.get("nome_padrao")
+            or standard_supplier_name(pre_supplier)
+            or supplier_read
+        ).strip()
+
+        row["numero_nf"] = normalized_nf(xml_data.get("numero_nf"))
+        row["serie"] = str(xml_data.get("serie") or "").strip()
+        row["chave_nfe"] = str(xml_data.get("chave_nfe") or "").strip()
+        row["cnpj_fornecedor"] = str(xml_data.get("cnpj_fornecedor") or "").strip()
+        row["fornecedor_lido"] = supplier_read
+        row["fornecedor_padrao"] = supplier_standard
+        row["metodo_fornecedor"] = (
+            f"XML + {supplier_match.get('metodo') or 'fornecedor validado'}"
+        )
+        row["confianca"] = max(int(row.get("confianca") or 0), 98)
+
+        xml_due = xml_data.get("vencimento")
+        if xml_due:
+            row["vencimento"] = xml_due
+            notes.append("Vencimento obtido das duplicatas do XML.")
+        elif pdf_result is not None and row.get("vencimento"):
+            notes.append("Vencimento mantido da leitura do PDF.")
+
+        status_code = str(xml_data.get("status_codigo") or "").strip()
+        if status_code == "100":
+            notes.append("Identidade fiscal confirmada pelo XML autorizado.")
+        elif status_code:
+            notes.append(
+                f"XML com status {status_code} - {xml_data.get('status_motivo') or ''}."
+            )
+        else:
+            notes.append("XML sem protocolo de autorização identificado.")
+
+        if pdf_item:
+            row["arquivo_original"] = f"{pdf_item['name']} + {xml_item['name']}"
+        else:
+            row["arquivo_original"] = xml_item["name"]
+
+    row["origem_dados"] = source_mode
+    row["pre_nota_data"] = normalized_business_date(pre_row.get("data_pre_nota"))
+    row["pre_nota_fornecedor"] = pre_supplier_name(pre_row)
+    row["pre_nota_cnpj"] = digits_only(pre_row.get("cnpj"))
+    row["leitura"] = source_mode
+    row["observacao"] = " ".join(
+        value
+        for value in [
+            str(row.get("observacao") or "").strip(),
+            *notes,
+        ]
+        if value
+    ).strip()
+
+    required = bool(
+        normalized_nf(row.get("numero_nf"))
+        and valid_cnpj(digits_only(row.get("cnpj_fornecedor")))
+        and str(row.get("fornecedor_padrao") or "").strip()
+        and row.get("vencimento")
+        and str(row.get("natureza") or "").strip()
+    )
+    if required and xml_item:
+        row["status"] = "APROVADO"
+
+    row["nome_sugerido"] = build_final_name(
+        row.get("vencimento"),
+        row.get("numero_nf"),
+        row.get("fornecedor_padrao"),
+    )
+
+    # ID próprio do registro final para evitar colisão quando PDF + XML são combinados.
+    row["file_id"] = uuid.uuid4().hex[:16]
+
+    stored = {
+        "name": source_name,
+        "bytes": output_bytes,
+        "origem": source_mode,
+    }
+    return row, stored
 
 
 def render_file_processing():
