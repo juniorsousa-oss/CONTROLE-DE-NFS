@@ -2201,6 +2201,44 @@ def current_process_records_for_tests() -> pd.DataFrame:
     ].copy()
 
 
+def persist_pre_notes_current(source_name: str = "app") -> dict:
+    frame = st.session_state.pre_notes
+    if not SAVE_NF_HISTORY or not db.configured():
+        return {"registros": len(frame) if isinstance(frame, pd.DataFrame) else 0}
+
+    rows = []
+    if isinstance(frame, pd.DataFrame) and not frame.empty:
+        for _, row in frame.iterrows():
+            data_pre = normalized_business_date(row.get("data_pre_nota"))
+            rows.append({
+                "numero_nf": normalized_nf(row.get("numero_nf")),
+                "cnpj": digits_only(row.get("cnpj")),
+                "fornecedor": str(row.get("fornecedor") or "").strip(),
+                "recebedor": str(row.get("recebedor") or "").strip(),
+                "status": str(row.get("status") or "").strip(),
+                "data_pre_nota": data_pre.isoformat() if data_pre else None,
+                "natureza": str(row.get("natureza") or "").strip(),
+            })
+    return db.replace_pre_notes(rows, source_name)
+
+
+def persist_mrp_current() -> dict:
+    detail = st.session_state.get("mrp_impact_detail")
+    summary = st.session_state.get("mrp_priority_summary")
+    if not SAVE_NF_HISTORY or not db.configured():
+        return {
+            "detalhe": len(detail) if isinstance(detail, pd.DataFrame) else 0,
+            "resumo": len(summary) if isinstance(summary, pd.DataFrame) else 0,
+        }
+
+    return db.save_mrp_load(
+        dataframe_records_for_db(detail if isinstance(detail, pd.DataFrame) else pd.DataFrame()),
+        dataframe_records_for_db(summary if isinstance(summary, pd.DataFrame) else pd.DataFrame()),
+        list(st.session_state.get("mrp_priority_files") or []),
+        st.session_state.get("mrp_priority_stats") or {},
+    )
+
+
 def current_pending_pre_notes() -> pd.DataFrame:
     """Retorna exatamente a base ainda pendente na tela de Pré-notas pendentes."""
     base = st.session_state.pre_notes
