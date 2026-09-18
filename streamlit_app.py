@@ -1296,7 +1296,15 @@ elif page == "Pendências":
             if key:
                 processed_keys.add(key)
 
-    if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
+    if (
+        not SAVE_NF_HISTORY
+        and pending_records.empty
+    ):
+        # Em modo de testes, antes de existir uma nova carga processada não há
+        # pendência a exibir. A base de pré-notas continua carregada, mas não
+        # deve aparecer como "48 pendentes" apenas por ausência de histórico.
+        pending_pre = pd.DataFrame()
+    elif isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
         pre_base["chave_validacao"] = pre_base.apply(
             lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")), axis=1
         )
@@ -1306,6 +1314,10 @@ elif page == "Pendências":
 
     pre_keys = set()
     if isinstance(pre_base, pd.DataFrame) and not pre_base.empty:
+        if "chave_validacao" not in pre_base.columns:
+            pre_base["chave_validacao"] = pre_base.apply(
+                lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")), axis=1
+            )
         pre_keys = set(pre_base["chave_validacao"].dropna().astype(str).tolist())
 
     pdf_without_pre = pd.DataFrame()
@@ -1335,14 +1347,9 @@ elif page == "Pendências":
     with pend_pre_tab:
         if not SAVE_NF_HISTORY and pending_records.empty:
             st.info(
-                "Modo de testes: nenhum histórico anterior é considerado. "
-                "Processe a nova carga de PDFs para que esta aba compare somente o lote atual."
+                "Modo de testes: aguardando a nova carga. "
+                "Nenhum histórico anterior e nenhuma pendência serão exibidos antes do novo processamento."
             )
-            if not pre_base.empty:
-                st.caption(
-                    f"Base atual de pré-notas: {len(pre_base)} registro(s). "
-                    "Ela será comparada apenas com a próxima carga processada nesta sessão."
-                )
         elif pre_base.empty:
             st.info("A base de pré-notas ainda não foi carregada. Use Configurações > Alimentação > Validação Pré-notas.")
         elif pending_pre.empty:
