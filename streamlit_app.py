@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+from PIL import Image
 
 import db
 from nf_processor import (
@@ -43,6 +44,8 @@ DEFAULT = {
     "button_color": "#111111",
     "footer": "SETTA | Controle de Notas Fiscais",
     "naturezas": "MP,MC",
+    "favicon_data": "",
+    "favicon_mime": "image/png",
 }
 
 
@@ -101,6 +104,31 @@ def init():
 
 init()
 cfg = st.session_state.cfg
+
+
+def browser_icon():
+    """Converte o favicon salvo na configuração em imagem aceita pelo Streamlit."""
+    data = str(cfg.get("favicon_data") or "").strip()
+    if not data:
+        return "📄"
+    try:
+        raw = base64.b64decode(data)
+        image = Image.open(io.BytesIO(raw))
+        image.load()
+        return image
+    except Exception:
+        return "📄"
+
+
+# Streamlit 1.49+ permite atualizar a configuração da página ao longo do script.
+# Assim, o favicon salvo no Supabase passa a valer após salvar/recarregar o app.
+st.set_page_config(
+    page_title="Controle de NFs | Setta",
+    page_icon=browser_icon(),
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 color = str(cfg.get("button_color") or "#111111").upper()
 if not re.fullmatch(r"#[0-9A-F]{6}", color):
     color = "#111111"
@@ -687,6 +715,65 @@ elif page == "Configurações":
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Não foi possível salvar a logo: {exc}")
+
+        st.markdown("#### Ícone do navegador")
+        st.caption("Personalize a pequena imagem exibida na aba do navegador (favicon). Recomendado: PNG ou ICO quadrado, de preferência 256×256 px.")
+
+        current_favicon = str(st.session_state.cfg.get("favicon_data") or "").strip()
+        if current_favicon:
+            try:
+                current_raw = base64.b64decode(current_favicon)
+                current_image = Image.open(io.BytesIO(current_raw))
+                st.image(current_image, caption="Favicon atual", width=72)
+            except Exception:
+                st.caption("O favicon atual não pôde ser pré-visualizado.")
+
+        favicon_upload = st.file_uploader(
+            "Selecionar ícone do navegador",
+            type=["png", "jpg", "jpeg", "ico"],
+            key="favicon_upload",
+            help="Use uma imagem quadrada. O sistema ajusta o arquivo para uso como favicon.",
+        )
+        if favicon_upload:
+            favicon_raw = favicon_upload.getvalue()
+            if len(favicon_raw) > 750_000:
+                st.error("O ícone deve ter no máximo 750 KB.")
+            else:
+                try:
+                    favicon_image = Image.open(io.BytesIO(favicon_raw))
+                    favicon_image.load()
+                    if favicon_image.mode not in ("RGB", "RGBA"):
+                        favicon_image = favicon_image.convert("RGBA")
+                    preview = favicon_image.copy()
+                    preview.thumbnail((128, 128))
+                    st.image(preview, caption="Prévia do novo favicon", width=72)
+
+                    # Normaliza para PNG para evitar incompatibilidades de navegador/Streamlit.
+                    favicon_buffer = io.BytesIO()
+                    favicon_image.save(favicon_buffer, format="PNG")
+                    favicon_encoded = base64.b64encode(favicon_buffer.getvalue()).decode()
+
+                    if st.button("Salvar ícone do navegador", type="primary", use_container_width=True):
+                        new_cfg = st.session_state.cfg.copy()
+                        new_cfg.update(favicon_data=favicon_encoded, favicon_mime="image/png")
+                        try:
+                            persisted, message = save_config_or_session(new_cfg)
+                            (st.success if persisted else st.warning)(message)
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f"Não foi possível salvar o ícone do navegador: {exc}")
+                except Exception as exc:
+                    st.error(f"Arquivo de ícone inválido: {exc}")
+
+        if current_favicon and st.button("Remover ícone personalizado", use_container_width=True):
+            new_cfg = st.session_state.cfg.copy()
+            new_cfg.update(favicon_data="", favicon_mime="image/png")
+            try:
+                persisted, message = save_config_or_session(new_cfg)
+                (st.success if persisted else st.warning)(message)
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Não foi possível remover o ícone: {exc}")
 
         a, b = st.columns(2)
         if a.button("Restaurar padrão visual", use_container_width=True):
