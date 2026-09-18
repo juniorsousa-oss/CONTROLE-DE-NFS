@@ -1822,43 +1822,340 @@ def render_file_processing():
     tab_nf, tab_danfe, tab_cte = st.tabs(["NFs", "XML → DANFE", "CTEs"])
 
     with tab_nf:
-        st.markdown(f'<div class="intro">{cfg["intro"]}</div>', unsafe_allow_html=True)
-        files = st.file_uploader("Selecione ou arraste os PDFs das notas fiscais", type=["pdf"], accept_multiple_files=True)
-        a, b = st.columns(2)
-        analyze = a.button("Analisar documentos", type="primary", use_container_width=True, disabled=not files)
-        if b.button("Limpar lote atual", use_container_width=True):
+        st.markdown(
+            '<div class="intro">'
+            "Envie vários <b>XMLs e/ou PDFs</b>. Antes do processamento completo, o sistema confronta "
+            "cada documento com a lista que está atualmente em <b>Pré-notas pendentes</b>. "
+            "Somente correspondências seguras seguem para análise; os demais arquivos são descartados do lote."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+        pending_base = current_pending_pre_notes()
+        if pending_base.empty:
+            st.warning(
+                "Não há pré-notas pendentes disponíveis para o pré-filtro. "
+                "Carregue a base em Configurações → Alimentação → Validação Pré-notas "
+                "ou verifique se a lista já foi concluída."
+            )
+        else:
+            st.caption(
+                f"Pré-filtro ativo com {len(pending_base)} pré-nota(s) atualmente pendente(s). "
+                "A identificação usa NF + fornecedor para localizar a pré-nota; depois a prioridade MRP "
+                "continua seguindo Data + NF com validação do fornecedor."
+            )
+
+        files = st.file_uploader(
+            "Selecione ou arraste XMLs e/ou PDFs das notas fiscais",
+            type=["xml", "pdf"],
+            accept_multiple_files=True,
+            key="nf_hybrid_uploads",
+        )
+
+        a, b = st.columns([4, 1])
+        analyze = a.button(
+            "PRÉ-FILTRAR E ANALISAR DOCUMENTOS",
+            type="primary",
+            use_container_width=True,
+            disabled=(not files or pending_base.empty),
+            key="analyze_hybrid_nf",
+        )
+        if b.button(
+            "Limpar lote atual",
+            use_container_width=True,
+            key="clear_hybrid_nf",
+        ):
             st.session_state.analysis = pd.DataFrame()
             st.session_state.pdfs = {}
             st.session_state.zip_outputs = {}
+            st.session_state.prefilter_rejected = []
+            st.session_state.prefilter_stats = {}
             st.session_state.current_test_manifest = []
             st.rerun()
+
         if analyze:
-            # Nova carga de teste substitui a anterior; não acumulamos histórico.
             st.session_state.current_test_manifest = []
-            rows, store = [], {}
-            progress = st.progress(0, text="Analisando documentos...")
-            for i, file in enumerate(files, 1):
-                raw = file.getvalue()
-                result = process_nf_pdf(
-                    file.name,
-                    raw,
-                    st.session_state.suppliers,
-                    ocr_fallback=True,
-                    allowed_natures=parse_natures(),
+            st.session_state.zip_outputs = {}
+
+            groups: dict[str, dict] = {}
+            rejected: list[dict] = []
+            uploaded = []
+
+            for file in files:
+                ext = Path(file.name).suffix.lower()
+                uploaded.append(
+                    {
+                        "name": file.name,
+                        "ext": ext,
+                        "raw": file.getvalue(),
+                    }
                 )
-                rows.append(result.to_dict())
-                store[result.file_id] = {"name": file.name, "bytes": raw}
-                progress.progress(i / len(files), text=f"{i}/{len(files)} — {file.name}")
-            progress.empty()
+
+            # 1) XML primeiro: identificação é estruturada e muito mais barata/confiável.
+            xml_entries = [item for item in uploaded if item["ext"] == ".xml"]
+            pdf_entries = [item for item in uploaded if item["ext"] == ".pdf"]
+
+            prefilter_progress = st.progress(0, text="Pré-filtrando documentos...")
+            total_prefilter = max(1, len(uploaded))
+            done_prefilter = 0
+
+            for item in xml_entries:
+                try:
+                    xml_data = extract_nfe_processing_data(item["raw"])
+                    identity = _xml_prefilter_identity(xml_data)
+                    match = match_document_to_pre_note(
+                        identity,
+                        pre_notes=pending_base,
+                    )
+
+                    if not match.get("matched"):
+                        rejected.append({
+                            "arquivo": item["name"],
+                            "tipo": "XML",
+                            "nf": normalized_nf(xml_data.get("numero_nf")),
+                            "fornecedor": str(xml_data.get("fornecedor_lido") or ""),
+                            "motivo": str(match.get("situacao") or "SEM CORRESPONDÊNCIA"),
+                            "aderencia_fornecedor": int(match.get("score_fornecedor") or 0),
+                        })
+                    else:
+                        pre_row = match["row"]
+                        group_key = pending_document_group_key(pre_row)
+                        group = groups.setdefault(
+                            group_key,
+                            {
+                                "pre": pre_row,
+                                "xmls": [],
+                                "pdfs": [],
+                            },
+                        )
+                        group["xmls"].append({
+                            "name": item["name"],
+                            "raw": item["raw"],
+                            "data": xml_data,
+                            "score": int(match.get("score_fornecedor") or 0),
+                        })
+                except Exception as exc:
+                    rejected.append({
+                        "arquivo": item["name"],
+                        "tipo": "XML",
+                        "nf": "",
+                        "fornecedor": "",
+                        "motivo": f"XML inválido/não processável: {exc}",
+                        "aderencia_fornecedor": 0,
+                    })
+
+                done_prefilter += 1
+                prefilter_progress.progress(
+                    done_prefilter / total_prefilter,
+                    text=f"Pré-filtro {done_prefilter}/{len(uploaded)} — {item['name']}",
+                )
+
+            # 2) PDF: leitura leve, sem OCR completo. O OCR só roda se o PDF sobreviver ao filtro.
+            for item in pdf_entries:
+                identity = inspect_nf_pdf_identity(
+                    item["name"],
+                    item["raw"],
+                    st.session_state.suppliers,
+                )
+                match = match_document_to_pre_note(
+                    identity,
+                    pre_notes=pending_base,
+                )
+
+                group_key = ""
+                pre_row = None
+
+                if match.get("matched"):
+                    pre_row = match["row"]
+                    group_key = pending_document_group_key(pre_row)
+                else:
+                    # Se o PDF não trouxer fornecedor legível, mas houver um XML já validado
+                    # para a mesma NF e somente uma pré-nota possível, ele pode complementar
+                    # aquele XML sem ampliar o conjunto de notas aceitas.
+                    pdf_nf = normalized_nf(identity.get("numero_nf"))
+                    possible = [
+                        (key, group)
+                        for key, group in groups.items()
+                        if normalized_nf(group["pre"].get("numero_nf")) == pdf_nf
+                    ]
+                    if pdf_nf and len(possible) == 1:
+                        group_key, existing_group = possible[0]
+                        pre_row = existing_group["pre"]
+
+                if not group_key or pre_row is None:
+                    rejected.append({
+                        "arquivo": item["name"],
+                        "tipo": "PDF",
+                        "nf": normalized_nf(identity.get("numero_nf")),
+                        "fornecedor": str(
+                            identity.get("fornecedor_padrao")
+                            or identity.get("fornecedor_lido")
+                            or ""
+                        ),
+                        "motivo": str(
+                            match.get("situacao")
+                            or identity.get("erro")
+                            or "SEM CORRESPONDÊNCIA"
+                        ),
+                        "aderencia_fornecedor": int(match.get("score_fornecedor") or 0),
+                    })
+                else:
+                    group = groups.setdefault(
+                        group_key,
+                        {
+                            "pre": pre_row,
+                            "xmls": [],
+                            "pdfs": [],
+                        },
+                    )
+                    group["pdfs"].append({
+                        "name": item["name"],
+                        "raw": item["raw"],
+                        "identity": identity,
+                        "score": int(match.get("score_fornecedor") or 0),
+                    })
+
+                done_prefilter += 1
+                prefilter_progress.progress(
+                    done_prefilter / total_prefilter,
+                    text=f"Pré-filtro {done_prefilter}/{len(uploaded)} — {item['name']}",
+                )
+
+            prefilter_progress.empty()
+
+            # Mantém apenas um XML e um PDF por pré-nota. Repetições não entram no lote.
+            for group in groups.values():
+                if len(group["xmls"]) > 1:
+                    group["xmls"].sort(
+                        key=lambda item: item.get("score", 0),
+                        reverse=True,
+                    )
+                    for duplicate in group["xmls"][1:]:
+                        rejected.append({
+                            "arquivo": duplicate["name"],
+                            "tipo": "XML",
+                            "nf": normalized_nf(group["pre"].get("numero_nf")),
+                            "fornecedor": pre_supplier_name(group["pre"]),
+                            "motivo": "XML DUPLICADO PARA A MESMA PRÉ-NOTA",
+                            "aderencia_fornecedor": duplicate.get("score", 0),
+                        })
+                    group["xmls"] = group["xmls"][:1]
+
+                if len(group["pdfs"]) > 1:
+                    group["pdfs"].sort(
+                        key=lambda item: item.get("score", 0),
+                        reverse=True,
+                    )
+                    for duplicate in group["pdfs"][1:]:
+                        rejected.append({
+                            "arquivo": duplicate["name"],
+                            "tipo": "PDF",
+                            "nf": normalized_nf(group["pre"].get("numero_nf")),
+                            "fornecedor": pre_supplier_name(group["pre"]),
+                            "motivo": "PDF DUPLICADO PARA A MESMA PRÉ-NOTA",
+                            "aderencia_fornecedor": duplicate.get("score", 0),
+                        })
+                    group["pdfs"] = group["pdfs"][:1]
+
+            rows, store = [], {}
+            process_groups = [
+                group
+                for group in groups.values()
+                if group.get("xmls") or group.get("pdfs")
+            ]
+
+            process_progress = st.progress(0, text="Processando documentos correspondentes...")
+            for idx, group in enumerate(process_groups, start=1):
+                try:
+                    row, stored = _build_hybrid_nf_document(group)
+                    rows.append(row)
+                    store[row["file_id"]] = stored
+                except Exception as exc:
+                    source_files = [
+                        item["name"]
+                        for item in (group.get("pdfs") or []) + (group.get("xmls") or [])
+                    ]
+                    rejected.append({
+                        "arquivo": " + ".join(source_files) or "Documento",
+                        "tipo": "PROCESSAMENTO",
+                        "nf": normalized_nf(group["pre"].get("numero_nf")),
+                        "fornecedor": pre_supplier_name(group["pre"]),
+                        "motivo": f"Falha após o pré-filtro: {exc}",
+                        "aderencia_fornecedor": 0,
+                    })
+
+                process_progress.progress(
+                    idx / max(1, len(process_groups)),
+                    text=f"Processando {idx}/{len(process_groups)}",
+                )
+            process_progress.empty()
+
             frame = pd.DataFrame(rows)
             if not frame.empty:
-                frame["vencimento"] = pd.to_datetime(frame["vencimento"], errors="coerce").dt.date
+                frame["vencimento"] = pd.to_datetime(
+                    frame["vencimento"],
+                    errors="coerce",
+                ).dt.date
                 frame = apply_cross_checks(frame)
                 frame = recalc(frame)
+
+            used_xml = sum(bool(group.get("xmls")) for group in process_groups)
+            used_pdf = sum(bool(group.get("pdfs")) for group in process_groups)
+
             st.session_state.analysis = frame
             st.session_state.pdfs = store
-            st.session_state.zip_outputs = {}
-            st.success(f"{len(frame)} documento(s) analisado(s). Confira antes da renomeação final.")
+            st.session_state.prefilter_rejected = rejected
+            st.session_state.prefilter_stats = {
+                "enviados": len(uploaded),
+                "xml_enviados": len(xml_entries),
+                "pdf_enviados": len(pdf_entries),
+                "notas_correspondentes": len(frame),
+                "xml_utilizados": used_xml,
+                "pdf_utilizados": used_pdf,
+                "excluidos": len(rejected),
+            }
+
+            if frame.empty:
+                st.warning(
+                    "Nenhum documento enviado correspondeu com segurança às pré-notas pendentes."
+                )
+            else:
+                st.success(
+                    f"Pré-filtro concluído: {len(frame)} nota(s) seguiram para validação. "
+                    f"{len(rejected)} arquivo(s) foram excluídos do lote."
+                )
+
+        prefilter_stats = st.session_state.get("prefilter_stats") or {}
+        prefilter_rejected = st.session_state.get("prefilter_rejected") or []
+
+        if prefilter_stats:
+            pf1, pf2, pf3, pf4 = st.columns(4)
+            pf1.metric("Arquivos enviados", prefilter_stats.get("enviados", 0))
+            pf2.metric("Notas correspondentes", prefilter_stats.get("notas_correspondentes", 0))
+            pf3.metric("XMLs utilizados", prefilter_stats.get("xml_utilizados", 0))
+            pf4.metric("Arquivos excluídos", prefilter_stats.get("excluidos", 0))
+
+        if prefilter_rejected:
+            with st.expander(
+                f"Arquivos eliminados pelo pré-filtro ({len(prefilter_rejected)})",
+                expanded=False,
+            ):
+                st.dataframe(
+                    pd.DataFrame(prefilter_rejected),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "arquivo": st.column_config.TextColumn("Arquivo", width="large"),
+                        "tipo": "Tipo",
+                        "nf": "NF",
+                        "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
+                        "motivo": st.column_config.TextColumn("Motivo da exclusão", width="large"),
+                        "aderencia_fornecedor": st.column_config.NumberColumn(
+                            "Aderência fornecedor",
+                            format="%d%%",
+                        ),
+                    },
+                )
 
         frame = st.session_state.analysis.copy()
         if frame.empty:
