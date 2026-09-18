@@ -260,13 +260,37 @@ def match_supplier(cnpj: str, emitter_name: str, suppliers: pd.DataFrame) -> dic
 
 
 def build_final_name(vencimento: date | None, numero_nf: str, fornecedor: str) -> str:
+    # NaT/NaN podem chegar aqui depois da montagem do DataFrame.
+    try:
+        if vencimento is None or pd.isna(vencimento):
+            return ""
+    except Exception:
+        pass
+
     if not isinstance(vencimento, date):
         return ""
-    numero = digits_only(numero_nf).lstrip("0") or "0"
-    fornecedor = sanitize_filename_part(fornecedor)
-    if not numero or not fornecedor:
+
+    numero_bruto = digits_only(numero_nf)
+    if not numero_bruto:
         return ""
-    return f"VENC. {vencimento.strftime('%d.%m')} - {numero} - {fornecedor}.pdf"
+    numero = numero_bruto.lstrip("0") or "0"
+
+    try:
+        if fornecedor is None or pd.isna(fornecedor):
+            return ""
+    except Exception:
+        pass
+
+    fornecedor = sanitize_filename_part(fornecedor)
+    if not fornecedor:
+        return ""
+
+    try:
+        vencimento_texto = vencimento.strftime("%d.%m")
+    except (ValueError, AttributeError, TypeError):
+        return ""
+
+    return f"VENC. {vencimento_texto} - {numero} - {fornecedor}.pdf"
 
 
 @dataclass
