@@ -2981,9 +2981,10 @@ def render_file_processing():
     with tab_danfe:
         st.markdown("### XML → DANFE")
         st.caption(
-            "Geração do DANFE diretamente do XML da NF-e modelo 55 no padrão visual fixo validado: "
-            "A4 retrato, canhoto superior, traços finos e proporções fixas. O layout não muda conforme "
-            "o tpImp do XML. Os XMLs e PDFs gerados ficam somente nesta sessão e não são gravados no Supabase."
+            "Geração do DANFE diretamente do XML da NF-e modelo 55 com motor paginado: "
+            "layout inspirado no padrão Protheus, cálculo automático de altura dos produtos, quebra de página, "
+            "repetição do cabeçalho e controle interno SETTA. Os XMLs e PDFs ficam somente nesta sessão "
+            "e não são gravados no Supabase."
         )
 
         xml_files = st.file_uploader(
