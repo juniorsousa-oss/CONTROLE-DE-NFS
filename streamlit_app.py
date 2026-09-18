@@ -21,6 +21,8 @@ from nf_processor import (
     process_nf_pdf,
     supplier_dataframe,
     valid_cnpj,
+    normalize_text,
+    match_supplier,
 )
 
 ROOT = Path(__file__).parent
@@ -82,6 +84,7 @@ def init():
         "history": [],
         "pre_notes": pd.DataFrame(),
         "priority_nf_numbers": set(),
+        "priority_nf_keys": set(),
         "db_synced": False,
         "operator": "",
     }
@@ -262,22 +265,47 @@ def excel_bytes(frame: pd.DataFrame, sheet: str = "Dados") -> bytes:
     return buffer.getvalue()
 
 
-def read_uploaded_table(uploaded, sheet_name: str | None = None) -> tuple[pd.DataFrame, list[str]]:
+def read_uploaded_table(uploaded, sheet_name: str | None = None, header_row: int = 0) -> tuple[pd.DataFrame, list[str]]:
     raw = uploaded.getvalue()
     name = uploaded.name.lower()
-    if name.endswith(".csv"):
+    suffix = Path(name).suffix.lower()
+
+    if suffix == ".csv":
         for sep in [None, ";", ",", "\t"]:
             try:
-                frame = pd.read_csv(io.BytesIO(raw), dtype=str, sep=sep, engine="python" if sep is None else "c").fillna("")
+                frame = pd.read_csv(
+                    io.BytesIO(raw),
+                    dtype=str,
+                    sep=sep,
+                    engine="python" if sep is None else "c",
+                    header=header_row,
+                ).fillna("")
                 if frame.shape[1] > 1 or sep == "\t":
                     return frame, []
             except Exception:
                 pass
         raise ValueError("Não foi possível interpretar o CSV.")
-    book = pd.ExcelFile(io.BytesIO(raw))
+
+    if suffix in {".xls", ".xlt"}:
+        engine = "xlrd"
+    else:
+        engine = "openpyxl"
+
+    try:
+        book = pd.ExcelFile(io.BytesIO(raw), engine=engine)
+    except Exception as exc:
+        raise ValueError(f"Não foi possível abrir o arquivo {suffix or 'Excel'}: {exc}") from exc
+
     sheets = book.sheet_names
     selected = sheet_name if sheet_name in sheets else sheets[0]
-    return pd.read_excel(io.BytesIO(raw), sheet_name=selected, dtype=str).fillna(""), sheets
+    frame = pd.read_excel(
+        io.BytesIO(raw),
+        sheet_name=selected,
+        dtype=str,
+        header=header_row,
+        engine=engine,
+    ).fillna("")
+    return frame, sheets
 
 
 def guess_column(columns, tokens: list[str]) -> str | None:
@@ -300,13 +328,41 @@ def normalized_nf(value) -> str:
     return digits.lstrip("0") or ("0" if digits else "")
 
 
+def normalized_material_code(value) -> str:
+    raw = str(value or "").strip()
+    digits = digits_only(raw)
+    if digits and re.fullmatch(r"[\d\s.\-/]+", raw):
+        return digits.lstrip("0") or "0"
+    return normalize_text(raw)
+
+
+def pre_note_key(numero_nf, cnpj) -> str:
+    nf = normalized_nf(numero_nf)
+    doc = digits_only(cnpj)
+    return f"{nf}|{doc}" if nf and doc else ""
+
+
+def priority_key(numero_nf, fornecedor) -> str:
+    nf = normalized_nf(numero_nf)
+    nome = normalize_text(fornecedor)
+    return f"{nf}|{nome}" if nf and nome else ""
+
+
+def standard_supplier_name(name: object) -> str:
+    raw = str(name or "").strip()
+    if not raw:
+        return ""
+    matched = match_supplier("", raw, st.session_state.suppliers)
+    return str(matched.get("nome_padrao") or raw).strip()
+
+
 def current_pre_note_map() -> dict[str, dict]:
     frame = st.session_state.pre_notes
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return {}
     result = {}
     for _, row in frame.iterrows():
-        key = normalized_nf(row.get("numero_nf"))
+        key = pre_note_key(row.get("numero_nf"), row.get("cnpj"))
         if key:
             result[key] = row.to_dict()
     return result
@@ -316,15 +372,32 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     out = df.copy()
-    priorities = set(st.session_state.priority_nf_numbers or set())
+    priority_numbers = set(st.session_state.priority_nf_numbers or set())
+    priority_keys = set(st.session_state.get("priority_nf_keys") or set())
     pmap = current_pre_note_map()
+
     priority_flags, pre_status, pre_dates = [], [], []
     for _, row in out.iterrows():
         num = normalized_nf(row.get("numero_nf"))
-        priority_flags.append(num in priorities)
-        pre = pmap.get(num, {})
+        cnpj = digits_only(row.get("cnpj_fornecedor"))
+        pre = pmap.get(pre_note_key(num, cnpj), {})
+
+        std_supplier = str(row.get("fornecedor_padrao") or "").strip()
+        read_supplier = str(row.get("fornecedor_lido") or "").strip()
+        keys = {
+            priority_key(num, std_supplier),
+            priority_key(num, read_supplier),
+        }
+        keys.discard("")
+        if priority_keys:
+            priority = any(k in priority_keys for k in keys)
+        else:
+            priority = num in priority_numbers
+
+        priority_flags.append(priority)
         pre_status.append(str(pre.get("status") or ""))
         pre_dates.append(pre.get("data_pre_nota") or None)
+
     out["prioridade_mrp"] = priority_flags
     out["pre_nota_status"] = pre_status
     out["pre_nota_em"] = pre_dates
@@ -834,50 +907,118 @@ elif page == "Configurações":
 
         with feed_pre:
             st.markdown("### Validação de pré-notas")
-            st.write("Importe o relatório do sistema. A base é confrontada com as notas já processadas para mostrar o que ainda não passou pelo fluxo de documentos.")
-            upload = st.file_uploader("Relatório de pré-notas (CSV ou XLSX)", type=["csv", "xlsx"], key="prenota_file")
+            st.write(
+                "Formato validado: A = Data, C = Número da NF, E = CNPJ e F = Status. "
+                "Somente registros com status **Pré-nota lançada** entram na base. "
+                "A correspondência com o PDF usa **Número da NF + CNPJ**; a data é apenas referência operacional."
+            )
+            upload = st.file_uploader(
+                "Relatório de pré-notas",
+                type=["csv", "xlsx", "xls", "xlt", "xltx"],
+                key="prenota_file",
+            )
             if upload:
                 try:
-                    temp, sheets = read_uploaded_table(upload)
-                    if sheets:
+                    temp, sheets = read_uploaded_table(upload, header_row=0)
+                    if sheets and len(sheets) > 1:
                         selected_sheet = st.selectbox("Aba da planilha", sheets, key="prenota_sheet")
-                        temp, _ = read_uploaded_table(upload, selected_sheet)
-                    columns = list(temp.columns)
-                    c1, c2, c3, c4 = st.columns(4)
-                    guess_nf = guess_column(columns, ["DOCUMENTO", "NF", "NOTA", "NOTA FISCAL"])
-                    guess_status = guess_column(columns, ["STATUS", "CLASSIFICACAO", "SITUACAO"])
-                    guess_date = guess_column(columns, ["DIGITACAO", "DATA", "DATA PRE NOTA", "EMISSAO"])
-                    nf_col = c1.selectbox("Coluna do número da NF", columns, index=columns.index(guess_nf) if guess_nf in columns else 0)
-                    status_col = c2.selectbox("Coluna de status", columns, index=columns.index(guess_status) if guess_status in columns else 0)
-                    date_col = c3.selectbox("Coluna da data da pré-nota", columns, index=columns.index(guess_date) if guess_date in columns else 0)
-                    optional = ["(não usar)"] + columns
-                    nature_guess = guess_column(columns, ["NATUREZA"])
-                    nature_col = c4.selectbox("Natureza (opcional)", optional, index=optional.index(nature_guess) if nature_guess in optional else 0)
+                        temp, _ = read_uploaded_table(upload, selected_sheet, header_row=0)
+
+                    if temp.shape[1] < 6:
+                        raise ValueError("O relatório precisa ter pelo menos as colunas A até F.")
+
                     normalized = pd.DataFrame({
-                        "numero_nf": temp[nf_col].map(normalized_nf),
-                        "status": temp[status_col].fillna("").astype(str).str.strip(),
-                        "data_pre_nota": pd.to_datetime(temp[date_col], errors="coerce", dayfirst=True).dt.date,
-                        "natureza": temp[nature_col].fillna("").astype(str).str.strip().str.upper() if nature_col != "(não usar)" else "",
+                        "data_pre_nota": pd.to_datetime(temp.iloc[:, 0], errors="coerce", dayfirst=True).dt.date,
+                        "numero_nf": temp.iloc[:, 2].map(normalized_nf),
+                        "cnpj": temp.iloc[:, 4].map(digits_only),
+                        "status": temp.iloc[:, 5].fillna("").astype(str).str.strip(),
                     })
-                    normalized = normalized[normalized["numero_nf"].ne("")].copy()
-                    normalized = normalized.sort_values("data_pre_nota", na_position="last").drop_duplicates("numero_nf", keep="last")
-                    statuses = sorted(normalized["status"].loc[lambda x: x.ne("")].unique().tolist())
-                    considered = st.multiselect("Status considerados como pré-nota realizada", statuses, default=statuses)
-                    preview = normalized[normalized["status"].isin(considered)] if considered else normalized.iloc[0:0]
-                    st.dataframe(preview.head(300), use_container_width=True, hide_index=True)
-                    if st.button("Substituir base de pré-notas", type="primary", use_container_width=True, disabled=preview.empty):
-                        st.session_state.pre_notes = preview.reset_index(drop=True)
+                    normalized["status_normalizado"] = normalized["status"].map(normalize_text)
+
+                    only_pre = normalized[normalized["status_normalizado"].eq("PRE-NOTA LANCADA")].copy()
+                    only_pre["cnpj_valido"] = only_pre["cnpj"].map(valid_cnpj)
+                    invalid_rows = only_pre[
+                        only_pre["numero_nf"].eq("") | ~only_pre["cnpj_valido"]
+                    ].copy()
+
+                    preview = only_pre[
+                        only_pre["numero_nf"].ne("") & only_pre["cnpj_valido"]
+                    ].copy()
+                    preview = (
+                        preview.sort_values("data_pre_nota", na_position="last")
+                        .drop_duplicates(["numero_nf", "cnpj"], keep="last")
+                        .drop(columns=["status_normalizado", "cnpj_valido"], errors="ignore")
+                        .reset_index(drop=True)
+                    )
+
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Pré-notas lançadas", len(preview))
+                    m2.metric("Dias com movimento", preview["data_pre_nota"].nunique(dropna=True))
+                    m3.metric("Ignoradas por NF/CNPJ inválido", len(invalid_rows))
+
+                    if not preview.empty:
+                        st.markdown("#### Grupos por dia")
+                        groups = (
+                            preview.groupby("data_pre_nota", dropna=False)
+                            .agg(
+                                quantidade=("numero_nf", "size"),
+                                fornecedores=("cnpj", "nunique"),
+                            )
+                            .reset_index()
+                            .sort_values("data_pre_nota", ascending=False, na_position="last")
+                        )
+                        st.dataframe(
+                            groups,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "data_pre_nota": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                                "quantidade": "Pré-notas",
+                                "fornecedores": "CNPJs",
+                            },
+                        )
+                        st.markdown("#### Detalhamento")
+                        st.dataframe(
+                            preview.sort_values("data_pre_nota", ascending=False, na_position="last"),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "data_pre_nota": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                                "numero_nf": "NF",
+                                "cnpj": "CNPJ",
+                                "status": "Status",
+                            },
+                        )
+
+                    if not invalid_rows.empty:
+                        st.warning(
+                            "Há registros com status Pré-nota lançada sem NF válida ou CNPJ válido. "
+                            "Eles não serão usados na validação automática."
+                        )
+
+                    if st.button(
+                        "Substituir base de pré-notas",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=preview.empty,
+                    ):
+                        st.session_state.pre_notes = preview.copy()
                         if db.configured():
                             rows = []
                             for _, row in preview.iterrows():
                                 rows.append({
                                     "numero_nf": row["numero_nf"],
+                                    "cnpj": row["cnpj"],
                                     "status": row["status"],
-                                    "data_pre_nota": row["data_pre_nota"].isoformat() if isinstance(row["data_pre_nota"], date) else None,
-                                    "natureza": row["natureza"],
+                                    "data_pre_nota": row["data_pre_nota"].isoformat()
+                                    if isinstance(row["data_pre_nota"], date) else None,
+                                    "natureza": "",
                                 })
                             result = db.replace_pre_notes(rows, upload.name)
-                            st.success(f"Base de pré-notas atualizada: {int(result.get('registros', len(rows)))} registro(s).")
+                            st.success(
+                                f"Base de pré-notas atualizada: "
+                                f"{int(result.get('registros', len(rows)))} registro(s) válidos."
+                            )
                         else:
                             st.success("Base de pré-notas aplicada nesta sessão.")
                         if not st.session_state.analysis.empty:
@@ -895,59 +1036,162 @@ elif page == "Configurações":
                         processed = pd.DataFrame(st.session_state.history)
                 else:
                     processed = pd.DataFrame(st.session_state.history)
-                processed_numbers = set(processed.get("numero_nf", pd.Series(dtype=str)).map(normalized_nf).tolist()) if not processed.empty else set()
-                pre["validacao_documento"] = pre["numero_nf"].map(lambda n: "PROCESSADA" if normalized_nf(n) in processed_numbers else "PENDENTE DE DOCUMENTO")
+
+                processed_keys = set()
+                if not processed.empty:
+                    for _, prow in processed.iterrows():
+                        key = pre_note_key(
+                            prow.get("numero_nf"),
+                            prow.get("cnpj_fornecedor"),
+                        )
+                        if key:
+                            processed_keys.add(key)
+
+                pre["validacao_documento"] = pre.apply(
+                    lambda row: "PROCESSADA"
+                    if pre_note_key(row.get("numero_nf"), row.get("cnpj")) in processed_keys
+                    else "PENDENTE DE DOCUMENTO",
+                    axis=1,
+                )
+
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Pré-notas na base", len(pre))
                 c2.metric("Processadas", int(pre["validacao_documento"].eq("PROCESSADA").sum()))
                 c3.metric("Pendentes", int(pre["validacao_documento"].eq("PENDENTE DE DOCUMENTO").sum()))
-                st.dataframe(pre, use_container_width=True, hide_index=True)
-                st.download_button("Exportar validação para Excel", excel_bytes(pre, "Validação Pré-notas"), file_name=f"validacao_pre_notas_{now_local():%d%m%Y}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                st.caption("Validação feita por NF + CNPJ. A data não interfere na correspondência.")
+                st.dataframe(
+                    pre.sort_values("data_pre_nota", ascending=False, na_position="last"),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                st.download_button(
+                    "Exportar validação para Excel",
+                    excel_bytes(pre, "Validação Pré-notas"),
+                    file_name=f"validacao_pre_notas_{now_local():%d%m%Y}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
 
 
         with feed_mrp:
             st.markdown("### Priorização por impacto no MRP")
-            st.write("O cruzamento usa Código do Produto entre o relatório MRP e o relatório de itens das NFs. Depois, o número da NF vincula a prioridade aos PDFs processados.")
-            mrp_file = st.file_uploader("Relatório MRP — produtos urgentes", type=["csv", "xlsx"], key="mrp_priority")
-            nf_items_file = st.file_uploader("Relatório de NFs — produto + número da NF", type=["csv", "xlsx"], key="nf_items_priority")
+            st.write(
+                "Formato validado: **Materiais C = Código do produto**. "
+                "No relatório de Entradas/NFs: **D = Número da NF, F = Fornecedor e L = Código do material**. "
+                "Códigos e NFs são normalizados removendo zeros à esquerda."
+            )
+            mrp_file = st.file_uploader(
+                "Planilha de Materiais",
+                type=["csv", "xlsx", "xls", "xlt", "xltx"],
+                key="mrp_priority",
+            )
+            nf_items_file = st.file_uploader(
+                "Relatório de Entradas / NFs",
+                type=["csv", "xlsx", "xls", "xlt", "xltx"],
+                key="nf_items_priority",
+            )
+
             if mrp_file and nf_items_file:
                 try:
-                    mrp, mrp_sheets = read_uploaded_table(mrp_file)
-                    nf_items, nf_sheets = read_uploaded_table(nf_items_file)
-                    if mrp_sheets:
-                        ms = st.selectbox("Aba MRP", mrp_sheets, key="mrp_priority_sheet")
-                        mrp, _ = read_uploaded_table(mrp_file, ms)
-                    if nf_sheets:
-                        ns = st.selectbox("Aba relatório NFs", nf_sheets, key="nf_priority_sheet")
-                        nf_items, _ = read_uploaded_table(nf_items_file, ns)
-                    mcols, ncols = list(mrp.columns), list(nf_items.columns)
-                    c1, c2, c3 = st.columns(3)
-                    mg = guess_column(mcols, ["CODIGO", "COD MATERIAL", "PRODUTO"])
-                    ng = guess_column(ncols, ["CODIGO", "COD MATERIAL", "PRODUTO"])
-                    nfg = guess_column(ncols, ["DOCUMENTO", "NF", "NOTA"])
-                    mrp_product = c1.selectbox("Código do produto no MRP", mcols, index=mcols.index(mg) if mg in mcols else 0)
-                    nf_product = c2.selectbox("Código do produto no relatório de NFs", ncols, index=ncols.index(ng) if ng in ncols else 0)
-                    nf_number = c3.selectbox("Número da NF no relatório de NFs", ncols, index=ncols.index(nfg) if nfg in ncols else 0)
-                    urgent = set(mrp[mrp_product].fillna("").astype(str).str.strip().loc[lambda x: x.ne("")].tolist())
-                    base = nf_items[[nf_product, nf_number]].copy()
-                    base["produto"] = base[nf_product].fillna("").astype(str).str.strip()
-                    base["numero_nf"] = base[nf_number].map(normalized_nf)
-                    hits = base[base["produto"].isin(urgent) & base["numero_nf"].ne("")].copy()
-                    summary = hits.groupby("numero_nf", as_index=False).agg(itens_urgentes=("produto", "nunique"))
-                    st.dataframe(summary, use_container_width=True, hide_index=True)
-                    st.caption(f"{len(urgent)} produto(s) urgentes no MRP → {len(summary)} NF(s) com ao menos um item urgente.")
-                    if st.button("Aplicar prioridades ao processamento", type="primary", use_container_width=True):
-                        st.session_state.priority_nf_numbers = set(summary["numero_nf"].astype(str).tolist())
+                    mrp, mrp_sheets = read_uploaded_table(mrp_file, header_row=0)
+                    if mrp_sheets and len(mrp_sheets) > 1:
+                        ms = st.selectbox("Aba Materiais", mrp_sheets, key="mrp_priority_sheet")
+                        mrp, _ = read_uploaded_table(mrp_file, ms, header_row=0)
+
+                    # Os relatórios de Entradas validados possuem uma linha-título e cabeçalho na linha 2.
+                    nf_items, nf_sheets = read_uploaded_table(nf_items_file, header_row=1)
+                    if nf_sheets and len(nf_sheets) > 1:
+                        ns = st.selectbox("Aba relatório de Entradas", nf_sheets, key="nf_priority_sheet")
+                        nf_items, _ = read_uploaded_table(nf_items_file, ns, header_row=1)
+
+                    if mrp.shape[1] < 3:
+                        raise ValueError("A planilha de Materiais precisa conter a coluna C.")
+                    if nf_items.shape[1] < 12:
+                        raise ValueError("O relatório de Entradas precisa conter pelo menos as colunas A até L.")
+
+                    urgent = {
+                        normalized_material_code(x)
+                        for x in mrp.iloc[:, 2].tolist()
+                        if normalized_material_code(x)
+                    }
+
+                    base = pd.DataFrame({
+                        "numero_nf": nf_items.iloc[:, 3].map(normalized_nf),
+                        "fornecedor_entrada": nf_items.iloc[:, 5].fillna("").astype(str).str.strip(),
+                        "produto": nf_items.iloc[:, 11].map(normalized_material_code),
+                    })
+                    base = base[
+                        base["numero_nf"].ne("")
+                        & base["produto"].ne("")
+                        & base["fornecedor_entrada"].ne("")
+                    ].copy()
+
+                    hits = base[base["produto"].isin(urgent)].copy()
+                    hits["fornecedor_padrao"] = hits["fornecedor_entrada"].map(standard_supplier_name)
+
+                    summary = (
+                        hits.groupby(
+                            ["numero_nf", "fornecedor_padrao", "fornecedor_entrada"],
+                            as_index=False,
+                        )
+                        .agg(itens_urgentes=("produto", "nunique"))
+                        .sort_values(["itens_urgentes", "numero_nf"], ascending=[False, True])
+                    )
+
+                    st.dataframe(
+                        summary,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "numero_nf": "NF",
+                            "fornecedor_padrao": "Fornecedor validado",
+                            "fornecedor_entrada": "Fornecedor do relatório",
+                            "itens_urgentes": "Itens MRP",
+                        },
+                    )
+                    st.caption(
+                        f"{len(urgent)} produto(s) na planilha de Materiais → "
+                        f"{len(hits)} linha(s) correspondentes → "
+                        f"{summary['numero_nf'].nunique() if not summary.empty else 0} NF(s)."
+                    )
+
+                    if st.button(
+                        "Aplicar prioridades ao processamento",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=summary.empty,
+                    ):
+                        keys = set()
+                        for _, row in summary.iterrows():
+                            for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
+                                key = priority_key(row["numero_nf"], supplier_name)
+                                if key:
+                                    keys.add(key)
+
+                        st.session_state.priority_nf_keys = keys
+                        st.session_state.priority_nf_numbers = set(
+                            summary["numero_nf"].astype(str).tolist()
+                        )
+
                         if not st.session_state.analysis.empty:
                             st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
-                        st.success("Prioridades aplicadas. As NFs identificadas serão separadas em ZIP de PRIORIDADE dentro da respectiva natureza.")
+
+                        st.success(
+                            "Prioridades aplicadas usando Código do Material + NF + Fornecedor. "
+                            "As NFs identificadas serão separadas no ZIP de PRIORIDADE."
+                        )
                         st.rerun()
                 except Exception as exc:
                     st.error(f"Falha no cruzamento dos relatórios: {exc}")
+
             if st.session_state.priority_nf_numbers:
-                st.info(f"Há {len(st.session_state.priority_nf_numbers)} NF(s) marcadas como prioridade nesta sessão.")
+                st.info(
+                    f"Há {len(st.session_state.priority_nf_numbers)} NF(s) candidatas à prioridade. "
+                    "A confirmação no PDF também considera o fornecedor."
+                )
                 if st.button("Limpar prioridades atuais"):
                     st.session_state.priority_nf_numbers = set()
+                    st.session_state.priority_nf_keys = set()
                     if not st.session_state.analysis.empty:
                         st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
                     st.rerun()
@@ -955,84 +1199,149 @@ elif page == "Configurações":
 
         with feed_sup:
             st.markdown("### Base de fornecedores")
-            st.write("A base é alimentada exclusivamente por planilha. Uma nova carga validada substitui integralmente a base anterior.")
+            st.write(
+                "Formato validado do relatório FORNECEDORES: "
+                "**A = Código, B = Loja, C = Razão Social, D = Nome Fantasia, K = Tipo e O = CNPJ/CPF**. "
+                "O CNPJ é a chave principal; a Razão Social é o nome padrão dos PDFs e o Nome Fantasia é usado como alias."
+            )
+
             current = supplier_dataframe(st.session_state.suppliers)
             c1, c2, c3 = st.columns(3)
             c1.metric("Fornecedores atuais", len(current))
             c2.metric("CNPJs válidos", int(current["cnpj"].map(valid_cnpj).sum()) if not current.empty else 0)
             c3.metric("Origem", "Supabase" if db.configured() and st.session_state.db_synced else "Sessão/local")
-            if not current.empty:
-                st.dataframe(current.head(200), use_container_width=True, hide_index=True)
-                st.download_button("Exportar base atual", excel_bytes(current, "Fornecedores"), file_name=f"fornecedores_nf_{now_local():%d%m%Y}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
 
-            upload = st.file_uploader("Nova base de fornecedores (CSV ou XLSX)", type=["csv", "xlsx"], key="supplier_import")
+            if not current.empty:
+                show_cols = [
+                    x for x in
+                    ["codigo", "loja", "cnpj", "nome_padrao", "nome_fantasia", "tipo", "aliases"]
+                    if x in current.columns
+                ]
+                st.dataframe(current[show_cols].head(300), use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Exportar base atual",
+                    excel_bytes(current, "Fornecedores"),
+                    file_name=f"fornecedores_nf_{now_local():%d%m%Y}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+
+            upload = st.file_uploader(
+                "Relatório FORNECEDORES",
+                type=["csv", "xlsx", "xls", "xlt", "xltx"],
+                key="supplier_import",
+            )
             if upload:
                 try:
-                    raw, sheets = read_uploaded_table(upload)
-                    if sheets:
+                    # O relatório validado possui uma linha-título e cabeçalho na linha 2.
+                    raw, sheets = read_uploaded_table(upload, header_row=1)
+                    if sheets and len(sheets) > 1:
                         selected = st.selectbox("Aba da planilha", sheets, key="supplier_sheet")
-                        raw, _ = read_uploaded_table(upload, selected)
-                    columns = list(raw.columns)
-                    g_cnpj = guess_column(columns, ["CNPJ", "CNPJCPF", "CGC"])
-                    g_name = guess_column(columns, ["NOME", "RAZAO SOCIAL", "FORNECEDOR", "NOME FANTASIA"])
-                    a, b, c = st.columns(3)
-                    cnpj_col = a.selectbox("Coluna CNPJ", columns, index=columns.index(g_cnpj) if g_cnpj in columns else 0)
-                    name_col = b.selectbox("Coluna nome padrão", columns, index=columns.index(g_name) if g_name in columns else 0)
-                    optional = ["(não usar)"] + columns
-                    alias_col = c.selectbox("Aliases (opcional)", optional)
+                        raw, _ = read_uploaded_table(upload, selected, header_row=1)
+
+                    if raw.shape[1] < 15:
+                        raise ValueError("O relatório FORNECEDORES precisa conter pelo menos as colunas A até O.")
+
                     incoming = pd.DataFrame({
-                        "cnpj": raw[cnpj_col].map(digits_only),
-                        "nome_padrao": raw[name_col].fillna("").astype(str).str.strip(),
-                        "aliases": raw[alias_col].fillna("").astype(str).str.strip() if alias_col != "(não usar)" else "",
-                        "ativo": True,
+                        "codigo": raw.iloc[:, 0].fillna("").astype(str).str.strip(),
+                        "loja": raw.iloc[:, 1].fillna("").astype(str).str.strip(),
+                        "nome_padrao": raw.iloc[:, 2].fillna("").astype(str).str.strip(),
+                        "nome_fantasia": raw.iloc[:, 3].fillna("").astype(str).str.strip(),
+                        "tipo": raw.iloc[:, 10].fillna("").astype(str).str.strip(),
+                        "cnpj": raw.iloc[:, 14].map(digits_only),
                     })
+                    incoming["aliases"] = incoming["nome_fantasia"]
+                    incoming["ativo"] = True
                     incoming["cnpj_valido"] = incoming["cnpj"].map(valid_cnpj)
                     incoming["nome_valido"] = incoming["nome_padrao"].ne("")
-                    invalid = incoming[~incoming["cnpj_valido"] | ~incoming["nome_valido"]].copy()
-                    valid = incoming[incoming["cnpj_valido"] & incoming["nome_valido"]].copy()
+
+                    invalid = incoming[
+                        ~incoming["cnpj_valido"] | ~incoming["nome_valido"]
+                    ].copy()
+                    valid = incoming[
+                        incoming["cnpj_valido"] & incoming["nome_valido"]
+                    ].copy()
+
                     duplicate_rows = valid[valid["cnpj"].duplicated(keep=False)].copy()
                     conflict_cnpjs = []
                     for cnpj, group in duplicate_rows.groupby("cnpj"):
-                        if group["nome_padrao"].str.upper().nunique() > 1:
+                        if group["nome_padrao"].map(normalize_text).nunique() > 1:
                             conflict_cnpjs.append(cnpj)
-                    clean = valid[~valid["cnpj"].isin(conflict_cnpjs)].drop_duplicates("cnpj", keep="last")
+
+                    clean = (
+                        valid[~valid["cnpj"].isin(conflict_cnpjs)]
+                        .drop_duplicates("cnpj", keep="last")
+                        .copy()
+                    )
+
                     s1, s2, s3, s4 = st.columns(4)
-                    s1.metric("Linhas", len(incoming))
-                    s2.metric("Válidas", len(clean))
-                    s3.metric("Duplicidades", int(len(valid) - valid["cnpj"].nunique()))
-                    s4.metric("Inválidas/conflito", len(invalid) + len(conflict_cnpjs))
+                    s1.metric("Linhas do relatório", len(incoming))
+                    s2.metric("CNPJs válidos", len(clean))
+                    s3.metric("Duplicidades equivalentes", int(len(valid) - valid["cnpj"].nunique()))
+                    s4.metric("Ignoradas", len(invalid))
+
                     if not invalid.empty:
-                        st.warning("Existem linhas com CNPJ inválido ou nome vazio. Corrija a planilha antes da substituição.")
-                        st.dataframe(invalid.head(200), use_container_width=True, hide_index=True)
+                        st.info(
+                            "Linhas sem CNPJ válido, CPF, placeholders ou Razão Social vazia serão ignoradas. "
+                            "Isso não bloqueia a carga."
+                        )
+
                     if conflict_cnpjs:
-                        st.error("Existem CNPJs duplicados associados a nomes diferentes. A carga fica bloqueada até a correção.")
-                        st.dataframe(duplicate_rows[duplicate_rows["cnpj"].isin(conflict_cnpjs)], use_container_width=True, hide_index=True)
+                        st.error(
+                            f"Há {len(conflict_cnpjs)} CNPJ(s) vinculados a Razões Sociais diferentes. "
+                            "Esses conflitos precisam ser tratados antes de substituir a base."
+                        )
+                        st.dataframe(
+                            duplicate_rows[duplicate_rows["cnpj"].isin(conflict_cnpjs)],
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
                     st.markdown("#### Prévia da nova base")
-                    st.dataframe(clean.head(300), use_container_width=True, hide_index=True)
-                    can_replace = invalid.empty and not conflict_cnpjs and not clean.empty
-                    if st.button("SUBSTITUIR BASE DE FORNECEDORES", type="primary", use_container_width=True, disabled=not can_replace):
-                        final = supplier_dataframe(clean[["cnpj", "nome_padrao", "aliases", "ativo"]])
-                        stats = {"total": len(incoming), "validos": len(final), "invalidos": len(invalid) + len(conflict_cnpjs), "duplicados": int(len(valid) - valid["cnpj"].nunique())}
+                    st.dataframe(
+                        clean[
+                            ["codigo", "loja", "cnpj", "nome_padrao", "nome_fantasia", "tipo", "aliases"]
+                        ].head(500),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    can_replace = not conflict_cnpjs and not clean.empty
+                    if st.button(
+                        "SUBSTITUIR BASE DE FORNECEDORES",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=not can_replace,
+                    ):
+                        final = supplier_dataframe(
+                            clean[
+                                [
+                                    "cnpj", "nome_padrao", "aliases", "ativo",
+                                    "codigo", "loja", "nome_fantasia", "tipo",
+                                ]
+                            ]
+                        )
+                        stats = {
+                            "total": len(incoming),
+                            "validos": len(final),
+                            "invalidos": len(invalid),
+                            "duplicados": int(len(valid) - valid["cnpj"].nunique()),
+                        }
                         if db.configured():
                             result = db.replace_suppliers(final.to_dict("records"), upload.name, stats)
                             st.session_state.suppliers = final
-                            st.success(f"Base substituída com sucesso: {int(result.get('fornecedores', len(final)))} fornecedor(es).")
+                            st.success(
+                                f"Base substituída com sucesso: "
+                                f"{int(result.get('fornecedores', len(final)))} fornecedor(es)."
+                            )
                         else:
                             st.session_state.suppliers = final
-                            st.warning("Base substituída somente nesta sessão porque a chave do Supabase não está configurada.")
+                            st.warning(
+                                "Base substituída somente nesta sessão porque o Supabase não está configurado."
+                            )
                         st.rerun()
                 except Exception as exc:
-                    st.error(f"Falha ao validar a planilha: {exc}")
-
-            if db.configured():
-                try:
-                    imports = pd.DataFrame(db.list_supplier_imports())
-                    if not imports.empty:
-                        st.markdown("#### Últimas importações")
-                        st.dataframe(imports, use_container_width=True, hide_index=True)
-                except Exception:
-                    pass
-
+                    st.error(f"Falha ao interpretar base de fornecedores: {exc}")
 
 
     with tab_usuarios:
