@@ -1970,6 +1970,8 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     pre_supplier_scores = []
     resolved_natures = []
     nature_sources = []
+    resolved_crs = []
+    resolved_desc_crs = []
 
     for _, row in out.iterrows():
         pre_match = match_document_to_pre_note(row)
@@ -1993,15 +1995,20 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
 
         current_nature = str(row.get("natureza") or "").strip().upper()
         nature_source = str(row.get("natureza_origem") or "").strip()
+        current_cr = str(row.get("cr") or "").strip()
+        current_desc_cr = str(row.get("desc_cr") or "").strip()
 
-        if not current_nature:
-            loaded_nature, loaded_source = nature_from_nf_load(
-                pre_row,
-                row,
-            )
-            if loaded_nature:
-                current_nature = loaded_nature
-                nature_source = loaded_source
+        operational = operational_fields_from_nf_load(
+            pre_row,
+            row,
+        )
+        if operational.get("natureza") and not current_nature:
+            current_nature = str(operational["natureza"]).strip().upper()
+            nature_source = str(operational.get("source") or "CARGA NF")
+        if operational.get("cr"):
+            current_cr = str(operational["cr"]).strip()
+        if operational.get("desc_cr"):
+            current_desc_cr = str(operational["desc_cr"]).strip()
 
         priority_flags.append(priority)
         pre_status.append(str(pre_row.get("status") or "") if pre_row else "")
@@ -2016,6 +2023,8 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
         )
         resolved_natures.append(current_nature)
         nature_sources.append(nature_source)
+        resolved_crs.append(current_cr)
+        resolved_desc_crs.append(current_desc_cr)
 
     out["prioridade_mrp"] = priority_flags
     out["pre_nota_status"] = pre_status
@@ -2024,6 +2033,8 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     out["vinculo_fornecedor_score"] = pre_supplier_scores
     out["natureza"] = resolved_natures
     out["natureza_origem"] = nature_sources
+    out["cr"] = resolved_crs
+    out["desc_cr"] = resolved_desc_crs
     return out
 
 
@@ -2048,7 +2059,20 @@ def make_zip_outputs(df: pd.DataFrame):
                 if not final_name or final_name in used:
                     raise ValueError(f"Nome final vazio ou duplicado: {final_name}")
                 used.add(final_name)
-                archive.writestr(final_name, item["bytes"])
+
+                final_pdf = apply_operational_stamp(
+                    item["bytes"],
+                    data_chegada=(
+                        row.get("pre_nota_em")
+                        or row.get("pre_nota_data")
+                    ),
+                    cr=row.get("cr"),
+                    desc_cr=row.get("desc_cr"),
+                    natureza=row.get("natureza"),
+                    recebido_por=operator,
+                )
+                archive.writestr(final_name, final_pdf)
+
                 manifest.append(
                     {
                         "lote_id": batch,
