@@ -88,6 +88,7 @@ def init():
         "pdfs": {},
         "zip_outputs": {},
         "history": [],
+        "current_test_manifest": [],
         "pre_notes": pd.DataFrame(),
         "priority_nf_numbers": set(),
         "priority_nf_keys": set(),
@@ -125,7 +126,7 @@ def init():
 
 init()
 if not SAVE_NF_HISTORY:
-    # Evita que registros temporários de testes anteriores permaneçam na sessão.
+    # Histórico oficial permanece vazio durante os testes.
     st.session_state.history = []
 cfg = st.session_state.cfg
 
@@ -804,9 +805,9 @@ def save_config_or_session(new_cfg: dict) -> tuple[bool, str]:
 
 
 def current_process_records_for_tests() -> pd.DataFrame:
-    """Histórico só existe quando a persistência oficial estiver habilitada."""
+    """Em testes, considera somente a carga atual; em produção, usa o histórico oficial."""
     if not SAVE_NF_HISTORY:
-        return pd.DataFrame()
+        return pd.DataFrame(st.session_state.get("current_test_manifest") or [])
     if db.configured():
         try:
             return pd.DataFrame(db.list_process_records())
@@ -828,8 +829,11 @@ def render_file_processing():
             st.session_state.analysis = pd.DataFrame()
             st.session_state.pdfs = {}
             st.session_state.zip_outputs = {}
+            st.session_state.current_test_manifest = []
             st.rerun()
         if analyze:
+            # Nova carga de teste substitui a anterior; não acumulamos histórico.
+            st.session_state.current_test_manifest = []
             rows, store = [], {}
             progress = st.progress(0, text="Analisando documentos...")
             for i, file in enumerate(files, 1):
@@ -1071,9 +1075,12 @@ def render_file_processing():
                         else:
                             st.success("ZIPs criados. Histórico mantido nesta sessão; nenhum PDF foi salvo em banco.")
                     else:
+                        # Mantém somente a carga atual para testar a conferência.
+                        # Ao processar uma nova carga, esta referência é substituída.
+                        st.session_state.current_test_manifest = manifest
                         st.success(
-                            "ZIPs criados em modo de testes. Nenhum registro desta execução foi salvo "
-                            "na sessão nem no Supabase."
+                            "ZIPs criados em modo de testes. A conferência usa apenas esta carga atual; "
+                            "nenhum histórico foi acumulado e nada foi gravado no Supabase."
                         )
                 except Exception as exc:
                     st.error(f"Falha ao gerar ZIP: {exc}")
@@ -1156,7 +1163,10 @@ st.markdown(
 
 if page == "Dashboard":
     st.markdown('<div class="section-title">Dashboard operacional</div>', unsafe_allow_html=True)
-    if db.configured():
+    if not SAVE_NF_HISTORY:
+        records = pd.DataFrame(st.session_state.get("current_test_manifest") or [])
+        st.caption("Modo de testes: Dashboard considera somente a carga atual e ignora o histórico do banco.")
+    elif db.configured():
         try:
             records = pd.DataFrame(db.list_process_records())
         except Exception as exc:
@@ -1323,16 +1333,15 @@ elif page == "Pendências":
     pend_pre_tab, pend_mrp_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP", "Processamento de arquivos"])
 
     with pend_pre_tab:
-        if not SAVE_NF_HISTORY:
+        if not SAVE_NF_HISTORY and pending_records.empty:
             st.info(
-                "A conferência histórica de pré-notas está temporariamente desabilitada durante os testes. "
-                "Nenhum processamento anterior ou desta sessão será considerado aqui. "
-                "Ela voltará automaticamente quando o salvamento do histórico no banco for reativado."
+                "Modo de testes: nenhum histórico anterior é considerado. "
+                "Processe a nova carga de PDFs para que esta aba compare somente o lote atual."
             )
             if not pre_base.empty:
                 st.caption(
-                    f"Base atual de pré-notas carregada: {len(pre_base)} registro(s). "
-                    "A base continua disponível para os testes, mas não é comparada com histórico de PDFs."
+                    f"Base atual de pré-notas: {len(pre_base)} registro(s). "
+                    "Ela será comparada apenas com a próxima carga processada nesta sessão."
                 )
         elif pre_base.empty:
             st.info("A base de pré-notas ainda não foi carregada. Use Configurações > Alimentação > Validação Pré-notas.")
