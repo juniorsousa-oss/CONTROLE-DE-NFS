@@ -6,7 +6,7 @@ import json
 import re
 import uuid
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -92,7 +92,11 @@ def init():
         "pre_notes": pd.DataFrame(),
         "priority_nf_numbers": set(),
         "priority_nf_keys": set(),
+        "priority_nf_doc_keys": set(),
         "mrp_priority_summary": pd.DataFrame(),
+        "mrp_impact_detail": pd.DataFrame(),
+        "mrp_import_preview_detail": pd.DataFrame(),
+        "mrp_import_preview_summary": pd.DataFrame(),
         "mrp_priority_stats": {},
         "mrp_priority_files": (),
         "pre_import_preview": pd.DataFrame(),
@@ -525,209 +529,592 @@ def standard_supplier_name(name: object) -> str:
     return str(matched.get("nome_padrao") or raw).strip()
 
 
+
+def _supplier_code_norm(value: object) -> str:
+    digits = digits_only(value)
+    return (digits.lstrip("0") or "0") if digits else ""
+
+
+def _join_unique(values) -> str:
+    out = []
+    seen = set()
+    for value in values:
+        text_value = str(value or "").strip()
+        if not text_value or text_value.lower() == "nan" or text_value in seen:
+            continue
+        seen.add(text_value)
+        out.append(text_value)
+    return ", ".join(out)
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _clean_mrp_materials_cached(raw: bytes, name: str) -> tuple[pd.DataFrame, dict]:
+    suffix = Path(name.lower()).suffix.lower()
+    rows = []
+
+    if suffix in {".xlsx", ".xltx"}:
+        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        try:
+            ws = wb[wb.sheetnames[0]]
+            for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                if idx == 1:
+                    continue
+                projeto = row[1] if len(row) > 1 else None
+                produto = row[2] if len(row) > 2 else None
+                data_cm = row[5] if len(row) > 5 else None
+                rows.append((projeto, produto, data_cm))
+        finally:
+            wb.close()
+        base = pd.DataFrame(rows, columns=["projeto", "produto", "data_cm"])
+    else:
+        temp, _ = _read_uploaded_table_cached(raw, name, None, None)
+        if temp.shape[1] < 6:
+            raise ValueError("O relatório de Materiais precisa conter pelo menos as colunas A até F.")
+        base = pd.DataFrame({
+            "projeto": temp.iloc[:, 1],
+            "produto": temp.iloc[:, 2],
+            "data_cm": temp.iloc[:, 5],
+        })
+
+    base["produto"] = base["produto"].map(normalized_material_code)
+    base["projeto"] = (
+        base["projeto"].fillna("").astype(str).str.replace(r"\.0$", "", regex=True).str.strip()
+    )
+    base["data_cm"] = pd.to_datetime(base["data_cm"], errors="coerce", dayfirst=True).dt.date
+
+    total_raw = len(base)
+    invalid = int((base["produto"].eq("") | base["data_cm"].isna()).sum())
+    base = base[base["produto"].ne("") & base["data_cm"].notna()].copy()
+
+    cleaned = (
+        base.groupby(["produto", "data_cm"], as_index=False, dropna=False)
+        .agg(
+            ops=("projeto", _join_unique),
+            linhas_origem=("projeto", "size"),
+        )
+        .sort_values(["produto", "data_cm"], ascending=[True, True])
+        .reset_index(drop=True)
+    )
+
+    stats = {
+        "linhas_origem": total_raw,
+        "invalidas": invalid,
+        "linhas_limpas": len(cleaned),
+        "produtos": int(cleaned["produto"].nunique()) if not cleaned.empty else 0,
+        "linhas_unificadas": max(0, total_raw - invalid - len(cleaned)),
+    }
+    return cleaned, stats
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _clean_mrp_nf_cached(
+    raw: bytes,
+    name: str,
+    reference_date_iso: str,
+) -> tuple[pd.DataFrame, dict]:
+    reference_date = date.fromisoformat(reference_date_iso)
+    cutoff = reference_date - timedelta(days=29)
+    suffix = Path(name.lower()).suffix.lower()
+
+    columns = [
+        "data_pre_nota", "numero_nf", "fornecedor_codigo", "fornecedor",
+        "cr", "desc_cr", "natureza", "produto", "descricao", "tes",
+    ]
+    rows = []
+    total_raw = 0
+    dropped_tes = 0
+    dropped_date = 0
+    invalid_date = 0
+
+    def accept(values):
+        nonlocal total_raw, dropped_tes, dropped_date, invalid_date
+        total_raw += 1
+
+        tes = str(values[9] or "").strip()
+        if not re.fullmatch(r"\d{3}", tes):
+            dropped_tes += 1
+            return
+
+        parsed = pd.to_datetime(values[0], errors="coerce", dayfirst=True)
+        if pd.isna(parsed):
+            invalid_date += 1
+            return
+
+        op_date = parsed.date()
+        if op_date < cutoff or op_date > reference_date:
+            dropped_date += 1
+            return
+
+        numero_nf = normalized_nf(values[1])
+        produto = normalized_material_code(values[7])
+        fornecedor_codigo = _supplier_code_norm(values[2])
+        fornecedor = str(values[3] or "").strip()
+
+        if not numero_nf or not produto or not fornecedor_codigo:
+            return
+
+        rows.append({
+            "data_pre_nota": op_date,
+            "numero_nf": numero_nf,
+            "fornecedor_codigo": fornecedor_codigo,
+            "fornecedor": fornecedor,
+            "cr": str(values[4] or "").strip(),
+            "desc_cr": str(values[5] or "").strip(),
+            "natureza": str(values[6] or "").strip(),
+            "produto": produto,
+            "descricao": str(values[8] or "").strip(),
+            "tes": tes,
+        })
+
+    if suffix in {".xlsx", ".xltx"}:
+        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        try:
+            ws = wb[wb.sheetnames[0]]
+            for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                if idx <= 2:
+                    continue
+                if len(row) < 31:
+                    continue
+                accept((
+                    row[0], row[3], row[4], row[5], row[6],
+                    row[7], row[8], row[11], row[12], row[30],
+                ))
+        finally:
+            wb.close()
+    else:
+        temp, _ = _read_uploaded_table_cached(raw, name, None, None)
+        if temp.shape[1] < 31:
+            raise ValueError("O relatório de NFs precisa conter pelo menos as colunas A até AE.")
+        for row in temp.itertuples(index=False, name=None):
+            accept((
+                row[0], row[3], row[4], row[5], row[6],
+                row[7], row[8], row[11], row[12], row[30],
+            ))
+
+    base = pd.DataFrame(rows, columns=columns)
+    stats = {
+        "linhas_origem": total_raw,
+        "linhas_30_dias_tes": len(base),
+        "descartadas_tes": dropped_tes,
+        "descartadas_data": dropped_date,
+        "datas_invalidas": invalid_date,
+        "inicio_periodo": cutoff,
+        "fim_periodo": reference_date,
+    }
+    return base, stats
+
+
+def _supplier_cnpj_lookup(entries: pd.DataFrame) -> tuple[pd.Series, int]:
+    suppliers = supplier_dataframe(st.session_state.suppliers).copy()
+    if suppliers.empty:
+        return pd.Series([""] * len(entries), index=entries.index), len(entries)
+
+    suppliers = suppliers[suppliers["ativo"]].copy()
+    suppliers["_codigo_norm"] = suppliers["codigo"].map(_supplier_code_norm)
+    suppliers = suppliers[
+        suppliers["_codigo_norm"].ne("")
+        & suppliers["cnpj"].map(valid_cnpj)
+    ].copy()
+
+    by_code = {
+        code: group.copy()
+        for code, group in suppliers.groupby("_codigo_norm", sort=False)
+    }
+
+    cache = {}
+    unresolved = 0
+    result = []
+
+    for _, row in entries.iterrows():
+        code = _supplier_code_norm(row.get("fornecedor_codigo"))
+        desc = str(row.get("fornecedor") or "").strip()
+        cache_key = (code, normalize_text(desc))
+
+        if cache_key in cache:
+            cnpj = cache[cache_key]
+            result.append(cnpj)
+            if not cnpj:
+                unresolved += 1
+            continue
+
+        group = by_code.get(code)
+        cnpj = ""
+        if group is not None and not group.empty:
+            unique_docs = group["cnpj"].dropna().astype(str).unique().tolist()
+            if len(unique_docs) == 1:
+                cnpj = unique_docs[0]
+            else:
+                matched = match_supplier("", desc, group)
+                matched_name = str(matched.get("nome_padrao") or "").strip()
+                if matched_name:
+                    hit = group[group["nome_padrao"].astype(str).eq(matched_name)]
+                    hit_docs = hit["cnpj"].dropna().astype(str).unique().tolist()
+                    if len(hit_docs) == 1:
+                        cnpj = hit_docs[0]
+
+        cache[cache_key] = cnpj
+        result.append(cnpj)
+        if not cnpj:
+            unresolved += 1
+
+    return pd.Series(result, index=entries.index), unresolved
+
+
+def _build_mrp_impact(
+    materials: pd.DataFrame,
+    entries: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    if entries.empty:
+        empty_detail = pd.DataFrame(columns=[
+            "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
+            "produto", "descricao", "prioridade", "ops", "data_cm",
+        ])
+        empty_summary = pd.DataFrame(columns=[
+            "nf_cnpj", "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
+            "prioridade", "ops", "data_cm", "itens_impacto",
+        ])
+        return empty_detail, empty_summary, {"cnpj_nao_localizado": 0}
+
+    material_priority = (
+        materials.sort_values(["produto", "data_cm"], ascending=[True, True])
+        .drop_duplicates("produto", keep="first")
+        [["produto", "data_cm", "ops"]]
+        .copy()
+    )
+
+    detail = entries.merge(
+        material_priority,
+        on="produto",
+        how="left",
+        validate="many_to_one",
+    )
+    detail["prioridade"] = detail["data_cm"].notna().map({True: "ALTA", False: "BAIXA"})
+    detail["ops"] = detail["ops"].fillna("").astype(str)
+
+    cnpj_series, unresolved = _supplier_cnpj_lookup(detail)
+    detail["cnpj"] = cnpj_series.map(digits_only)
+    detail["nf_cnpj"] = detail.apply(
+        lambda row: (
+            f"{normalized_nf(row.get('numero_nf'))}_{digits_only(row.get('cnpj'))}"
+            if normalized_nf(row.get("numero_nf")) and digits_only(row.get("cnpj"))
+            else ""
+        ),
+        axis=1,
+    )
+
+    detail = detail[
+        [
+            "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
+            "produto", "descricao", "prioridade", "ops", "data_cm",
+            "nf_cnpj", "fornecedor_codigo", "cr", "desc_cr", "natureza", "tes",
+        ]
+    ].copy()
+
+    summary_rows = []
+    valid_keys = detail[detail["nf_cnpj"].ne("")].copy()
+    for key, group in valid_keys.groupby("nf_cnpj", sort=False):
+        high = group[group["prioridade"].eq("ALTA")].copy()
+        is_high = not high.empty
+        oldest_cm = high["data_cm"].dropna().min() if is_high else None
+        ops = _join_unique(high["ops"].tolist()) if is_high else ""
+        summary_rows.append({
+            "nf_cnpj": key,
+            "data_pre_nota": group["data_pre_nota"].dropna().min(),
+            "numero_nf": group["numero_nf"].iloc[0],
+            "cnpj": group["cnpj"].iloc[0],
+            "fornecedor": group["fornecedor"].iloc[0],
+            "prioridade": "ALTA" if is_high else "BAIXA",
+            "ops": ops,
+            "data_cm": oldest_cm,
+            "itens_impacto": int(high["produto"].nunique()) if is_high else 0,
+        })
+
+    summary = pd.DataFrame(summary_rows)
+    if not summary.empty:
+        summary["_ord"] = summary["prioridade"].map({"ALTA": 0, "BAIXA": 1}).fillna(9)
+        summary = summary.sort_values(
+            ["_ord", "data_cm", "data_pre_nota", "numero_nf"],
+            ascending=[True, True, False, True],
+            na_position="last",
+        ).drop(columns="_ord").reset_index(drop=True)
+
+    stats = {
+        "cnpj_nao_localizado": unresolved,
+        "linhas_detalhe": len(detail),
+        "nfs_total": int(summary["nf_cnpj"].nunique()) if not summary.empty else 0,
+        "nfs_alta": int(summary["prioridade"].eq("ALTA").sum()) if not summary.empty else 0,
+        "nfs_baixa": int(summary["prioridade"].eq("BAIXA").sum()) if not summary.empty else 0,
+    }
+    return detail, summary, stats
+
+
 def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -> None:
     show_flash("_flash_mrp")
     st.markdown("### Priorização por impacto no MRP")
 
-    mrp_file = None
-    nf_items_file = None
-    process = False
-
     if allow_feed:
         st.write(
-            "Formato validado: **Materiais C = Código do produto**. "
-            "No relatório de Entradas/NFs: **D = Número da NF, F = Fornecedor e L = Código do material**. "
-            "Os arquivos são apenas selecionados primeiro; o processamento só começa ao clicar em **Cruzar relatórios**."
+            "Carregue os dois relatórios. Antes do confronto, o aplicativo reduz as bases para somente "
+            "os campos necessários: Materiais usa **B Projeto, C Produto e F Data CM**; Entradas/NFs usa "
+            "**A, D, E, F, G, H, I, L, M e AE**. No relatório de NFs são mantidos apenas os últimos "
+            "**30 dias** e registros com **TES de exatamente 3 dígitos**."
         )
 
-        mrp_file = st.file_uploader(
-            "Planilha de Materiais",
-            type=["csv", "xlsx", "xls", "xlt", "xltx"],
+        material_file = st.file_uploader(
+            "Relatório de Materiais",
+            type=["xlsx", "xltx", "xls", "csv"],
             key=f"{key_prefix}_materials",
         )
-        nf_items_file = st.file_uploader(
-            "Relatório de Entradas / NFs",
-            type=["csv", "xlsx", "xls", "xlt", "xltx"],
+        nf_file = st.file_uploader(
+            "Relatório de NFs / STSUP01",
+            type=["xlsx", "xltx", "xls", "csv"],
             key=f"{key_prefix}_entries",
         )
 
-        if mrp_file:
-            st.caption(f"Materiais selecionado: {mrp_file.name} — {len(mrp_file.getvalue()) / 1024 / 1024:.1f} MB")
-        if nf_items_file:
-            st.caption(f"Entradas/NFs selecionado: {nf_items_file.name} — {len(nf_items_file.getvalue()) / 1024 / 1024:.1f} MB")
-
-        can_process = bool(mrp_file and nf_items_file)
-        process = st.button(
-            "CRUZAR RELATÓRIOS",
+        can_validate = bool(material_file and nf_file)
+        validate = st.button(
+            "VALIDAR IMPACTO MRP",
             type="primary",
             use_container_width=True,
-            disabled=not can_process,
+            disabled=not can_validate,
             key=f"{key_prefix}_process",
         )
-    else:
-        st.info(
-            "Esta tela é somente de acompanhamento. A priorização do MRP é alimentada em "
-            "**Configurações → Alimentação → Prioridade MRP**."
-        )
 
-    if process:
-        try:
-            with st.spinner("Lendo somente as informações necessárias e cruzando os relatórios..."):
-                mrp, mrp_sheets = read_uploaded_table(mrp_file, header_row=None)
-                if mrp_sheets and len(mrp_sheets) > 1:
-                    # Na carga automática usa a primeira aba; a lista fica visível no retorno.
-                    st.caption(f"Aba utilizada em Materiais: {mrp_sheets[0]}")
-                nf_items, nf_sheets = read_uploaded_table(nf_items_file, header_row=None)
-                if nf_items_sheets := nf_sheets:
-                    if len(nf_items_sheets) > 1:
-                        st.caption(f"Aba utilizada em Entradas/NFs: {nf_items_sheets[0]}")
-
-                if mrp.shape[1] < 3:
-                    raise ValueError("A planilha de Materiais precisa conter a coluna C.")
-                if nf_items.shape[1] < 12:
-                    raise ValueError("O relatório de Entradas precisa conter pelo menos as colunas A até L.")
-
-                urgent = set()
-                for raw_value in mrp.iloc[:, 2].tolist():
-                    value = normalized_material_code(raw_value)
-                    if not value:
-                        continue
-                    label = normalize_text(value)
-                    if "CODIGO" in label and ("PRODUTO" in label or "MATERIAL" in label):
-                        continue
-                    urgent.add(value)
-
-                base = pd.DataFrame({
-                    "numero_nf": nf_items.iloc[:, 3].map(normalized_nf),
-                    "fornecedor_entrada": nf_items.iloc[:, 5].fillna("").astype(str).str.strip(),
-                    "produto": nf_items.iloc[:, 11].map(normalized_material_code),
-                })
-                base = base[
-                    base["numero_nf"].ne("")
-                    & base["produto"].ne("")
-                    & base["fornecedor_entrada"].ne("")
-                ].copy()
-
-                hits = base[base["produto"].isin(urgent)].copy()
-                if not hits.empty:
-                    hits["fornecedor_padrao"] = hits["fornecedor_entrada"].map(standard_supplier_name)
-                    summary = (
-                        hits.groupby(
-                            ["numero_nf", "fornecedor_padrao", "fornecedor_entrada"],
-                            as_index=False,
-                        )
-                        .agg(itens_urgentes=("produto", "nunique"))
-                        .sort_values(["itens_urgentes", "numero_nf"], ascending=[False, True])
-                        .reset_index(drop=True)
+        if validate:
+            try:
+                with st.spinner("Limpando os relatórios e montando a base de impacto MRP..."):
+                    materials, mat_stats = _clean_mrp_materials_cached(
+                        material_file.getvalue(),
+                        material_file.name,
                     )
-                else:
-                    summary = pd.DataFrame(
-                        columns=["numero_nf", "fornecedor_padrao", "fornecedor_entrada", "itens_urgentes"]
+                    entries, nf_stats = _clean_mrp_nf_cached(
+                        nf_file.getvalue(),
+                        nf_file.name,
+                        now_local().date().isoformat(),
+                    )
+                    detail, summary, impact_stats = _build_mrp_impact(materials, entries)
+
+                    st.session_state.mrp_import_preview_detail = detail.copy()
+                    st.session_state.mrp_import_preview_summary = summary.copy()
+                    st.session_state.mrp_priority_stats = {
+                        **mat_stats,
+                        **nf_stats,
+                        **impact_stats,
+                    }
+                    st.session_state.mrp_priority_files = (
+                        material_file.name,
+                        nf_file.name,
                     )
 
-                stats = {
-                    "materiais": len(urgent),
-                    "linhas_entradas": len(base),
-                    "linhas_correspondentes": len(hits),
-                    "nfs": int(summary["numero_nf"].nunique()) if not summary.empty else 0,
-                }
-                st.session_state.mrp_priority_summary = summary.copy()
-                st.session_state.mrp_priority_stats = stats
-                st.session_state.mrp_priority_files = (mrp_file.name, nf_items_file.name)
+                set_flash(
+                    "_flash_mrp",
+                    "success" if not detail.empty else "warning",
+                    (
+                        f"Validação concluída: {len(detail)} linha(s) na tabela principal, "
+                        f"{impact_stats['nfs_alta']} NF(s) em prioridade ALTA."
+                        if not detail.empty
+                        else "Os relatórios foram processados, mas a base final ficou vazia."
+                    ),
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Falha ao validar impacto MRP: {exc}")
 
-                # A alimentação em Configurações já define imediatamente as prioridades.
-                keys = set()
-                for _, row in summary.iterrows():
-                    for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
-                        pkey = priority_key(row["numero_nf"], supplier_name)
-                        if pkey:
-                            keys.add(pkey)
+        preview = st.session_state.get("mrp_import_preview_detail")
+        summary_preview = st.session_state.get("mrp_import_preview_summary")
+        stats = st.session_state.get("mrp_priority_stats") or {}
+        files_used = st.session_state.get("mrp_priority_files") or ()
 
-                st.session_state.priority_nf_keys = keys
-                st.session_state.priority_nf_numbers = set(summary["numero_nf"].astype(str).tolist())
+        if isinstance(preview, pd.DataFrame) and not preview.empty:
+            if files_used:
+                st.caption(f"Carga validada: {files_used[0]} + {files_used[1]}")
+
+            st.markdown("#### Conferência da carga")
+            st.caption(
+                f"Materiais: {stats.get('linhas_origem', 0)} linha(s) de origem. "
+                f"Base de NFs após TES + 30 dias: {stats.get('linhas_30_dias_tes', 0)} linha(s). "
+                f"CNPJs não localizados pelo código do fornecedor: {stats.get('cnpj_nao_localizado', 0)}."
+            )
+
+            display = preview[
+                [
+                    "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
+                    "produto", "descricao", "prioridade", "ops", "data_cm",
+                ]
+            ].copy()
+
+            st.dataframe(
+                display,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "data_pre_nota": st.column_config.DateColumn(
+                        "DATA DA PRÉ-NOTA", format="DD/MM/YYYY"
+                    ),
+                    "numero_nf": "NF",
+                    "cnpj": "CNPJ",
+                    "fornecedor": st.column_config.TextColumn("FORNECEDOR", width="large"),
+                    "produto": "PRODUTO",
+                    "descricao": st.column_config.TextColumn("DESCRIÇÃO", width="large"),
+                    "prioridade": "PRIORIDADE",
+                    "ops": st.column_config.TextColumn("OPS", width="large"),
+                    "data_cm": st.column_config.DateColumn("DATA CM", format="DD/MM/YYYY"),
+                },
+            )
+
+            if st.button(
+                "CONFIRMAR E APLICAR CARGA",
+                type="primary",
+                use_container_width=True,
+                key=f"{key_prefix}_confirm",
+            ):
+                st.session_state.mrp_impact_detail = preview.copy()
+                st.session_state.mrp_priority_summary = (
+                    summary_preview.copy()
+                    if isinstance(summary_preview, pd.DataFrame)
+                    else pd.DataFrame()
+                )
+
+                summary = st.session_state.mrp_priority_summary
+                high = (
+                    summary[summary["prioridade"].eq("ALTA")].copy()
+                    if not summary.empty
+                    else pd.DataFrame()
+                )
+
+                st.session_state.priority_nf_doc_keys = set(
+                    high.get("nf_cnpj", pd.Series(dtype=str)).dropna().astype(str).tolist()
+                )
+                st.session_state.priority_nf_numbers = set(
+                    high.get("numero_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
+                )
+
                 if not st.session_state.analysis.empty:
                     st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
 
-            set_flash(
-                "_flash_mrp",
-                "success" if not summary.empty else "warning",
-                (
-                    f"Cruzamento concluído: {stats['linhas_correspondentes']} linha(s) correspondente(s), "
-                    f"{stats['nfs']} NF(s) impactada(s) e prioridade aplicada automaticamente."
-                    if not summary.empty
-                    else "Os dois relatórios foram processados, mas nenhum código de Materiais C foi localizado em Entradas/NFs L."
-                ),
+                st.session_state.mrp_import_preview_detail = pd.DataFrame()
+                st.session_state.mrp_import_preview_summary = pd.DataFrame()
+                set_flash(
+                    "_flash_mrp",
+                    "success",
+                    (
+                        f"Carga aplicada: {len(summary)} NF(s) avaliadas, "
+                        f"{len(high)} em prioridade ALTA. "
+                        "A correlação com pré-notas usa NF_CNPJ."
+                    ),
+                )
+                st.rerun()
+
+        elif isinstance(st.session_state.get("mrp_priority_summary"), pd.DataFrame) and not st.session_state.mrp_priority_summary.empty:
+            st.success(
+                f"Carga MRP atual aplicada: {len(st.session_state.mrp_priority_summary)} NF(s) avaliadas."
             )
-            st.rerun()
-        except Exception as exc:
-            st.error(f"Falha no cruzamento dos relatórios: {exc}")
+        else:
+            st.info("Nenhuma carga de impacto MRP confirmada nesta sessão.")
 
-    summary = st.session_state.get("mrp_priority_summary")
-    stats = st.session_state.get("mrp_priority_stats") or {}
-    files_used = st.session_state.get("mrp_priority_files") or ()
+    else:
+        summary = st.session_state.get("mrp_priority_summary")
+        if not isinstance(summary, pd.DataFrame) or summary.empty:
+            st.info(
+                "Nenhuma carga de impacto MRP aplicada. "
+                "Alimente em Configurações → Alimentação → Prioridade MRP."
+            )
+            return
 
-    if files_used:
-        st.caption(f"Último cruzamento: {files_used[0]} + {files_used[1]}")
+        st.caption(
+            "Acompanhamento da carga aplicada em Configurações → Alimentação → Prioridade MRP."
+        )
 
-    if stats:
-        a, b, d, e = st.columns(4)
-        a.metric("Materiais MRP", stats.get("materiais", 0))
-        b.metric("Linhas válidas Entradas", stats.get("linhas_entradas", 0))
-        d.metric("Correspondências", stats.get("linhas_correspondentes", 0))
-        e.metric("NFs impactadas", stats.get("nfs", 0))
-
-    if isinstance(summary, pd.DataFrame) and not summary.empty:
+        show = summary.copy()
         st.dataframe(
-            summary,
+            show,
             use_container_width=True,
             hide_index=True,
             column_config={
+                "data_pre_nota": st.column_config.DateColumn("Data pré-nota", format="DD/MM/YYYY"),
                 "numero_nf": "NF",
-                "fornecedor_padrao": "Fornecedor validado",
-                "fornecedor_entrada": "Fornecedor do relatório",
-                "itens_urgentes": "Itens MRP",
+                "cnpj": "CNPJ",
+                "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
+                "prioridade": "Prioridade",
+                "ops": st.column_config.TextColumn("OPs", width="large"),
+                "data_cm": st.column_config.DateColumn("Data CM", format="DD/MM/YYYY"),
+                "itens_impacto": "Itens impacto",
+                "nf_cnpj": "NF_CNPJ",
             },
         )
-        if allow_feed and st.button(
-            "REAPLICAR PRIORIDADES AO PROCESSAMENTO",
-            type="primary",
-            use_container_width=True,
-            key=f"{key_prefix}_apply",
-        ):
-            keys = set()
-            for _, row in summary.iterrows():
-                for supplier_name in [row["fornecedor_padrao"], row["fornecedor_entrada"]]:
-                    pkey = priority_key(row["numero_nf"], supplier_name)
-                    if pkey:
-                        keys.add(pkey)
 
-            st.session_state.priority_nf_keys = keys
-            st.session_state.priority_nf_numbers = set(summary["numero_nf"].astype(str).tolist())
-            if not st.session_state.analysis.empty:
-                st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
-
-            set_flash(
-                "_flash_mrp",
-                "success",
-                f"Prioridades reaplicadas: {len(st.session_state.priority_nf_numbers)} NF(s).",
+        pre = st.session_state.pre_notes.copy()
+        if isinstance(pre, pd.DataFrame) and not pre.empty:
+            pre_keys = set(
+                pre.apply(
+                    lambda row: pre_note_key(row.get("numero_nf"), row.get("cnpj")),
+                    axis=1,
+                )
             )
-            st.rerun()
+            missing_pre = summary[
+                summary["nf_cnpj"].ne("")
+                & ~summary["nf_cnpj"].isin(pre_keys)
+            ].copy()
 
-    if st.session_state.priority_nf_numbers:
-        st.info(
-            f"Há {len(st.session_state.priority_nf_numbers)} NF(s) com prioridade aplicada. "
-            "A confirmação no PDF também considera o fornecedor."
-        )
-        if allow_feed and st.button("Limpar prioridades atuais", key=f"{key_prefix}_clear"):
-            st.session_state.priority_nf_numbers = set()
-            st.session_state.priority_nf_keys = set()
-            st.session_state.mrp_priority_summary = pd.DataFrame()
-            st.session_state.mrp_priority_stats = {}
-            st.session_state.mrp_priority_files = ()
-            if not st.session_state.analysis.empty:
-                st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
-            set_flash("_flash_mrp", "success", "Prioridades MRP limpas.")
-            st.rerun()
+            if not missing_pre.empty:
+                st.warning(
+                    f"{len(missing_pre)} NF(s) do relatório de impacto MRP não estão na lista de pré-notas pendentes."
+                )
+                add_view = missing_pre[
+                    ["data_pre_nota", "numero_nf", "cnpj", "fornecedor", "prioridade", "data_cm"]
+                ].copy()
+                add_view.insert(0, "Adicionar", False)
+
+                edited = st.data_editor(
+                    add_view,
+                    use_container_width=True,
+                    hide_index=True,
+                    disabled=[x for x in add_view.columns if x != "Adicionar"],
+                    key=f"{key_prefix}_missing_pre_editor",
+                    column_config={
+                        "Adicionar": st.column_config.CheckboxColumn("Adicionar"),
+                        "data_pre_nota": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
+                        "numero_nf": "NF",
+                        "cnpj": "CNPJ",
+                        "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
+                        "prioridade": "Prioridade",
+                        "data_cm": st.column_config.DateColumn("Data CM", format="DD/MM/YYYY"),
+                    },
+                )
+
+                selected = edited[edited["Adicionar"].fillna(False).astype(bool)].copy()
+                if st.button(
+                    "ADICIONAR SELECIONADAS ÀS PRÉ-NOTAS PENDENTES",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=selected.empty,
+                    key=f"{key_prefix}_add_missing_pre",
+                ):
+                    additions = []
+                    for _, row in selected.iterrows():
+                        additions.append({
+                            "data_pre_nota": row["data_pre_nota"],
+                            "numero_nf": normalized_nf(row["numero_nf"]),
+                            "cnpj": digits_only(row["cnpj"]),
+                            "status": "Pré-nota lançada",
+                            "origem": "Impacto MRP / Protheus",
+                        })
+                    updated = pd.concat(
+                        [st.session_state.pre_notes, pd.DataFrame(additions)],
+                        ignore_index=True,
+                        sort=False,
+                    )
+                    updated = updated.drop_duplicates(
+                        ["numero_nf", "cnpj"],
+                        keep="last",
+                    ).reset_index(drop=True)
+                    st.session_state.pre_notes = updated
+                    set_flash(
+                        "_flash_mrp",
+                        "success",
+                        f"{len(additions)} NF(s) adicionada(s) à lista de pré-notas pendentes.",
+                    )
+                    st.rerun()
 
 
 def current_pre_note_map() -> dict[str, dict]:
