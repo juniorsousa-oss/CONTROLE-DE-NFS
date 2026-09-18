@@ -113,6 +113,7 @@ def init():
         "mrp_import_preview_summary": pd.DataFrame(),
         "mrp_priority_stats": {},
         "mrp_priority_files": (),
+        "mrp_ignored_records": [],
         "pre_import_preview": pd.DataFrame(),
         "pre_import_invalid_count": 0,
         "pre_import_name": "",
@@ -609,6 +610,27 @@ def supplier_similarity(name_a: object, name_b: object) -> int:
         score = max(score, 90)
 
     return min(100, max(0, score))
+
+
+
+def mrp_row_key(row: pd.Series | dict) -> str:
+    data_nf = str(row.get("data_nf") or "").strip()
+    if not data_nf:
+        data_nf = date_nf_key(
+            row.get("data_pre_nota"),
+            row.get("numero_nf"),
+        )
+
+    supplier = str(
+        row.get("fornecedor_validacao")
+        or row.get("fornecedor")
+        or ""
+    ).strip()
+    supplier_norm = supplier_validation_name(supplier)
+
+    return f"{data_nf}|{supplier_norm}" if data_nf and supplier_norm else data_nf
+
+
 
 
 def pre_supplier_name(row: pd.Series | dict) -> str:
@@ -1244,6 +1266,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 key=f"{key_prefix}_confirm",
             ):
                 st.session_state.mrp_impact_detail = preview.copy()
+                st.session_state.mrp_ignored_records = []
                 st.session_state.mrp_priority_summary = (
                     summary_preview.copy()
                     if isinstance(summary_preview, pd.DataFrame)
@@ -1327,6 +1350,36 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
             },
         )
 
+        ignored_records = st.session_state.get("mrp_ignored_records") or []
+        if ignored_records:
+            with st.expander(
+                f"NFs desconsideradas nesta carga ({len(ignored_records)})",
+                expanded=False,
+            ):
+                ignored_df = pd.DataFrame(ignored_records)
+                st.dataframe(
+                    ignored_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "data_pre_nota": st.column_config.DateColumn(
+                            "Data",
+                            format="DD/MM/YYYY",
+                        ),
+                        "numero_nf": "NF",
+                        "fornecedor": st.column_config.TextColumn(
+                            "Fornecedor",
+                            width="large",
+                        ),
+                        "prioridade": "Prioridade anterior",
+                        "data_cm": st.column_config.DateColumn(
+                            "Data CM",
+                            format="DD/MM/YYYY",
+                        ),
+                        "desconsiderada_em": "Desconsiderada em",
+                    },
+                )
+
         pre = st.session_state.pre_notes.copy()
         if isinstance(pre, pd.DataFrame) and not pre.empty:
             comparison_rows = []
@@ -1363,15 +1416,33 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     ]
                 ].copy()
                 add_view.insert(0, "Adicionar", False)
+                add_view.insert(1, "Desconsiderar", False)
+
+                st.caption(
+                    "Para cada NF sem correspondência, escolha uma ação: "
+                    "**Adicionar** inclui a nota nas Pré-notas pendentes; "
+                    "**Desconsiderar** remove a NF da carga atual de Impacto MRP."
+                )
 
                 edited = st.data_editor(
                     add_view,
                     use_container_width=True,
                     hide_index=True,
-                    disabled=[x for x in add_view.columns if x != "Adicionar"],
+                    disabled=[
+                        x
+                        for x in add_view.columns
+                        if x not in {"Adicionar", "Desconsiderar"}
+                    ],
                     key=f"{key_prefix}_missing_pre_editor",
                     column_config={
-                        "Adicionar": st.column_config.CheckboxColumn("Adicionar"),
+                        "Adicionar": st.column_config.CheckboxColumn(
+                            "Adicionar às pendentes",
+                            help="Inclui esta NF na lista de Pré-notas pendentes.",
+                        ),
+                        "Desconsiderar": st.column_config.CheckboxColumn(
+                            "Desconsiderar",
+                            help="Remove esta NF da carga atual de Impacto MRP.",
+                        ),
                         "data_pre_nota": st.column_config.DateColumn("Data", format="DD/MM/YYYY"),
                         "numero_nf": "NF",
                         "cnpj": "CNPJ",
@@ -1389,16 +1460,35 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     },
                 )
 
-                selected = edited[edited["Adicionar"].fillna(False).astype(bool)].copy()
-                if st.button(
+                selected_add = edited[
+                    edited["Adicionar"].fillna(False).astype(bool)
+                ].copy()
+                selected_ignore = edited[
+                    edited["Desconsiderar"].fillna(False).astype(bool)
+                ].copy()
+
+                conflicting = edited[
+                    edited["Adicionar"].fillna(False).astype(bool)
+                    & edited["Desconsiderar"].fillna(False).astype(bool)
+                ].copy()
+
+                if not conflicting.empty:
+                    st.error(
+                        "Uma mesma NF não pode ser marcada simultaneamente como "
+                        "**Adicionar** e **Desconsiderar**."
+                    )
+
+                action_add, action_ignore = st.columns(2)
+
+                if action_add.button(
                     "ADICIONAR SELECIONADAS ÀS PRÉ-NOTAS PENDENTES",
                     type="primary",
                     use_container_width=True,
-                    disabled=selected.empty,
+                    disabled=(selected_add.empty or not conflicting.empty),
                     key=f"{key_prefix}_add_missing_pre",
                 ):
                     additions = []
-                    for _, row in selected.iterrows():
+                    for _, row in selected_add.iterrows():
                         additions.append({
                             "data_pre_nota": normalized_business_date(row["data_pre_nota"]),
                             "numero_nf": normalized_nf(row["numero_nf"]),
@@ -1435,6 +1525,97 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                         "_flash_mrp",
                         "success",
                         f"{len(additions)} NF(s) adicionada(s) à lista de pré-notas pendentes.",
+                    )
+                    st.rerun()
+
+                if action_ignore.button(
+                    "DESCONSIDERAR SELECIONADAS DO IMPACTO MRP",
+                    use_container_width=True,
+                    disabled=(selected_ignore.empty or not conflicting.empty),
+                    key=f"{key_prefix}_ignore_missing_pre",
+                ):
+                    ignore_keys = {
+                        mrp_row_key(row)
+                        for _, row in selected_ignore.iterrows()
+                        if mrp_row_key(row)
+                    }
+
+                    current_summary = st.session_state.mrp_priority_summary.copy()
+                    current_summary["_mrp_row_key"] = current_summary.apply(
+                        mrp_row_key,
+                        axis=1,
+                    )
+                    ignored_rows = current_summary[
+                        current_summary["_mrp_row_key"].isin(ignore_keys)
+                    ].copy()
+
+                    st.session_state.mrp_priority_summary = (
+                        current_summary[
+                            ~current_summary["_mrp_row_key"].isin(ignore_keys)
+                        ]
+                        .drop(columns="_mrp_row_key", errors="ignore")
+                        .reset_index(drop=True)
+                    )
+
+                    current_detail = st.session_state.get("mrp_impact_detail")
+                    if isinstance(current_detail, pd.DataFrame) and not current_detail.empty:
+                        current_detail = current_detail.copy()
+                        current_detail["_mrp_row_key"] = current_detail.apply(
+                            mrp_row_key,
+                            axis=1,
+                        )
+                        st.session_state.mrp_impact_detail = (
+                            current_detail[
+                                ~current_detail["_mrp_row_key"].isin(ignore_keys)
+                            ]
+                            .drop(columns="_mrp_row_key", errors="ignore")
+                            .reset_index(drop=True)
+                        )
+
+                    ignored_log = list(
+                        st.session_state.get("mrp_ignored_records") or []
+                    )
+                    for _, row in ignored_rows.iterrows():
+                        ignored_log.append({
+                            "data_pre_nota": row.get("data_pre_nota"),
+                            "numero_nf": normalized_nf(row.get("numero_nf")),
+                            "fornecedor": str(row.get("fornecedor") or "").strip(),
+                            "prioridade": str(row.get("prioridade") or "").strip(),
+                            "data_cm": row.get("data_cm"),
+                            "desconsiderada_em": now_local().isoformat(timespec="seconds"),
+                        })
+                    st.session_state.mrp_ignored_records = ignored_log
+
+                    remaining = st.session_state.mrp_priority_summary
+                    high = (
+                        remaining[remaining["prioridade"].eq("ALTA")].copy()
+                        if not remaining.empty
+                        else pd.DataFrame()
+                    )
+                    st.session_state.priority_date_nf_keys = set(
+                        high.get("data_nf", pd.Series(dtype=str))
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+                    st.session_state.priority_nf_numbers = set(
+                        high.get("numero_nf", pd.Series(dtype=str))
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+                    st.session_state.priority_nf_doc_keys = set()
+                    st.session_state.priority_nf_keys = set()
+
+                    if not st.session_state.analysis.empty:
+                        st.session_state.analysis = apply_cross_checks(
+                            st.session_state.analysis
+                        )
+
+                    set_flash(
+                        "_flash_mrp",
+                        "success",
+                        f"{len(ignored_rows)} NF(s) desconsiderada(s) da carga atual de Impacto MRP.",
                     )
                     st.rerun()
 
