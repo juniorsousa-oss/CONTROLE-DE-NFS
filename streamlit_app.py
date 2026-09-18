@@ -289,15 +289,30 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def treatment_mask(df: pd.DataFrame) -> pd.Series:
+    if df.empty:
+        return pd.Series(False, index=df.index)
+    return (
+        df["nome_sugerido"].fillna("").astype(str).str.strip().eq("")
+        | df["status"].fillna("").astype(str).ne("APROVADO")
+        | df["validacao"].fillna("").astype(str).str.strip().ne("")
+    )
+
+
 def metrics(df: pd.DataFrame):
+    pending = treatment_mask(df)
+    ready = int((~pending).sum())
     values = [
         ("Documentos", len(df), "PDFs analisados"),
-        ("Aprovados", int(df.status.eq("APROVADO").sum()), "Correspondências"),
-        ("Revisar", int((df.status.eq("REVISAR") | df.validacao.ne("")).sum()), "Conferir"),
+        ("Prontos", ready, "Sem tratativa"),
+        ("Tratativas", int(pending.sum()), "Corrigir antes do ZIP"),
         ("Prioridade MRP", int(df.get("prioridade_mrp", pd.Series(False, index=df.index)).fillna(False).astype(bool).sum()), "ZIP separado"),
     ]
     for col, (title, number, desc) in zip(st.columns(4), values):
-        col.markdown(f'<div class="metric"><small>{title}</small><strong>{number}</strong><span>{desc}</span></div>', unsafe_allow_html=True)
+        col.markdown(
+            f'<div class="metric"><small>{title}</small><strong>{number}</strong><span>{desc}</span></div>',
+            unsafe_allow_html=True,
+        )
 
 
 def excel_bytes(frame: pd.DataFrame, sheet: str = "Dados") -> bytes:
@@ -1100,51 +1115,178 @@ elif page == "Processamento de arquivos":
                     st.session_state.analysis = recalc(frame)
                     st.rerun()
 
-            cols = ["arquivo_original", "vencimento", "numero_nf", "cnpj_fornecedor", "fornecedor_lido", "fornecedor_padrao", "natureza", "pre_nota_status", "prioridade_mrp", "metodo_fornecedor", "confianca", "leitura", "status", "nome_sugerido", "observacao"]
-            editor = st.data_editor(
-                frame[cols],
-                use_container_width=True,
-                hide_index=True,
-                num_rows="fixed",
-                key="review",
-                disabled=["arquivo_original", "cnpj_fornecedor", "fornecedor_lido", "pre_nota_status", "prioridade_mrp", "metodo_fornecedor", "confianca", "leitura", "nome_sugerido", "observacao"],
-                column_config={
-                    "arquivo_original": "Arquivo original",
-                    "vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
-                    "numero_nf": "NF",
-                    "cnpj_fornecedor": "CNPJ emitente",
-                    "fornecedor_lido": "Fornecedor lido",
-                    "fornecedor_padrao": "Fornecedor padrão",
-                    "natureza": "Natureza interna",
-                    "pre_nota_status": "Status pré-nota",
-                    "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
-                    "metodo_fornecedor": "Correspondência",
-                    "confianca": st.column_config.ProgressColumn("Confiança", min_value=0, max_value=100, format="%d%%"),
-                    "leitura": "Leitura",
-                    "status": st.column_config.SelectboxColumn("Status", options=["APROVADO", "REVISAR"], required=True),
-                    "nome_sugerido": "Nome final",
-                    "observacao": "Observação automática",
-                },
-            )
             merged = frame.copy()
-            for col in ["vencimento", "numero_nf", "fornecedor_padrao", "natureza", "status"]:
-                merged[col] = editor[col].values
-            merged["natureza"] = merged["natureza"].fillna("").astype(str).str.strip().str.upper()
+            pending_mask = treatment_mask(merged)
+            pending = merged.loc[pending_mask].copy()
+
+            with st.expander(
+                f"Documentos sem tratativa ({int((~pending_mask).sum())})",
+                expanded=False,
+            ):
+                ready_cols = [
+                    "arquivo_original",
+                    "numero_nf",
+                    "fornecedor_padrao",
+                    "vencimento",
+                    "natureza",
+                    "nome_sugerido",
+                    "prioridade_mrp",
+                ]
+                st.dataframe(
+                    merged.loc[~pending_mask, ready_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "arquivo_original": "Arquivo",
+                        "numero_nf": "NF",
+                        "fornecedor_padrao": "Fornecedor",
+                        "vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+                        "natureza": "Natureza",
+                        "nome_sugerido": "Nome final",
+                        "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
+                    },
+                )
+
+            st.markdown("### Tratativas necessárias")
+            if pending.empty:
+                st.success("Nenhum documento precisa de correção. O lote está pronto para geração dos arquivos.")
+            else:
+                st.warning(
+                    f"{len(pending)} documento(s) precisam de tratativa. "
+                    "Corrija somente os campos necessários abaixo e clique em **Aplicar correções**."
+                )
+
+                treatment_cols = [
+                    "arquivo_original",
+                    "vencimento",
+                    "numero_nf",
+                    "cnpj_fornecedor",
+                    "fornecedor_padrao",
+                    "natureza",
+                    "status",
+                    "validacao",
+                    "observacao",
+                ]
+
+                treatment_editor = st.data_editor(
+                    pending[treatment_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    key="treatment_editor",
+                    disabled=[
+                        "arquivo_original",
+                        "validacao",
+                        "observacao",
+                    ],
+                    column_config={
+                        "arquivo_original": st.column_config.TextColumn(
+                            "Arquivo",
+                            width="medium",
+                        ),
+                        "vencimento": st.column_config.DateColumn(
+                            "Vencimento",
+                            format="DD/MM/YYYY",
+                        ),
+                        "numero_nf": st.column_config.TextColumn("NF"),
+                        "cnpj_fornecedor": st.column_config.TextColumn("CNPJ emitente"),
+                        "fornecedor_padrao": st.column_config.TextColumn(
+                            "Fornecedor",
+                            width="large",
+                        ),
+                        "natureza": st.column_config.SelectboxColumn(
+                            "Natureza",
+                            options=[""] + nature_options,
+                        ),
+                        "status": st.column_config.SelectboxColumn(
+                            "Status",
+                            options=["REVISAR", "APROVADO"],
+                            required=True,
+                        ),
+                        "validacao": st.column_config.TextColumn(
+                            "Pendência",
+                            width="medium",
+                        ),
+                        "observacao": st.column_config.TextColumn(
+                            "Leitura automática",
+                            width="large",
+                        ),
+                    },
+                )
+
+                if st.button(
+                    "APLICAR CORREÇÕES",
+                    type="primary",
+                    use_container_width=True,
+                    key="apply_treatments",
+                ):
+                    updated = merged.copy()
+                    editable_cols = [
+                        "vencimento",
+                        "numero_nf",
+                        "cnpj_fornecedor",
+                        "fornecedor_padrao",
+                        "natureza",
+                        "status",
+                    ]
+                    for idx in treatment_editor.index:
+                        for col in editable_cols:
+                            updated.loc[idx, col] = treatment_editor.loc[idx, col]
+
+                    updated["natureza"] = (
+                        updated["natureza"]
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
+                        .str.upper()
+                    )
+                    updated = apply_cross_checks(updated)
+                    updated = recalc(updated)
+                    st.session_state.analysis = updated
+                    st.rerun()
+
+            merged = st.session_state.analysis.copy()
+            merged = apply_cross_checks(merged)
             merged = recalc(merged)
             st.session_state.analysis = merged
-            st.markdown("#### Prévia da renomeação e separação")
-            st.dataframe(merged[["arquivo_original", "nome_sugerido", "natureza", "prioridade_mrp", "status", "validacao"]], use_container_width=True, hide_index=True)
 
-            invalid = merged[merged.nome_sugerido.fillna("").eq("") | merged.status.ne("APROVADO") | merged.validacao.fillna("").ne("")]
-            duplicate = merged.nome_sugerido.fillna("").duplicated(keep=False) & merged.nome_sugerido.fillna("").ne("")
+            invalid_mask = treatment_mask(merged)
+            invalid = merged.loc[invalid_mask].copy()
+            duplicate = (
+                merged["nome_sugerido"].fillna("").astype(str).str.strip().duplicated(keep=False)
+                & merged["nome_sugerido"].fillna("").astype(str).str.strip().ne("")
+            )
+
             if duplicate.any():
-                st.error("Há nomes finais duplicados no lote.")
+                st.error("Há nomes finais duplicados no lote. Os arquivos duplicados precisam ser tratados antes do ZIP.")
             elif not invalid.empty:
-                st.warning(f"{len(invalid)} documento(s) ainda precisam de conferência.")
+                st.info("O botão de geração ficará liberado quando todas as tratativas forem concluídas.")
             else:
                 normal = int((~merged["prioridade_mrp"].fillna(False).astype(bool)).sum())
                 priority = int(merged["prioridade_mrp"].fillna(False).astype(bool).sum())
-                st.success(f"Lote aprovado: {normal} documento(s) no fluxo normal e {priority} em prioridade MRP.")
+                st.success(
+                    f"Lote aprovado: {normal} documento(s) no fluxo normal e "
+                    f"{priority} em prioridade MRP."
+                )
+                with st.expander("Prévia final dos nomes", expanded=False):
+                    st.dataframe(
+                        merged[
+                            [
+                                "arquivo_original",
+                                "nome_sugerido",
+                                "natureza",
+                                "prioridade_mrp",
+                            ]
+                        ],
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "arquivo_original": "Arquivo original",
+                            "nome_sugerido": "Nome final",
+                            "natureza": "Natureza",
+                            "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
+                        },
+                    )
 
             if st.button("Renomear, separar e gerar ZIPs", type="primary", use_container_width=True, disabled=(not invalid.empty or duplicate.any())):
                 try:
