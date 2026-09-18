@@ -316,14 +316,24 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
         names.append(build_final_name(due, num, supplier))
 
         current = cell_text(row.get("status")) or "REVISAR"
+        xml_status = cell_text(row.get("xml_status_codigo"))
+        origin = cell_text(row.get("origem_dados")).upper()
 
-        # Qualquer campo obrigatório ausente/inválido é uma tratativa real.
-        # Quando todos estão preenchidos, preservamos REVISAR/APROVADO para
-        # permitir que o operador aprove manualmente casos de baixa confiança.
+        # Campo obrigatório ausente sempre exige tratativa.
+        # XML autorizado (cStat=100) pode ser aprovado automaticamente quando
+        # todos os dados obrigatórios estiverem completos — inclusive natureza
+        # recuperada da carga STSUP01. Casos PDF/baixa confiança continuam
+        # respeitando a decisão manual do operador.
         if missing:
             final_status = "REVISAR"
+        elif "XML" in origin and xml_status == "100":
+            final_status = "APROVADO"
         else:
-            final_status = current if current in {"APROVADO", "REVISAR"} else "REVISAR"
+            final_status = (
+                current
+                if current in {"APROVADO", "REVISAR"}
+                else "REVISAR"
+            )
 
         stats.append(final_status)
         issues.append(
@@ -2206,6 +2216,7 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
             )
 
         status_code = str(xml_data.get("status_codigo") or "").strip()
+        row["xml_status_codigo"] = status_code
         if status_code == "100":
             notes.append("Identidade fiscal confirmada pelo XML autorizado.")
         elif status_code:
