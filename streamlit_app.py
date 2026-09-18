@@ -49,6 +49,7 @@ DEFAULT = {
     "subtitle": "Processamento • Pré-notas • Prioridade MRP • Fornecedores • Dashboard",
     "sidebar_title": "CONTROLE DE NFs",
     "sidebar_subtitle": "Automação do fluxo fiscal",
+    "control_docs_label": "CONTROLE DE DOC.",
     "intro": "Envie os PDFs, valide as correspondências encontradas e somente depois gere os arquivos com o padrão definitivo.",
     "button_color": "#111111",
     "footer": "SETTA | Controle de Notas Fiscais",
@@ -1099,11 +1100,16 @@ with st.sidebar:
     _pages = ["Dashboard", "Configurações"]
     if ENABLE_PENDING_REPORT:
         _pages.insert(1, "Pendências")
+    _control_docs_label = str(cfg.get("control_docs_label") or DEFAULT["control_docs_label"]).strip()
     page = st.radio(
         "Página",
         _pages,
         label_visibility="collapsed",
-        format_func=str.upper,
+        format_func=lambda item: (
+            _control_docs_label.upper()
+            if item == "Pendências"
+            else str(item).upper()
+        ),
     )
     st.divider()
     st.markdown('<div class="sidebar-section-label">Operador</div>', unsafe_allow_html=True)
@@ -1261,7 +1267,11 @@ if page == "Dashboard":
 
 
 elif page == "Pendências":
-    st.markdown('<div class="section-title">Pendências operacionais</div>', unsafe_allow_html=True)
+    _control_docs_title = str(cfg.get("control_docs_label") or DEFAULT["control_docs_label"]).strip()
+    st.markdown(
+        f'<div class="section-title">{_control_docs_title}</div>',
+        unsafe_allow_html=True,
+    )
     st.caption(
         "Centraliza a conferência de pré-notas, o impacto no MRP e o processamento dos PDFs em um único fluxo operacional."
     )
@@ -1361,6 +1371,11 @@ elif page == "Configurações":
             sub = st.text_input("Subtítulo", cur["subtitle"])
             side = st.text_input("Título do menu lateral", cur["sidebar_title"])
             side_sub = st.text_input("Subtítulo do menu lateral", cur["sidebar_subtitle"])
+            control_docs_label = st.text_input(
+                "Nome da aba Controle de documentos",
+                str(cur.get("control_docs_label") or DEFAULT["control_docs_label"]),
+                help="Altera o nome exibido no menu lateral e no título da página que reúne pré-notas, MRP e processamento de arquivos.",
+            )
             intro = st.text_area("Texto da tela principal", cur["intro"])
             footer = st.text_input("Rodapé", cur["footer"])
             natures = st.text_input("Naturezas para atribuição rápida (separadas por vírgula)", str(cur.get("naturezas") or "MP,MC"))
@@ -1372,6 +1387,7 @@ elif page == "Configurações":
                 subtitle=sub or DEFAULT["subtitle"],
                 sidebar_title=side or DEFAULT["sidebar_title"],
                 sidebar_subtitle=side_sub or DEFAULT["sidebar_subtitle"],
+                control_docs_label=control_docs_label or DEFAULT["control_docs_label"],
                 intro=intro or DEFAULT["intro"],
                 footer=footer or DEFAULT["footer"],
                 naturezas=natures or DEFAULT["naturezas"],
