@@ -7,6 +7,7 @@ import requests
 import streamlit as st
 
 DEFAULT_SUPABASE_URL = "https://cuixazpxkvniqldmmnth.supabase.co"
+DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN1aXhhenB4a3ZuaXFsZG1tbnRoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1MTYwNTMsImV4cCI6MjEwMzA5MjA1M30.jNFaIG1FcDYnMAoVaI23UYMuRL1BpZmuqu_LPEYb88E"
 
 
 def _secret(*names: str) -> str:
@@ -37,7 +38,7 @@ def supabase_url() -> str:
 
 
 def supabase_key() -> str:
-    return _secret("SUPABASE_ANON_KEY", "SUPABASE_KEY", "SUPABASE_PUBLISHABLE_KEY")
+    return _secret("SUPABASE_ANON_KEY", "SUPABASE_KEY", "SUPABASE_PUBLISHABLE_KEY") or DEFAULT_SUPABASE_ANON_KEY
 
 
 def configured() -> bool:
@@ -204,6 +205,44 @@ def load_pre_notes() -> list[dict]:
         return []
     return _select_all("nf_pre_notas_atual", order="data_pre_nota.desc.nullslast", max_rows=30000)
 
+
+
+def list_users(active_only: bool = False) -> list[dict]:
+    if not configured():
+        return []
+    filters = {"ativo": "eq.true"} if active_only else None
+    return _select_all(
+        "nf_usuarios",
+        select="id,nome,email,ativo,criado_em,atualizado_em",
+        order="nome.asc",
+        filters=filters,
+        max_rows=1000,
+    )
+
+
+def create_user(name: str, email: str = "") -> dict:
+    return rpc(
+        "nf_criar_usuario",
+        {"p_nome": str(name or "").strip(), "p_email": str(email or "").strip() or None},
+        timeout=45,
+    ) or {}
+
+
+def update_user(user_id: str, name: str, email: str, active: bool) -> dict:
+    return rpc(
+        "nf_atualizar_usuario",
+        {
+            "p_id": str(user_id),
+            "p_nome": str(name or "").strip(),
+            "p_email": str(email or "").strip() or None,
+            "p_ativo": bool(active),
+        },
+        timeout=45,
+    ) or {}
+
+
+def delete_user(user_id: str) -> dict:
+    return rpc("nf_excluir_usuario", {"p_id": str(user_id)}, timeout=45) or {}
 
 def db_status() -> dict:
     return {
