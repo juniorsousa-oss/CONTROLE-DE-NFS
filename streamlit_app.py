@@ -944,7 +944,7 @@ def _clean_mrp_nf_cached(
             "numero_nf": numero_nf,
             "fornecedor_codigo": fornecedor_codigo,
             "fornecedor": fornecedor,
-            "cr": str(values[4] or "").strip(),
+            "cr": re.sub(r"\.0$", "", str(values[4] or "").strip()),
             "desc_cr": str(values[5] or "").strip(),
             "natureza": str(values[6] or "").strip(),
             "produto": produto,
@@ -2067,8 +2067,8 @@ def make_zip_outputs(df: pd.DataFrame):
                 final_pdf = apply_operational_stamp(
                     item["bytes"],
                     data_chegada=(
-                        row.get("pre_nota_em")
-                        or row.get("pre_nota_data")
+                        normalized_business_date(row.get("pre_nota_em"))
+                        or normalized_business_date(row.get("pre_nota_data"))
                     ),
                     cr=row.get("cr"),
                     desc_cr=row.get("desc_cr"),
