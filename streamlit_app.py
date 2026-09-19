@@ -451,6 +451,73 @@ def show_flash(key: str) -> None:
         fn(message)
 
 
+def _format_update_timestamp(value: object) -> str:
+    if value is None or str(value).strip() == "":
+        return "Ainda não atualizada"
+    try:
+        ts = pd.to_datetime(value, errors="coerce", utc=True)
+        if pd.isna(ts):
+            return "Ainda não atualizada"
+        return ts.tz_convert(TZ).strftime("%d/%m/%Y às %H:%M")
+    except Exception:
+        return str(value)
+
+
+def _last_update_info(kind: str) -> tuple[str, str]:
+    """Retorna data/hora real da última gravação e a origem, quando disponível."""
+    if not db.configured():
+        return "Banco não conectado", ""
+
+    try:
+        if kind == "pre":
+            rows = db.list_pre_note_imports(limit=1)
+            if not rows:
+                return "Ainda não atualizada", ""
+            row = rows[0]
+            return (
+                _format_update_timestamp(row.get("importado_em")),
+                str(row.get("arquivo_nome") or "").strip(),
+            )
+
+        if kind == "mrp":
+            row = db.load_mrp_load()
+            if not row:
+                return "Ainda não atualizada", ""
+            files = row.get("arquivos") or []
+            source = " + ".join(str(item) for item in files if str(item).strip())
+            return _format_update_timestamp(row.get("atualizado_em")), source
+
+        if kind == "suppliers":
+            rows = db.list_supplier_imports(limit=1)
+            if not rows:
+                return "Ainda não atualizada", ""
+            row = rows[0]
+            return (
+                _format_update_timestamp(row.get("importado_em")),
+                str(row.get("arquivo_nome") or "").strip(),
+            )
+
+        if kind == "process":
+            rows = db.list_process_records(limit=1)
+            if not rows:
+                return "Ainda não atualizada", ""
+            row = rows[0]
+            return (
+                _format_update_timestamp(row.get("processado_em")),
+                str(row.get("arquivo_final") or row.get("arquivo_original") or "").strip(),
+            )
+    except Exception:
+        return "Não foi possível consultar", ""
+
+    return "Ainda não atualizada", ""
+
+
+def show_last_update(kind: str) -> None:
+    updated, source = _last_update_info(kind)
+    suffix = f" • {source}" if source else ""
+    st.caption(f"Última atualização: **{updated}**{suffix}")
+
+
 @st.cache_data(show_spinner=False, max_entries=20)
 def _read_uploaded_table_cached(
     raw: bytes,
@@ -1226,6 +1293,7 @@ def _build_mrp_impact(
 def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -> None:
     show_flash("_flash_mrp")
     st.markdown("### Priorização por impacto no MRP")
+    show_last_update("mrp")
 
     if allow_feed:
         st.write(
@@ -1378,7 +1446,18 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 if not st.session_state.analysis.empty:
                     st.session_state.analysis = apply_cross_checks(st.session_state.analysis)
 
-                persisted = persist_mrp_current()
+                try:
+                    persisted = persist_mrp_current()
+                    if db.configured() and not bool(persisted.get("ok", False)):
+                        raise RuntimeError(
+                            "O Supabase não confirmou a gravação da carga MRP."
+                        )
+                except Exception as exc:
+                    st.error(
+                        "A carga foi validada, mas NÃO foi gravada no Supabase. "
+                        f"A prévia foi mantida para nova tentativa. Detalhe: {exc}"
+                    )
+                    return
 
                 st.session_state.mrp_import_preview_detail = pd.DataFrame()
                 st.session_state.mrp_import_preview_summary = pd.DataFrame()
@@ -3595,6 +3674,7 @@ elif page == "Pendências":
     pend_pre_tab, pend_mrp_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP", "Processamento de arquivos"])
 
     with pend_pre_tab:
+        show_last_update("pre")
         if pre_base.empty:
             st.info(
                 "A base de pré-notas ainda não foi carregada. "
@@ -3868,6 +3948,7 @@ elif page == "Pendências":
         render_mrp_priority_feed("pendencias_mrp", allow_feed=False)
 
     with pend_process_tab:
+        show_last_update("process")
         render_file_processing()
 
 
@@ -4020,6 +4101,7 @@ elif page == "Configurações":
         with feed_pre:
             show_flash("_flash_pre")
             st.markdown("### Validação de pré-notas")
+            show_last_update("pre")
             st.write(
                 "Formato validado: A = Data, B = Recebedor, C = Número da NF, D = Fornecedor, E = CNPJ e F = Status. "
                 "Somente registros com status **Pré-nota lançada** entram na base. "
@@ -4219,6 +4301,7 @@ elif page == "Configurações":
         with feed_sup:
             show_flash("_flash_supplier")
             st.markdown("### Base de fornecedores")
+            show_last_update("suppliers")
             st.write(
                 "Formato validado: A = Código, B = Loja, C = Razão Social, "
                 "D = Nome Fantasia, K = Tipo e O = CNPJ/CPF. "
