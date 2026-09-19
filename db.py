@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date, datetime
 from typing import Iterable
 
 import requests
@@ -70,11 +71,40 @@ def _raise(response: requests.Response) -> None:
     raise RuntimeError(f"Supabase HTTP {response.status_code}: {message}")
 
 
+def _json_safe(value):
+    """Converte datas e escalares para tipos aceitos pelo JSON do requests."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+
+    # Compatibilidade com escalares NumPy/Pandas sem importar essas bibliotecas.
+    item_method = getattr(value, "item", None)
+    if callable(item_method):
+        try:
+            return _json_safe(item_method())
+        except Exception:
+            pass
+
+    iso_method = getattr(value, "isoformat", None)
+    if callable(iso_method):
+        try:
+            return iso_method()
+        except Exception:
+            pass
+
+    return str(value)
+
+
 def rpc(name: str, payload: dict | None = None, timeout: int = 60):
     response = requests.post(
         f"{supabase_url()}/rest/v1/rpc/{name}",
         headers=_headers(),
-        json=payload or {},
+        json=_json_safe(payload or {}),
         timeout=timeout,
     )
     _raise(response)
@@ -246,6 +276,15 @@ def load_pre_notes() -> list[dict]:
         return []
     return _select_all("nf_pre_notas_atual", order="data_pre_nota.desc.nullslast", max_rows=30000)
 
+
+def list_pre_note_imports(limit: int = 20) -> list[dict]:
+    if not configured():
+        return []
+    return _select_all(
+        "nf_pre_nota_importacoes",
+        order="importado_em.desc",
+        max_rows=limit,
+    )[:limit]
 
 
 def list_users(active_only: bool = False) -> list[dict]:
