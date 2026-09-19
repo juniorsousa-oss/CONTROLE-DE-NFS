@@ -207,6 +207,50 @@ def init():
 
 
 init()
+
+# Reinício controlado da homologação: notas enviadas, lote de arquivos,
+# resultados intermediários e cargas MRP são zerados uma única vez após
+# este deploy. Mantém a base de Pré-notas, fornecedores, usuários e
+# configurações, que não fazem parte do reset solicitado.
+_reset_marker = "_nf_mrp_operational_reset_20260919_v1"
+if not st.session_state.get(_reset_marker):
+    for _key in (
+        "analysis",
+        "mrp_priority_summary",
+        "mrp_impact_detail",
+        "mrp_import_preview_detail",
+        "mrp_import_preview_summary",
+    ):
+        st.session_state[_key] = pd.DataFrame()
+    for _key in (
+        "pdfs", "zip_outputs", "prefilter_stats",
+        "mrp_priority_stats", "danfe_outputs",
+    ):
+        st.session_state[_key] = {}
+    for _key in (
+        "prefilter_rejected", "danfe_results", "danfe_errors",
+        "history", "current_test_manifest", "mrp_ignored_records",
+    ):
+        st.session_state[_key] = []
+    st.session_state["mrp_priority_files"] = ()
+    for _key in (
+        "priority_nf_numbers", "priority_nf_keys",
+        "priority_nf_doc_keys", "priority_date_nf_keys",
+    ):
+        st.session_state[_key] = set()
+
+    # Também desmarca arquivos previamente enviados para que a análise não
+    # reaproveite silenciosamente o lote anterior após atualizar a página.
+    for _key in (
+        "nf_hybrid_uploads", "danfe_xml_uploads",
+        "mrp_materials", "mrp_entries",
+        "treatment_editor", "_flash_mrp",
+        "_flash_process", "_flash_nf",
+    ):
+        st.session_state.pop(_key, None)
+
+    st.session_state[_reset_marker] = True
+
 if not SAVE_NF_HISTORY:
     # Histórico oficial permanece vazio durante os testes.
     st.session_state.history = []
