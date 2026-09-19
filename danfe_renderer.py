@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from functools import lru_cache
 
 import fitz
 
@@ -178,29 +179,107 @@ def _text(page, x, y, value, size=6.4, bold=False, color=BLACK):
 
 
 def _fit_text(page, x0, y, x1, value, preferred=6.4, minimum=4.4, bold=False, align="left"):
+    """Desenha uma linha sem permitir que ultrapasse x1."""
     value = str(value or "")
-    size = _fit_size(value, max(1, x1 - x0), preferred, minimum, bold)
+    if not value:
+        return
+
+    available = max(1.0, x1 - x0)
+    size = _fit_size(value, available, preferred, minimum, bold)
+
+    # Se nem no mínimo definido o texto couber, reduz apenas o necessário,
+    # com piso técnico de 3,6 pt. É preferível reduzir a invadir outra célula.
     width = _text_width(value, size, bold)
+    if width > available and width > 0:
+        size = max(3.6, size * (available / width) * 0.985)
+        width = _text_width(value, size, bold)
+
     x = x0
     if align == "right":
-        x = x1 - width
+        x = max(x0, x1 - width)
     elif align == "center":
-        x = x0 + max(0, (x1 - x0 - width) / 2)
+        x = x0 + max(0, (available - width) / 2)
     _text(page, x, y, value, size, bold)
 
 
+def _fit_textbox(
+    page,
+    rect,
+    value,
+    preferred=7.0,
+    minimum=4.2,
+    bold=False,
+    align=0,
+    color=BLACK,
+    lineheight=1.0,
+):
+    """Texto confinado à caixa, reduzindo fonte e quebrando palavras longas."""
+    text = str(value or "").strip()
+    if not text:
+        return True
+
+    box = fitz.Rect(*rect)
+    font = FONT_BOLD if bold else FONT
+    size = float(preferred)
+
+    while size >= minimum - 0.001:
+        result = page.insert_textbox(
+            box,
+            text,
+            fontsize=size,
+            fontname=font,
+            color=color,
+            align=align,
+            lineheight=lineheight,
+            overlay=True,
+        )
+        if result >= 0:
+            return True
+        size -= 0.25
+
+    # Fallback determinístico: nossa própria quebra de linha garante que
+    # tokens longos não façam o insert_textbox desaparecer silenciosamente.
+    size = max(3.6, minimum)
+    lines = _wrap(text, max(1.0, box.width), size, bold)
+    leading = size * max(1.0, lineheight)
+    max_lines = max(1, int((box.height - 1.0) / leading))
+    lines = lines[:max_lines]
+    if len(_wrap(text, max(1.0, box.width), size, bold)) > max_lines and lines:
+        last = lines[-1]
+        while last and _text_width(last + "...", size, bold) > box.width:
+            last = last[:-1]
+        lines[-1] = (last.rstrip() + "...") if last else "..."
+
+    total_h = len(lines) * leading
+    yy = box.y0 + size
+    if align == 1 and total_h < box.height:
+        yy = box.y0 + max(size, (box.height - total_h) / 2 + size)
+
+    for line in lines:
+        if yy > box.y1:
+            break
+        width = _text_width(line, size, bold)
+        xx = box.x0
+        if align == 1:
+            xx = box.x0 + max(0, (box.width - width) / 2)
+        elif align == 2:
+            xx = max(box.x0, box.x1 - width)
+        _text(page, xx, yy, line, size, bold, color)
+        yy += leading
+    return False
+
+
 def _textbox(page, rect, value, size=6.0, bold=False, align=0, color=BLACK, lineheight=1.08):
-    if not str(value or "").strip():
-        return
-    page.insert_textbox(
-        fitz.Rect(*rect),
-        str(value),
-        fontsize=size,
-        fontname=FONT_BOLD if bold else FONT,
-        color=color,
+    return _fit_textbox(
+        page,
+        rect,
+        value,
+        preferred=size,
+        minimum=max(3.8, min(size, 4.8)),
+        bold=bold,
         align=align,
+        color=color,
         lineheight=lineheight,
-        overlay=True,
     )
 
 
@@ -215,35 +294,36 @@ def _field_label(page, x, y, value):
 def _cell(page, rect, label, value="", value_size=8.0, bold=False, align="left", fill=None):
     x0, y0, x1, y1 = rect
     _rect(page, rect, fill=fill)
-    _field_label(page, x0 + 2.1, y0 + 7.0, label)
+
+    # O rótulo também deve respeitar a largura da célula.
+    _fit_text(
+        page,
+        x0 + 2.1,
+        y0 + 6.6,
+        x1 - 2.1,
+        str(label or "").upper(),
+        5.2,
+        4.0,
+        True,
+    )
+
     if value not in (None, ""):
         align_code = {"left": 0, "center": 1, "right": 2}.get(align, 0)
-        value_top = y0 + 9.0
-        value_bottom = y1 - 1.8
-        # Mantém o conteúdo legível e permite quebra em duas linhas nos
-        # campos estreitos, sem reduzir indefinidamente a fonte.
-        size = max(7.0, float(value_size or 8.0))
-        result = page.insert_textbox(
-            fitz.Rect(x0 + 2.1, value_top, x1 - 2.1, value_bottom),
+        value_top = y0 + 7.4
+        value_bottom = y1 - 1.2
+
+        preferred = min(7.0, max(5.2, float(value_size or 6.2)))
+        _fit_textbox(
+            page,
+            (x0 + 2.1, value_top, x1 - 2.1, value_bottom),
             str(value),
-            fontsize=size,
-            fontname=FONT_BOLD if bold else FONT,
-            color=BLACK,
+            preferred=preferred,
+            minimum=4.0,
+            bold=bold,
             align=align_code,
-            lineheight=1.0,
-            overlay=True,
+            color=BLACK,
+            lineheight=0.95,
         )
-        if result < 0 and size > 7.0:
-            page.insert_textbox(
-                fitz.Rect(x0 + 2.1, value_top, x1 - 2.1, value_bottom),
-                str(value),
-                fontsize=7.0,
-                fontname=FONT_BOLD if bold else FONT,
-                color=BLACK,
-                align=align_code,
-                lineheight=1.0,
-                overlay=True,
-            )
 
 
 def _section_title(page, y, title):
@@ -316,15 +396,25 @@ def _code128_values(raw_key: str) -> list[int]:
     return [*values, checksum, 106]
 
 
-def _barcode(page, rect, key):
-    x0, y0, x1, y1 = rect
-    values = _code128_values(key)
-    patterns = [CODE128_PATTERNS[v] for v in values]
-
+@lru_cache(maxsize=256)
+def _barcode_pattern_data(key: str):
+    normalized = "".join(ch for ch in str(key or "").upper() if ch.isalnum())
+    values = _code128_values(normalized)
+    patterns = tuple(CODE128_PATTERNS[v] for v in values)
     pattern_modules = sum(
         sum(int(char) for char in pattern)
         for pattern in patterns
     )
+    return normalized, patterns, pattern_modules
+
+
+def _barcode(page, rect, key):
+    x0, y0, x1, y1 = rect
+    normalized, patterns, pattern_modules = _barcode_pattern_data(str(key or ""))
+
+    # A mesma chave usa exatamente a mesma sequência de módulos em todas as
+    # folhas. Apenas a posição Y muda porque a 1ª folha possui canhoto.
+
     quiet_modules = 10
     total_modules = pattern_modules + (quiet_modules * 2)
 
@@ -481,7 +571,16 @@ def _draw_main_header(page, data, y, page_no, total_pages):
     _rect(page, (x2, y, RIGHT, y + h))
 
     # emitente
-    _fit_text(page, MARGIN + 5, y + 17, x1 - 5, data["emitente"], 12.0, 12.0, True, "center")
+    _fit_textbox(
+        page,
+        (MARGIN + 5, y + 5, x1 - 5, y + 27),
+        data["emitente"],
+        preferred=11.5,
+        minimum=6.8,
+        bold=True,
+        align=1,
+        lineheight=0.95,
+    )
     a = data["emitente_end"]
     address = ", ".join(v for v in [a["logradouro"], a["numero"], a["complemento"]] if v)
     rows = [
@@ -493,7 +592,7 @@ def _draw_main_header(page, data, y, page_no, total_pages):
     yy = y + 36
     for row in rows:
         if row:
-            _fit_text(page, MARGIN + 5, yy, x1 - 5, row, 8.0, 7.0, True, "center")
+            _fit_text(page, MARGIN + 5, yy, x1 - 5, row, 7.2, 4.8, True, "center")
             yy += 13
 
     # centro DANFE
@@ -728,11 +827,19 @@ def _draw_shipping(page, data, y):
 
 
 def _product_description(item):
-    parts = [
-        str(item.get("desc") or "").strip(),
-        str(item.get("inf_ad_prod") or "").strip(),
-    ]
-    return " ".join(p for p in parts if p)
+    desc = str(item.get("desc") or "").strip()
+    extra = str(item.get("inf_ad_prod") or "").strip()
+
+    if desc and extra:
+        return f"{desc} {extra}"
+    if desc:
+        return desc
+    if extra:
+        return extra
+
+    # Nunca deixa uma célula de descrição silenciosamente vazia. Se o XML
+    # realmente não trouxer xProd/infAdProd, a ausência fica explícita.
+    return "DESCRIÇÃO NÃO INFORMADA NO XML"
 
 
 def _row_height(item):
@@ -802,16 +909,24 @@ def _draw_product_rows(page, items, heights, y, bottom):
         for i, value in enumerate(values):
             x0, x1 = PRODUCT_X[i], PRODUCT_X[i + 1]
             if i == 1:
-                _textbox(
-                    page,
-                    (x0 + 2, y + 3, x1 - 2, y + h - 2),
-                    _product_description(item),
+                # Descrição usa a mesma rotina de quebra usada no cálculo da
+                # altura da linha. Evita o caso em que o textbox falhava com
+                # tokens Siemens longos e a descrição desaparecia por completo.
+                desc = _product_description(item)
+                desc_lines = _wrap(
+                    desc,
+                    max(1.0, x1 - x0 - 4.0),
                     6.0,
-                    False,
-                    0,
-                    BLACK,
-                    1.05,
                 )
+                leading = 6.55
+                max_lines = max(1, int((h - 5.0) / leading))
+                desc_lines = desc_lines[:max_lines]
+                yy = y + 8.0
+                for desc_line in desc_lines:
+                    if yy > y + h - 1.5:
+                        break
+                    _text(page, x0 + 2.0, yy, desc_line, 6.0)
+                    yy += leading
             elif value not in (None, ""):
                 align = "right" if i >= 6 else "left"
                 _fit_text(
