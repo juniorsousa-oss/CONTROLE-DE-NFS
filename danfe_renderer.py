@@ -311,19 +311,36 @@ def _cell(page, rect, label, value="", value_size=8.0, bold=False, align="left",
         align_code = {"left": 0, "center": 1, "right": 2}.get(align, 0)
         value_top = y0 + 7.4
         value_bottom = y1 - 1.2
-
+        available_h = max(1.0, value_bottom - value_top)
         preferred = min(7.0, max(5.2, float(value_size or 6.2)))
-        _fit_textbox(
-            page,
-            (x0 + 2.1, value_top, x1 - 2.1, value_bottom),
-            str(value),
-            preferred=preferred,
-            minimum=4.0,
-            bold=bold,
-            align=align_code,
-            color=BLACK,
-            lineheight=0.95,
-        )
+
+        if available_h < 13.0:
+            # Células de 20 pt comportam só uma linha útil. Nelas é melhor
+            # reduzir horizontalmente do que quebrar em duas linhas e cortar
+            # a segunda (caso observado em municípios de transportadoras).
+            _fit_text(
+                page,
+                x0 + 2.1,
+                y1 - 3.0,
+                x1 - 2.1,
+                str(value),
+                preferred=preferred,
+                minimum=3.8,
+                bold=bold,
+                align=align,
+            )
+        else:
+            _fit_textbox(
+                page,
+                (x0 + 2.1, value_top, x1 - 2.1, value_bottom),
+                str(value),
+                preferred=preferred,
+                minimum=4.0,
+                bold=bold,
+                align=align_code,
+                color=BLACK,
+                lineheight=0.95,
+            )
 
 
 def _section_title(page, y, title):
@@ -843,12 +860,18 @@ def _product_description(item):
 
 
 def _row_height(item):
-    lines = _wrap(
+    desc_lines = _wrap(
         _product_description(item),
         PRODUCT_X[2] - PRODUCT_X[1] - 5,
-        6.0,
+        6.05,
     )
-    return max(17.5, len(lines) * 7.0 + 6.0)
+    code_lines = _wrap(
+        str(item.get("code") or ""),
+        PRODUCT_X[1] - PRODUCT_X[0] - 4,
+        5.2,
+    )
+    content_lines = max(1, len(desc_lines), len(code_lines))
+    return max(18.0, content_lines * 6.9 + 6.0)
 
 
 def _product_header_height():
@@ -908,24 +931,39 @@ def _draw_product_rows(page, items, heights, y, bottom):
 
         for i, value in enumerate(values):
             x0, x1 = PRODUCT_X[i], PRODUCT_X[i + 1]
-            if i == 1:
+            if i == 0:
+                # Códigos de produto podem ter 15-20 caracteres. Quebrá-los em
+                # até poucas linhas mantém leitura melhor do que reduzir para
+                # uma fonte microscópica.
+                code_lines = _wrap(
+                    str(value or ""),
+                    max(1.0, x1 - x0 - 3.2),
+                    5.2,
+                )
+                leading = 5.8
+                max_lines = max(1, int((h - 5.0) / leading))
+                yy = y + 7.3
+                for code_line in code_lines[:max_lines]:
+                    if yy > y + h - 1.3:
+                        break
+                    _text(page, x0 + 1.6, yy, code_line, 5.2)
+                    yy += leading
+            elif i == 1:
                 # Descrição usa a mesma rotina de quebra usada no cálculo da
-                # altura da linha. Evita o caso em que o textbox falhava com
-                # tokens Siemens longos e a descrição desaparecia por completo.
+                # altura da linha. Evita desaparecimento e melhora a leitura.
                 desc = _product_description(item)
                 desc_lines = _wrap(
                     desc,
                     max(1.0, x1 - x0 - 4.0),
-                    6.0,
+                    6.05,
                 )
                 leading = 6.55
                 max_lines = max(1, int((h - 5.0) / leading))
-                desc_lines = desc_lines[:max_lines]
                 yy = y + 8.0
-                for desc_line in desc_lines:
+                for desc_line in desc_lines[:max_lines]:
                     if yy > y + h - 1.5:
                         break
-                    _text(page, x0 + 2.0, yy, desc_line, 6.0)
+                    _text(page, x0 + 2.0, yy, desc_line, 6.05)
                     yy += leading
             elif value not in (None, ""):
                 align = "right" if i >= 6 else "left"
@@ -935,8 +973,8 @@ def _draw_product_rows(page, items, heights, y, bottom):
                     y + 8,
                     x1 - 1.5,
                     value,
-                    6.0,
-                    6.0,
+                    5.8 if i >= 6 else 5.9,
+                    4.2,
                     False,
                     align,
                 )
