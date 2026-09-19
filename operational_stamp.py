@@ -81,7 +81,7 @@ def draw_operational_stamp_block(
     )
     page.insert_textbox(
         fitz.Rect(x0 + 6, y0 + 4, x1 - 6, y0 + title_h - 2),
-        "CONTROLE INTERNO — SETTA",
+        "CONTROLE INTERNO - SETTA",
         fontsize=8.0,
         fontname="Times-Bold",
         color=STAMP_TEXT,
@@ -178,7 +178,7 @@ def apply_operational_stamp(
     for candidate in doc:
         text = candidate.get_text("text").upper()
         if (
-            "CONTROLE INTERNO — SETTA" in text
+            "CONTROLE INTERNO - SETTA" in text
             or "CONTROLE INTERNO - SETTA" in text
         ):
             doc.close()
