@@ -3729,13 +3729,21 @@ if page == "Dashboard":
             st.dataframe(table, use_container_width=True, hide_index=True)
 
         export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
-        st.download_button(
-            "Exportar consulta para Excel",
-            excel_bytes(export_view, "Controle NFs"),
-            file_name=f"controle_nfs_{now_local():%d%m%Y}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-        )
+        try:
+            export_payload = excel_bytes(export_view, "Controle NFs")
+        except Exception as exc:
+            st.warning(
+                "O Dashboard continua disponível, mas a exportação para Excel "
+                f"não pôde ser preparada: {exc}"
+            )
+        else:
+            st.download_button(
+                "Exportar consulta para Excel",
+                export_payload,
+                file_name=f"controle_nfs_{now_local():%d%m%Y}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
 
 
 
