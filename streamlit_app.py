@@ -430,9 +430,76 @@ def metrics(df: pd.DataFrame):
 
 
 def excel_bytes(frame: pd.DataFrame, sheet: str = "Dados") -> bytes:
+    """Gera XLSX seguro para dados vindos do Supabase.
+
+    O Excel/openpyxl não aceita datetimes com timezone. A exportação usa uma
+    cópia do DataFrame, converte timestamps com fuso para o horário local e
+    remove somente a informação de timezone da célula. O DataFrame original
+    e os registros persistidos permanecem inalterados.
+    """
+    export = frame.copy()
+
+    def excel_safe_value(value):
+        if value is None:
+            return None
+
+        try:
+            if pd.isna(value):
+                return None
+        except Exception:
+            pass
+
+        if isinstance(value, pd.Timestamp):
+            if value.tzinfo is not None:
+                try:
+                    value = value.tz_convert(TZ).tz_localize(None)
+                except Exception:
+                    value = value.tz_localize(None)
+            return value.to_pydatetime()
+
+        if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                try:
+                    value = value.astimezone(TZ).replace(tzinfo=None)
+                except Exception:
+                    value = value.replace(tzinfo=None)
+            return value
+
+        if isinstance(value, (dict, list, tuple, set)):
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                default=str,
+            )
+
+        item_method = getattr(value, "item", None)
+        if callable(item_method):
+            try:
+                return excel_safe_value(item_method())
+            except Exception:
+                pass
+
+        return value
+
+    for column in export.columns:
+        series = export[column]
+
+        # DatetimeTZDtype precisa ser normalizado antes do to_excel.
+        if isinstance(series.dtype, pd.DatetimeTZDtype):
+            export[column] = (
+                series.dt.tz_convert(TZ)
+                .dt.tz_localize(None)
+            )
+            continue
+
+        # Colunas object podem conter Timestamp/datetime individuais,
+        # listas JSON ou escalares NumPy.
+        if series.dtype == "object":
+            export[column] = series.map(excel_safe_value)
+
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        frame.to_excel(writer, index=False, sheet_name=sheet[:31])
+        export.to_excel(writer, index=False, sheet_name=sheet[:31])
     return buffer.getvalue()
 
 
