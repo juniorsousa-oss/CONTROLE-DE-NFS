@@ -3506,39 +3506,30 @@ def render_file_processing():
         if danfe_outputs:
             st.markdown("#### Arquivos para download")
 
-            if len(danfe_outputs) > 1:
-                batch_buffer = io.BytesIO()
-                with zipfile.ZipFile(
-                    batch_buffer,
-                    "w",
-                    zipfile.ZIP_DEFLATED,
-                ) as archive:
-                    for pdf_name, item in danfe_outputs.items():
-                        archive.writestr(pdf_name, item["bytes"])
+            # Um único download para o lote inteiro. Mesmo quando houver apenas
+            # uma NF, o comportamento continua igual e evita uma sequência de
+            # botões individuais na tela.
+            batch_buffer = io.BytesIO()
+            with zipfile.ZipFile(
+                batch_buffer,
+                "w",
+                zipfile.ZIP_DEFLATED,
+            ) as archive:
+                for pdf_name, item in danfe_outputs.items():
+                    archive.writestr(pdf_name, item["bytes"])
 
-                st.download_button(
-                    "BAIXAR TODOS OS DANFEs (.ZIP)",
-                    batch_buffer.getvalue(),
-                    file_name=f"DANFEs_{now_local():%Y%m%d_%H%M%S}.zip",
-                    mime="application/zip",
-                    type="primary",
-                    use_container_width=True,
-                    key="download_all_danfes",
-                )
-
-            for pos, (pdf_name, item) in enumerate(danfe_outputs.items(), start=1):
-                label = (
-                    f"Baixar NF {item.get('numero_nf') or '-'} — "
-                    f"{item.get('emitente') or pdf_name}"
-                )
-                st.download_button(
-                    label,
-                    item["bytes"],
-                    file_name=pdf_name,
-                    mime="application/pdf",
-                    use_container_width=True,
-                    key=f"download_danfe_{pos}_{pdf_name}",
-                )
+            st.download_button(
+                "BAIXAR TODOS OS DANFEs (.ZIP)",
+                batch_buffer.getvalue(),
+                file_name=f"DANFEs_{now_local():%Y%m%d_%H%M%S}.zip",
+                mime="application/zip",
+                type="primary",
+                use_container_width=True,
+                key="download_all_danfes",
+            )
+            st.caption(
+                f"{len(danfe_outputs)} DANFE(s) incluída(s) no arquivo compactado."
+            )
 
 
     with tab_cte:
@@ -3634,9 +3625,21 @@ if page == "Dashboard":
             "status", "recebido_em", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
         ])
 
-    for col in ["recebido_em", "pdf_criado_em", "enviado_em", "processado_em", "pre_nota_em"]:
+    # Timestamps do banco são gravados em UTC. Converte os eventos operacionais
+    # para o horário local de Patos de Minas/São Paulo antes de exibir.
+    for col in ["recebido_em", "pdf_criado_em", "enviado_em", "processado_em"]:
         if col in records.columns:
-            records[col] = pd.to_datetime(records[col], errors="coerce")
+            records[col] = (
+                pd.to_datetime(records[col], errors="coerce", utc=True)
+                .dt.tz_convert(TZ)
+                .dt.tz_localize(None)
+            )
+    # pre_nota_em representa uma data de negócio, não um instante UTC.
+    if "pre_nota_em" in records.columns:
+        records["pre_nota_em"] = pd.to_datetime(
+            records["pre_nota_em"],
+            errors="coerce",
+        )
 
     # O Dashboard é somente consulta. A grade operacional exibe apenas NFs
     # cujo envio já foi confirmado na tela de Pré-notas.
@@ -4101,6 +4104,21 @@ elif page == "Pendências":
             ] if x in awaiting_send.columns]
 
             send_view = awaiting_send[send_cols].copy().reset_index(drop=True)
+            if "pdf_criado_em" in send_view.columns:
+                send_view["pdf_criado_em"] = (
+                    pd.to_datetime(
+                        send_view["pdf_criado_em"],
+                        errors="coerce",
+                        utc=True,
+                    )
+                    .dt.tz_convert(TZ)
+                    .dt.tz_localize(None)
+                )
+            if "pre_nota_em" in send_view.columns:
+                send_view["pre_nota_em"] = pd.to_datetime(
+                    send_view["pre_nota_em"],
+                    errors="coerce",
+                )
             send_view.insert(0, "Confirmar", False)
 
             send_editor = st.data_editor(
@@ -4110,6 +4128,9 @@ elif page == "Pendências":
                 disabled=[x for x in send_view.columns if x != "Confirmar"],
                 key="pre_notes_send_confirmation",
                 column_config={
+                    # ID permanece no DataFrame para a atualização no banco,
+                    # mas não faz parte da interface do usuário.
+                    "id": None,
                     "Confirmar": st.column_config.CheckboxColumn(
                         "Confirmar",
                         help="Marque somente após o envio efetivo da NF.",
