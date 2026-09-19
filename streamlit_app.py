@@ -62,7 +62,6 @@ DEFAULT = {
     "intro": "Envie os PDFs, valide as correspondências encontradas e somente depois gere os arquivos com o padrão definitivo.",
     "button_color": "#111111",
     "footer": "SETTA | Controle de Notas Fiscais",
-    "naturezas": "MP,MC",
     "favicon_data": "",
     "favicon_mime": "image/png",
 }
@@ -319,12 +318,6 @@ button[kind="primary"],button[data-testid="stBaseButton-primary"]{background:var
 """.replace("__COLOR__", color),
     unsafe_allow_html=True,
 )
-
-
-def parse_natures() -> list[str]:
-    raw = str(st.session_state.cfg.get("naturezas") or "MP,MC")
-    values = [re.sub(r"\s+", " ", x.strip().upper()) for x in re.split(r"[,;|\n]", raw) if x.strip()]
-    return list(dict.fromkeys(values)) or ["MP", "MC"]
 
 
 def recalc(df: pd.DataFrame) -> pd.DataFrame:
@@ -2199,6 +2192,8 @@ def make_zip_outputs(df: pd.DataFrame):
 
 
 def save_config_or_session(new_cfg: dict) -> tuple[bool, str]:
+    new_cfg = dict(new_cfg)
+    new_cfg.pop("naturezas", None)
     st.session_state.cfg = new_cfg
     if not db.configured():
         return False, "Configuração aplicada somente nesta sessão: SUPABASE_ANON_KEY ainda não está configurada neste app."
@@ -2368,13 +2363,16 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
             pdf_item["raw"],
             st.session_state.suppliers,
             ocr_fallback=True,
-            allowed_natures=parse_natures(),
         )
 
     if pdf_result is not None:
         # O PDF pode complementar leitura/validação, mas nunca prevalece como
         # arquivo-base quando também existe XML.
         row = pdf_result.to_dict()
+        # Natureza interna não é aceita do PDF/carimbo antigo. Ela será
+        # preenchida exclusivamente pela carga de Nota Fiscal (STSUP01).
+        row["natureza"] = ""
+        row["natureza_origem"] = ""
     elif xml_item is not None:
         row = {
             "file_id": uuid.uuid4().hex[:16],
@@ -2877,23 +2875,15 @@ def render_file_processing():
             frame = recalc(frame)
             st.markdown("### Conferência das correspondências")
             metrics(frame)
-            st.caption("Vencimento, número da NF, fornecedor, natureza interna e status podem ser corrigidos antes da geração definitiva.")
-            st.info(
-                "Tratamento de exceções: quando uma linha ficar em REVISAR, corrija o campo pendente diretamente na tabela "
-                "(por exemplo, Vencimento), confira o fornecedor/natureza e então altere o Status para APROVADO. "
-                "O nome final é recalculado automaticamente."
+            st.caption(
+                "Vencimento, número da NF, fornecedor e status podem ser tratados antes da geração definitiva. "
+                "A Natureza é somente leitura e vem da carga de Nota Fiscal (STSUP01)."
             )
-
-            nature_options = parse_natures()
-            with st.expander("Atribuição rápida de natureza", expanded=False):
-                c1, c2 = st.columns([2, 1])
-                bulk_nature = c1.selectbox("Natureza", nature_options, key="bulk_nature")
-                only_blank = c2.checkbox("Somente vazias", value=True)
-                if st.button("Aplicar natureza ao lote"):
-                    target = frame["natureza"].fillna("").astype(str).str.strip().eq("") if only_blank else pd.Series(True, index=frame.index)
-                    frame.loc[target, "natureza"] = bulk_nature
-                    st.session_state.analysis = recalc(frame)
-                    st.rerun()
+            st.info(
+                "Tratamento de exceções: quando uma linha ficar em REVISAR, corrija somente os campos permitidos "
+                "(por exemplo, Vencimento) e então altere o Status para APROVADO. "
+                "Se a Natureza estiver vazia, a correção deve ser feita na carga de Nota Fiscal, não manualmente nesta tela."
+            )
 
             merged = frame.copy()
             pending_mask = treatment_mask(merged)
@@ -2960,6 +2950,7 @@ def render_file_processing():
                     disabled=[
                         "arquivo_original",
                         "origem_dados",
+                        "natureza",
                         "validacao",
                         "observacao",
                     ],
@@ -2985,7 +2976,7 @@ def render_file_processing():
                         "natureza": st.column_config.TextColumn(
                             "Natureza",
                             width="large",
-                            help="Natureza buscada primeiro na carga de NFs (STSUP01, coluna Natureza). Pode ser ajustada manualmente se necessário.",
+                            help="Somente leitura. Retornada exclusivamente da carga de Nota Fiscal (STSUP01, coluna Natureza).",
                         ),
                         "status": st.column_config.SelectboxColumn(
                             "Status",
@@ -3015,7 +3006,6 @@ def render_file_processing():
                         "numero_nf",
                         "cnpj_fornecedor",
                         "fornecedor_padrao",
-                        "natureza",
                         "status",
                     ]
                     for idx in treatment_editor.index:
@@ -3899,7 +3889,6 @@ elif page == "Configurações":
             )
             intro = st.text_area("Texto da tela principal", cur["intro"])
             footer = st.text_input("Rodapé", cur["footer"])
-            natures = st.text_input("Naturezas para atribuição rápida (separadas por vírgula)", str(cur.get("naturezas") or "MP,MC"))
             button_color = st.color_picker("Cor principal dos botões", cur["button_color"])
             save = st.form_submit_button("Salvar textos e cor", type="primary", use_container_width=True)
         if save:
@@ -3911,7 +3900,6 @@ elif page == "Configurações":
                 control_docs_label=control_docs_label or DEFAULT["control_docs_label"],
                 intro=intro or DEFAULT["intro"],
                 footer=footer or DEFAULT["footer"],
-                naturezas=natures or DEFAULT["naturezas"],
                 button_color=button_color.upper(),
             )
             try:
