@@ -550,12 +550,11 @@ def process_nf_pdf(
     emitter = extract_emitter_name(text)
     due_dates = extract_due_dates(text, key_info.get("aamm", ""))
     due = due_dates[0] if due_dates else None
-    nature = extract_internal_nature(text, allowed_natures)
-    nature_from_stamp_ocr = False
-    if not nature:
-        stamp_text = extract_stamp_text(pdf_bytes)
-        nature = extract_internal_nature(stamp_text, allowed_natures)
-        nature_from_stamp_ocr = bool(nature)
+
+    # Regra operacional SETTA: a natureza interna não é inferida do PDF,
+    # do texto fiscal nem de carimbo antigo. A única fonte válida é a carga
+    # de Nota Fiscal (STSUP01), aplicada posteriormente no cruzamento do app.
+    nature = ""
 
     matched = match_supplier(cnpj, emitter, suppliers)
     supplier = str(matched.get("nome_padrao") or "").strip()
@@ -591,10 +590,9 @@ def process_nf_pdf(
         notes.append(f"Fornecedor vinculado por similaridade de nome ({supplier_score}%).")
     else:
         notes.append("Fornecedor não encontrado na base; necessário validar na conferência.")
-    if nature_from_stamp_ocr:
-        notes.append("Natureza interna identificada pelo OCR do carimbo operacional.")
-    elif not nature:
-        notes.append("Natureza interna não identificada automaticamente; informar na conferência antes do ZIP.")
+    notes.append(
+        "Natureza interna aguardando vínculo com a carga de Nota Fiscal (STSUP01)."
+    )
 
     score = min(100, int(score))
     final_name = build_final_name(due, numero, supplier)
