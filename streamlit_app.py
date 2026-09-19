@@ -3638,6 +3638,23 @@ if page == "Dashboard":
         if col in records.columns:
             records[col] = pd.to_datetime(records[col], errors="coerce")
 
+    # O Dashboard é somente consulta. A grade operacional exibe apenas NFs
+    # cujo envio já foi confirmado na tela de Pré-notas.
+    finalized_records = records.copy()
+    if not finalized_records.empty:
+        status_final = (
+            finalized_records.get("status", pd.Series("", index=finalized_records.index))
+            .fillna("")
+            .astype(str)
+            .str.upper()
+            .eq("ENVIADO")
+        )
+        sent_at = finalized_records.get(
+            "enviado_em",
+            pd.Series(pd.NaT, index=finalized_records.index),
+        ).notna()
+        finalized_records = finalized_records[status_final | sent_at].copy()
+
     received = int(records.get("recebido_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
     completed_status = (
         records.get("status", pd.Series("", index=records.index))
@@ -3673,22 +3690,29 @@ if page == "Dashboard":
     if not db.configured():
         st.caption("Persistência ainda não conectada neste deployment. Configure a chave do Supabase em Configurações.")
 
-    st.markdown('<div class="section-title" style="margin-top:1.65rem!important;">Consulta de documentos</div>', unsafe_allow_html=True)
-    if records.empty:
-        st.caption("Os documentos processados passarão a aparecer nesta tabela.")
+    st.markdown('<div class="section-title" style="margin-top:1.65rem!important;">Consulta de documentos finalizados</div>', unsafe_allow_html=True)
+    st.caption(
+        "Esta área é somente para consulta. O envio é confirmado em Geração de Arquivos → Pré-notas pendentes."
+    )
+    if finalized_records.empty:
+        st.caption("Nenhuma NF teve o envio confirmado até o momento.")
     else:
         f1, f2, f3, f4 = st.columns(4)
-        ref_date = pd.to_datetime(records.get("processado_em"), errors="coerce").dt.date if "processado_em" in records.columns else pd.Series([date.today()] * len(records))
+        ref_date = (
+            pd.to_datetime(finalized_records.get("enviado_em"), errors="coerce").dt.date
+            if "enviado_em" in finalized_records.columns
+            else pd.to_datetime(finalized_records.get("processado_em"), errors="coerce").dt.date
+        )
         min_d = min([d for d in ref_date.dropna().tolist()] or [date.today()])
         max_d = max([d for d in ref_date.dropna().tolist()] or [date.today()])
         start_date = f1.date_input("De", value=min_d)
         end_date = f2.date_input("Até", value=max_d)
-        natures = sorted(records.get("natureza", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
+        natures = sorted(finalized_records.get("natureza", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
         nature_filter = f3.multiselect("Natureza", natures, default=natures)
-        suppliers = sorted(records.get("fornecedor_padrao", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
+        suppliers = sorted(finalized_records.get("fornecedor_padrao", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
         supplier_filter = f4.multiselect("Fornecedor", suppliers)
 
-        view = records.copy()
+        view = finalized_records.copy()
         mask_date = (ref_date >= start_date) & (ref_date <= end_date)
         view = view[mask_date]
         if nature_filter and "natureza" in view.columns:
@@ -3706,27 +3730,12 @@ if page == "Dashboard":
         ] if x in view.columns]
         table = view[display_cols].copy().reset_index(drop=True)
 
-        if "id" in table.columns:
-            table.insert(0, "Selecionar", False)
-            edited = st.data_editor(
-                table,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[x for x in table.columns if x != "Selecionar"],
-                key="dashboard_editor",
-            )
-            selected_ids = edited.loc[
-                edited["Selecionar"].fillna(False).astype(bool), "id"
-            ].astype(str).tolist()
-            if st.button("Marcar selecionadas como enviadas", type="primary", disabled=not selected_ids):
-                try:
-                    result = db.mark_sent(selected_ids, st.session_state.operator)
-                    st.success(f"{int(result.get('atualizados', 0))} registro(s) marcados como enviados.")
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Falha ao atualizar envio: {exc}")
-        else:
-            st.dataframe(table, use_container_width=True, hide_index=True)
+        # Dashboard sem ações: somente visualização do histórico finalizado.
+        st.dataframe(
+            table.drop(columns=["id"], errors="ignore"),
+            use_container_width=True,
+            hide_index=True,
+        )
 
         export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
         try:
@@ -4052,6 +4061,145 @@ elif page == "Pendências":
             st.caption(
                 f"Exibindo {len(filtered)} de {len(pending_view)} pré-nota(s) pendente(s)."
             )
+
+        # Etapa final do fluxo: depois de baixar/enviar os ZIPs, a confirmação
+        # acontece ainda nesta aba de Pré-notas. Só após esta ação a NF entra
+        # na consulta de finalizados do Dashboard.
+        awaiting_send = pd.DataFrame()
+        if isinstance(pending_records, pd.DataFrame) and not pending_records.empty:
+            awaiting_send = pending_records.copy()
+            status_series = (
+                awaiting_send.get("status", pd.Series("", index=awaiting_send.index))
+                .fillna("")
+                .astype(str)
+                .str.upper()
+            )
+            sent_series = awaiting_send.get(
+                "enviado_em",
+                pd.Series(pd.NaT, index=awaiting_send.index),
+            )
+            sent_series = pd.to_datetime(sent_series, errors="coerce")
+            awaiting_send = awaiting_send[
+                status_series.isin({"REALIZADO", "PDF CRIADO"})
+                & sent_series.isna()
+            ].copy()
+
+        st.markdown("#### Aguardando confirmação de envio")
+        if awaiting_send.empty:
+            st.caption("Nenhuma NF processada aguardando confirmação de envio.")
+        else:
+            send_cols = [x for x in [
+                "id",
+                "pre_nota_em",
+                "numero_nf",
+                "fornecedor_padrao",
+                "natureza",
+                "vencimento",
+                "prioridade_mrp",
+                "pdf_criado_em",
+                "arquivo_final",
+            ] if x in awaiting_send.columns]
+
+            send_view = awaiting_send[send_cols].copy().reset_index(drop=True)
+            send_view.insert(0, "Confirmar", False)
+
+            send_editor = st.data_editor(
+                send_view,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[x for x in send_view.columns if x != "Confirmar"],
+                key="pre_notes_send_confirmation",
+                column_config={
+                    "Confirmar": st.column_config.CheckboxColumn(
+                        "Confirmar",
+                        help="Marque somente após o envio efetivo da NF.",
+                    ),
+                    "pre_nota_em": st.column_config.DateColumn(
+                        "Data pré-nota",
+                        format="DD/MM/YYYY",
+                    ),
+                    "numero_nf": "NF",
+                    "fornecedor_padrao": st.column_config.TextColumn(
+                        "Fornecedor",
+                        width="large",
+                    ),
+                    "natureza": st.column_config.TextColumn(
+                        "Natureza",
+                        width="medium",
+                    ),
+                    "vencimento": st.column_config.DateColumn(
+                        "Vencimento",
+                        format="DD/MM/YYYY",
+                    ),
+                    "prioridade_mrp": st.column_config.CheckboxColumn(
+                        "Prioridade MRP"
+                    ),
+                    "pdf_criado_em": st.column_config.DatetimeColumn(
+                        "PDF criado em",
+                        format="DD/MM/YYYY HH:mm",
+                    ),
+                    "arquivo_final": st.column_config.TextColumn(
+                        "Arquivo",
+                        width="large",
+                    ),
+                },
+            )
+
+            selected_send_ids = (
+                send_editor.loc[
+                    send_editor["Confirmar"].fillna(False).astype(bool),
+                    "id",
+                ]
+                .dropna()
+                .astype(str)
+                .tolist()
+                if "id" in send_editor.columns
+                else []
+            )
+
+            operator_ready = bool(str(st.session_state.operator or "").strip())
+            if not operator_ready:
+                st.info(
+                    "Selecione o operador no menu lateral para confirmar o envio."
+                )
+
+            if st.button(
+                "CONFIRMAR ENVIO DAS NFs SELECIONADAS",
+                type="primary",
+                use_container_width=True,
+                disabled=(not selected_send_ids or not operator_ready),
+                key="confirm_selected_nf_sent",
+            ):
+                try:
+                    if SAVE_NF_HISTORY and db.configured():
+                        result = db.mark_sent(
+                            selected_send_ids,
+                            st.session_state.operator,
+                        )
+                        updated_count = int(result.get("atualizados", 0))
+                    else:
+                        now_sent = now_local().isoformat()
+                        updated_count = 0
+                        manifest = list(
+                            st.session_state.get("current_test_manifest") or []
+                        )
+                        selected_set = set(selected_send_ids)
+                        for row in manifest:
+                            row_id = str(row.get("id") or row.get("file_id") or "")
+                            if row_id in selected_set:
+                                row["status"] = "ENVIADO"
+                                row["enviado_em"] = now_sent
+                                row["operador"] = st.session_state.operator
+                                updated_count += 1
+                        st.session_state.current_test_manifest = manifest
+
+                    st.success(
+                        f"{updated_count} NF(s) confirmada(s) como enviada(s). "
+                        "Elas já estão disponíveis no Dashboard de finalizados."
+                    )
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Falha ao confirmar envio: {exc}")
 
     with pend_mrp_tab:
         render_mrp_priority_feed("pendencias_mrp", allow_feed=False)
