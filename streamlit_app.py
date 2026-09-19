@@ -3470,8 +3470,14 @@ def render_file_processing():
 
         if danfe_results:
             st.markdown("#### Conferência dos DANFEs gerados")
+            danfe_view = pd.DataFrame(danfe_results)
+            visible_danfe_cols = [
+                column
+                for column in ["XML", "NF", "Série", "Emitente", "CNPJ", "PDF"]
+                if column in danfe_view.columns
+            ]
             st.dataframe(
-                pd.DataFrame(danfe_results),
+                danfe_view[visible_danfe_cols],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
@@ -3480,10 +3486,6 @@ def render_file_processing():
                     "Série": "Série",
                     "Emitente": st.column_config.TextColumn("Emitente", width="large"),
                     "CNPJ": "CNPJ",
-                    "Protocolo": "Protocolo",
-                    "Status": st.column_config.TextColumn("Autorização", width="large"),
-                    "Controle SETTA": st.column_config.TextColumn("Controle interno", width="medium"),
-                    "Conformidade": st.column_config.TextColumn("Padrão", width="medium"),
                     "PDF": st.column_config.TextColumn("Arquivo gerado", width="large"),
                 },
             )
