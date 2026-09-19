@@ -3196,8 +3196,42 @@ def render_file_processing():
                 except Exception as exc:
                     st.error(f"Falha ao gerar ZIP: {exc}")
 
-            for zip_name, zip_bytes in st.session_state.zip_outputs.items():
-                st.download_button(f"Baixar {zip_name}", zip_bytes, file_name=zip_name, mime="application/zip", type="primary", use_container_width=True, key=f"download_{zip_name}")
+            if st.session_state.zip_outputs:
+                all_zips_buffer = io.BytesIO()
+                with zipfile.ZipFile(
+                    all_zips_buffer,
+                    "w",
+                    compression=zipfile.ZIP_STORED,
+                ) as master_zip:
+                    for zip_name, zip_bytes in st.session_state.zip_outputs.items():
+                        master_zip.writestr(zip_name, zip_bytes)
+
+                all_zips_name = (
+                    f"{now_local():%d-%m-%Y} - TODOS OS ZIPS - NOTAS FISCAIS.zip"
+                )
+                st.download_button(
+                    "BAIXAR TODOS OS ZIPs",
+                    all_zips_buffer.getvalue(),
+                    file_name=all_zips_name,
+                    mime="application/zip",
+                    type="primary",
+                    use_container_width=True,
+                    key="download_all_nf_zips",
+                )
+                st.caption(
+                    f"O arquivo acima reúne {len(st.session_state.zip_outputs)} ZIP(s) "
+                    "gerado(s) nesta carga. Os downloads individuais permanecem disponíveis abaixo."
+                )
+
+                for zip_name, zip_bytes in st.session_state.zip_outputs.items():
+                    st.download_button(
+                        f"Baixar {zip_name}",
+                        zip_bytes,
+                        file_name=zip_name,
+                        mime="application/zip",
+                        use_container_width=True,
+                        key=f"download_{zip_name}",
+                    )
 
 
     with tab_danfe:
