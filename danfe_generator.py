@@ -56,10 +56,24 @@ class DanfeMetadata:
 
 
 def _node_text(parent: ET.Element | None, tag: str) -> str:
+    """Lê filho direto da NF-e com fallback por nome local.
+
+    O namespace oficial continua sendo a primeira opção. O fallback evita perda
+    de conteúdo quando algum emissor serializa o XML com prefixo/namespace
+    equivalente de forma diferente, sem buscar tags homônimas em outros níveis.
+    """
     if parent is None:
         return ""
+
     node = parent.find(f"{NFE_NS}{tag}")
-    return (node.text or "").strip() if node is not None and node.text else ""
+    if node is not None and node.text:
+        return (node.text or "").strip()
+
+    for child in list(parent):
+        if child.tag.split("}")[-1] == tag and child.text:
+            return (child.text or "").strip()
+
+    return ""
 
 
 def _digits(value: object) -> str:
