@@ -3940,6 +3940,458 @@ def render_nf_treatment_center() -> None:
 
 
 
+def _refresh_missing_mrp_analysis() -> pd.DataFrame:
+    summary = st.session_state.get("mrp_priority_summary")
+    pre = st.session_state.get("pre_notes")
+
+    rows = []
+    if (
+        isinstance(summary, pd.DataFrame)
+        and not summary.empty
+        and isinstance(pre, pd.DataFrame)
+        and not pre.empty
+    ):
+        for _, mrp_row in summary.iterrows():
+            match = match_mrp_to_pre_note(mrp_row, pre)
+            if not match.get("matched"):
+                item = mrp_row.to_dict()
+                item["situacao_vinculo"] = str(
+                    match.get("situacao") or "AUSENTE NAS PRÉ-NOTAS"
+                )
+                item["score_fornecedor"] = int(
+                    match.get("score_fornecedor") or 0
+                )
+                rows.append(item)
+
+    frame = pd.DataFrame(rows)
+    st.session_state.base_analysis_missing_mrp = frame
+    return frame
+
+
+def render_mrp_missing_pre_treatments() -> None:
+    if not st.session_state.get("base_analysis_ready"):
+        return
+
+    missing = _refresh_missing_mrp_analysis()
+
+    st.markdown("### Conferência entre MRP e Pré-notas")
+    if missing.empty:
+        st.success(
+            "Nenhuma NF do MRP está pendente de decisão em relação à base de Pré-notas."
+        )
+        return
+
+    st.warning(
+        f"{len(missing)} NF(s) do MRP não tiveram correspondência segura na base de Pré-notas. "
+        "Resolva essas ocorrências antes de vincular os XMLs."
+    )
+
+    missing = missing.copy()
+    missing["_mrp_key"] = missing.apply(mrp_row_key, axis=1)
+    visible_cols = [
+        "_mrp_key",
+        "data_pre_nota",
+        "numero_nf",
+        "cnpj",
+        "fornecedor",
+        "prioridade",
+        "data_cm",
+        "situacao_vinculo",
+        "score_fornecedor",
+    ]
+    visible_cols = [col for col in visible_cols if col in missing.columns]
+    view = missing[visible_cols].copy()
+    view.insert(0, "Selecionar", False)
+
+    edited = st.data_editor(
+        view,
+        use_container_width=True,
+        hide_index=True,
+        disabled=[col for col in view.columns if col != "Selecionar"],
+        key="base_missing_mrp_editor",
+        column_config={
+            "_mrp_key": None,
+            "Selecionar": st.column_config.CheckboxColumn("Selecionar"),
+            "data_pre_nota": st.column_config.DateColumn(
+                "Data",
+                format="DD/MM/YYYY",
+            ),
+            "numero_nf": "NF",
+            "cnpj": "CNPJ",
+            "fornecedor": st.column_config.TextColumn(
+                "Fornecedor",
+                width="large",
+            ),
+            "prioridade": "Prioridade",
+            "data_cm": st.column_config.DateColumn(
+                "Data CM",
+                format="DD/MM/YYYY",
+            ),
+            "situacao_vinculo": st.column_config.TextColumn(
+                "Situação",
+                width="large",
+            ),
+            "score_fornecedor": st.column_config.NumberColumn(
+                "Aderência fornecedor",
+                format="%d%%",
+            ),
+        },
+    )
+
+    selected = edited[
+        edited["Selecionar"].fillna(False).astype(bool)
+    ].copy()
+
+    action = st.selectbox(
+        "Tratativa para as NFs selecionadas",
+        [
+            "Escolha uma ação",
+            "Adicionar às Pré-notas pendentes",
+            "Desconsiderar do cálculo atual",
+        ],
+        key="base_missing_mrp_action",
+    )
+
+    if st.button(
+        "APLICAR TRATATIVA",
+        type="primary",
+        use_container_width=True,
+        disabled=selected.empty or action == "Escolha uma ação",
+        key="apply_base_missing_mrp",
+    ):
+        if action == "Adicionar às Pré-notas pendentes":
+            additions = []
+            for _, row in selected.iterrows():
+                additions.append({
+                    "data_pre_nota": normalized_business_date(
+                        row.get("data_pre_nota")
+                    ),
+                    "numero_nf": normalized_nf(row.get("numero_nf")),
+                    "cnpj": digits_only(row.get("cnpj")),
+                    "fornecedor": str(row.get("fornecedor") or "").strip(),
+                    "recebedor": "",
+                    "status": "Pré-nota lançada",
+                    "natureza": str(row.get("natureza") or "").strip(),
+                    "origem": "Impacto MRP / Protheus",
+                })
+
+            current = st.session_state.pre_notes.copy()
+            updated = pd.concat(
+                [current, pd.DataFrame(additions)],
+                ignore_index=True,
+                sort=False,
+            )
+            updated["_data_nf"] = updated.apply(
+                lambda row: date_nf_key(
+                    row.get("data_pre_nota"),
+                    row.get("numero_nf"),
+                ),
+                axis=1,
+            )
+            updated["_supplier_norm"] = updated.apply(
+                lambda row: supplier_validation_name(
+                    pre_supplier_name(row)
+                ),
+                axis=1,
+            )
+            updated = (
+                updated.drop_duplicates(
+                    ["_data_nf", "_supplier_norm"],
+                    keep="last",
+                )
+                .drop(
+                    columns=["_data_nf", "_supplier_norm"],
+                    errors="ignore",
+                )
+                .reset_index(drop=True)
+            )
+            st.session_state.pre_notes = updated
+            persist_pre_notes_current("Impacto MRP / Protheus")
+            _refresh_missing_mrp_analysis()
+            st.session_state.pop("base_missing_mrp_editor", None)
+            st.rerun()
+
+        if action == "Desconsiderar do cálculo atual":
+            ignore_keys = set(
+                selected["_mrp_key"]
+                .fillna("")
+                .astype(str)
+                .loc[lambda values: values.ne("")]
+                .tolist()
+            )
+
+            summary = st.session_state.mrp_priority_summary.copy()
+            summary["_mrp_key"] = summary.apply(mrp_row_key, axis=1)
+            ignored_rows = summary[
+                summary["_mrp_key"].isin(ignore_keys)
+            ].copy()
+            st.session_state.mrp_priority_summary = (
+                summary[
+                    ~summary["_mrp_key"].isin(ignore_keys)
+                ]
+                .drop(columns="_mrp_key", errors="ignore")
+                .reset_index(drop=True)
+            )
+
+            detail = st.session_state.get("mrp_impact_detail")
+            if isinstance(detail, pd.DataFrame) and not detail.empty:
+                detail = detail.copy()
+                detail["_mrp_key"] = detail.apply(mrp_row_key, axis=1)
+                st.session_state.mrp_impact_detail = (
+                    detail[
+                        ~detail["_mrp_key"].isin(ignore_keys)
+                    ]
+                    .drop(columns="_mrp_key", errors="ignore")
+                    .reset_index(drop=True)
+                )
+
+            ignored_log = list(
+                st.session_state.get("mrp_ignored_records") or []
+            )
+            now_ignored = now_local().isoformat(timespec="seconds")
+            for _, row in ignored_rows.iterrows():
+                item = row.drop(labels=["_mrp_key"], errors="ignore").to_dict()
+                item["desconsiderada_em"] = now_ignored
+                ignored_log.append(item)
+            st.session_state.mrp_ignored_records = ignored_log
+
+            current_summary = st.session_state.mrp_priority_summary
+            high = (
+                current_summary[
+                    current_summary["prioridade"]
+                    .fillna("")
+                    .astype(str)
+                    .str.upper()
+                    .eq("ALTA")
+                ]
+                if not current_summary.empty
+                else pd.DataFrame()
+            )
+            st.session_state.priority_date_nf_keys = set(
+                high.get("data_nf", pd.Series(dtype=str))
+                .dropna().astype(str).tolist()
+            )
+            st.session_state.priority_nf_numbers = set(
+                high.get("numero_nf", pd.Series(dtype=str))
+                .dropna().astype(str).tolist()
+            )
+
+            persist_mrp_current()
+            _refresh_missing_mrp_analysis()
+            st.session_state.pop("base_missing_mrp_editor", None)
+            st.rerun()
+
+
+def render_xml_linking_stage() -> None:
+    st.markdown("### Vinculação dos XMLs")
+
+    if not st.session_state.get("base_analysis_ready"):
+        st.info(
+            "Primeiro execute a análise dos relatórios em Processamento de arquivos."
+        )
+        return
+
+    missing = _refresh_missing_mrp_analysis()
+    if not missing.empty:
+        st.info(
+            "Resolva primeiro as NFs do MRP sem correspondência segura nas Pré-notas. "
+            "A vinculação dos XMLs será liberada depois dessa etapa."
+        )
+        return
+
+    pending_base = current_pending_pre_notes()
+    if pending_base.empty:
+        st.success("Não há Pré-notas pendentes aguardando XML.")
+        return
+
+    st.caption(
+        f"{len(pending_base)} Pré-nota(s) estão aptas para receber XML. "
+        "Somente XMLs correspondentes a esse universo serão vinculados."
+    )
+
+    xml_files = st.file_uploader(
+        "Selecione os XMLs das NFs pendentes",
+        type=["xml"],
+        accept_multiple_files=True,
+        key="pending_xml_link_files",
+    )
+
+    if not st.button(
+        "VINCULAR XMLs ÀS PRÉ-NOTAS",
+        type="primary",
+        use_container_width=True,
+        disabled=not bool(xml_files),
+        key="link_pending_xmls",
+    ):
+        return
+
+    groups = {}
+    rejected = []
+    file_store = dict(st.session_state.get("prefilter_files") or {})
+
+    progress = st.progress(0, text="Vinculando XMLs...")
+    for idx, xml_file in enumerate(xml_files, start=1):
+        file_id = uuid.uuid4().hex[:16]
+        raw = xml_file.getvalue()
+        file_store[file_id] = {
+            "name": xml_file.name,
+            "ext": ".xml",
+            "raw": raw,
+        }
+
+        try:
+            xml_data = extract_nfe_processing_data(raw)
+            identity = _xml_prefilter_identity(xml_data)
+            match = match_document_to_pre_note(
+                identity,
+                pre_notes=pending_base,
+            )
+
+            if not match.get("matched"):
+                rejected.append({
+                    "file_id": file_id,
+                    "arquivo": xml_file.name,
+                    "tipo": "XML",
+                    "nf": normalized_nf(xml_data.get("numero_nf")),
+                    "fornecedor": str(
+                        xml_data.get("fornecedor_lido") or ""
+                    ),
+                    "motivo": str(
+                        match.get("situacao") or "SEM CORRESPONDÊNCIA"
+                    ),
+                    "aderencia_fornecedor": int(
+                        match.get("score_fornecedor") or 0
+                    ),
+                })
+            else:
+                pre_row = match["row"]
+                group_key = pending_document_group_key(pre_row)
+                group = groups.setdefault(
+                    group_key,
+                    {
+                        "pre": pre_row,
+                        "xmls": [],
+                        "pdfs": [],
+                    },
+                )
+                group["xmls"].append({
+                    "file_id": file_id,
+                    "name": xml_file.name,
+                    "raw": raw,
+                    "data": xml_data,
+                    "score": int(
+                        match.get("score_fornecedor") or 0
+                    ),
+                })
+        except Exception as exc:
+            rejected.append({
+                "file_id": file_id,
+                "arquivo": xml_file.name,
+                "tipo": "XML",
+                "nf": "",
+                "fornecedor": "",
+                "motivo": f"XML inválido/não processável: {exc}",
+                "aderencia_fornecedor": 0,
+            })
+
+        progress.progress(
+            idx / max(1, len(xml_files)),
+            text=f"Vinculando {idx}/{len(xml_files)} — {xml_file.name}",
+        )
+
+    progress.empty()
+
+    # Uma única versão de XML por Pré-nota. Repetições vão para tratativa.
+    for group in groups.values():
+        if len(group["xmls"]) > 1:
+            group["xmls"].sort(
+                key=lambda item: item.get("score", 0),
+                reverse=True,
+            )
+            for duplicate in group["xmls"][1:]:
+                rejected.append({
+                    "file_id": duplicate.get("file_id", ""),
+                    "arquivo": duplicate["name"],
+                    "tipo": "XML",
+                    "nf": normalized_nf(
+                        group["pre"].get("numero_nf")
+                    ),
+                    "fornecedor": pre_supplier_name(group["pre"]),
+                    "motivo": "XML DUPLICADO PARA A MESMA PRÉ-NOTA",
+                    "aderencia_fornecedor": int(
+                        duplicate.get("score") or 0
+                    ),
+                })
+            group["xmls"] = group["xmls"][:1]
+
+    rows = []
+    stored_docs = {}
+    for group in groups.values():
+        try:
+            row, stored = _build_hybrid_nf_document(group)
+            rows.append(row)
+            stored_docs[row["file_id"]] = stored
+        except Exception as exc:
+            source = (group.get("xmls") or [{}])[0]
+            rejected.append({
+                "file_id": str(source.get("file_id") or ""),
+                "arquivo": str(source.get("name") or "XML"),
+                "tipo": "PROCESSAMENTO",
+                "nf": normalized_nf(
+                    group["pre"].get("numero_nf")
+                ),
+                "fornecedor": pre_supplier_name(group["pre"]),
+                "motivo": f"Falha ao preparar NF: {exc}",
+                "aderencia_fornecedor": 0,
+            })
+
+    new_frame = pd.DataFrame(rows)
+    if not new_frame.empty:
+        new_frame["vencimento"] = pd.to_datetime(
+            new_frame["vencimento"],
+            errors="coerce",
+        ).dt.date
+        new_frame = apply_cross_checks(new_frame)
+        new_frame = recalc(new_frame)
+
+        current = st.session_state.analysis.copy()
+        combined = (
+            pd.concat([current, new_frame], ignore_index=True, sort=False)
+            if isinstance(current, pd.DataFrame) and not current.empty
+            else new_frame
+        )
+        dedupe_cols = [
+            col for col in [
+                "pre_nota_data",
+                "numero_nf",
+                "pre_nota_fornecedor",
+            ]
+            if col in combined.columns
+        ]
+        if dedupe_cols:
+            combined = combined.drop_duplicates(
+                dedupe_cols,
+                keep="last",
+            ).reset_index(drop=True)
+
+        st.session_state.analysis = combined
+
+    st.session_state.pdfs.update(stored_docs)
+    st.session_state.prefilter_files = file_store
+    st.session_state.prefilter_rejected = (
+        list(st.session_state.get("prefilter_rejected") or [])
+        + rejected
+    )
+    st.session_state.prefilter_stats = {
+        "xml_enviados": len(xml_files),
+        "notas_correspondentes": len(new_frame),
+        "excluidos": len(rejected),
+    }
+
+    st.session_state.pop("pending_xml_link_files", None)
+    st.rerun()
+
+
 def render_file_processing():
     st.markdown(
         '<div class="section-title">Processamento de arquivos</div>',
