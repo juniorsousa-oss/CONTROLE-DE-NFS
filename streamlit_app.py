@@ -4276,6 +4276,7 @@ def render_nf_treatment_center() -> None:
                 "numero_nf",
                 "cnpj_fornecedor",
                 "fornecedor_padrao",
+                "pre_nota_recebedor",
                 "empresa_sigla",
                 "natureza",
                 "status",
@@ -4315,6 +4316,10 @@ def render_nf_treatment_center() -> None:
                         "Fornecedor",
                         width="large",
                     ),
+                    "pre_nota_recebedor": st.column_config.TextColumn(
+                        "Recebedor",
+                        width="medium",
+                    ),
                     "empresa_sigla": st.column_config.SelectboxColumn(
                         "Empresa",
                         options=["SEN", "SEE", "STA"],
@@ -4353,6 +4358,7 @@ def render_nf_treatment_center() -> None:
                     "numero_nf",
                     "cnpj_fornecedor",
                     "fornecedor_padrao",
+                    "pre_nota_recebedor",
                     "empresa_sigla",
                     "status",
                 ]
