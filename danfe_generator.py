@@ -406,6 +406,8 @@ def extract_nfe_processing_data(raw_xml: bytes) -> dict:
         "chave_nfe": _digits(data.get("key")),
         "cnpj_fornecedor": _tax_id(data.get("emitente_cnpj")),
         "fornecedor_lido": str(data.get("emitente") or "").strip(),
+        "destinatario": str(data.get("destinatario") or "").strip(),
+        "cnpj_destinatario": _tax_id(data.get("destinatario_cnpj")),
         "data_emissao": _format_date(str(data.get("dhEmi") or "")),
         "vencimento": due_dates[0] if due_dates else None,
         "vencimentos": due_dates,
