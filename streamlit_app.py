@@ -122,6 +122,12 @@ def now_local() -> datetime:
     return datetime.now(TZ)
 
 
+def is_cte_document_type(value: object) -> bool:
+    """Reconhece CT-e mesmo quando o tipo vem como CT-e, CT E ou CTE."""
+    compact = re.sub(r"[^A-Z0-9]", "", normalize_text(value))
+    return compact.startswith("CTE")
+
+
 def dataframe_records_for_db(frame: pd.DataFrame) -> list[dict]:
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return []
@@ -2869,14 +2875,13 @@ def enrich_cte_records_with_nf_data(frame: pd.DataFrame) -> pd.DataFrame:
     if "tipo_documento" not in out.columns:
         return out
 
-    type_norm = (
+    is_cte = (
         out["tipo_documento"]
         .fillna("NF-e")
-        .astype(str)
-        .map(normalize_text)
+        .map(is_cte_document_type)
     )
-    nf_rows = out[~type_norm.str.contains("CTE", na=False)].copy()
-    cte_indexes = out.index[type_norm.str.contains("CTE", na=False)].tolist()
+    nf_rows = out[~is_cte].copy()
+    cte_indexes = out.index[is_cte].tolist()
 
     if nf_rows.empty or not cte_indexes:
         return out
@@ -2952,7 +2957,10 @@ def enrich_cte_records_with_nf_data(frame: pd.DataFrame) -> pd.DataFrame:
 def current_process_records_for_tests() -> pd.DataFrame:
     """Retorna somente processamentos que concluíram o fluxo operacional."""
     if not SAVE_NF_HISTORY:
-        return pd.DataFrame(st.session_state.get("current_test_manifest") or [])
+        frame = pd.DataFrame(
+            st.session_state.get("current_test_manifest") or []
+        )
+        return enrich_cte_records_with_nf_data(frame)
 
     if db.configured():
         try:
@@ -6588,13 +6596,11 @@ if page == "Dashboard":
     if "tipo_documento" not in records.columns:
         records["tipo_documento"] = "NF-e"
 
-    type_norm = (
+    is_cte = (
         records["tipo_documento"]
         .fillna("NF-e")
-        .astype(str)
-        .map(normalize_text)
+        .map(is_cte_document_type)
     )
-    is_cte = type_norm.str.contains("CTE", na=False)
     nf_records = records[~is_cte].copy()
     cte_records = records[is_cte].copy()
 
@@ -6733,7 +6739,7 @@ if page == "Dashboard":
         finalized_records["parte"] = finalized_records.apply(
             lambda row: (
                 str(row.get("transportadora") or "").strip()
-                if "CTE" in normalize_text(row.get("tipo_documento"))
+                if is_cte_document_type(row.get("tipo_documento"))
                 else str(row.get("fornecedor_padrao") or "").strip()
             ),
             axis=1,
@@ -6741,7 +6747,7 @@ if page == "Dashboard":
         finalized_records["documento"] = finalized_records.apply(
             lambda row: (
                 str(row.get("numero_cte") or "").strip()
-                if "CTE" in normalize_text(row.get("tipo_documento"))
+                if is_cte_document_type(row.get("tipo_documento"))
                 else normalized_nf(row.get("numero_nf"))
             ),
             axis=1,
@@ -6799,9 +6805,7 @@ if page == "Dashboard":
             cte_mask = (
                 view["tipo_documento"]
                 .fillna("NF-e")
-                .astype(str)
-                .map(normalize_text)
-                .str.contains("CTE", na=False)
+                .map(is_cte_document_type)
             )
             view = view[
                 cte_mask
@@ -7546,14 +7550,13 @@ elif page == "Pendências":
             )
             is_cte_row = (
                 send_view["tipo_documento"]
-                .map(normalize_text)
-                .str.contains("CTE", na=False)
+                .map(is_cte_document_type)
             )
 
             send_view["documento"] = send_view.apply(
                 lambda row: (
                     str(row.get("numero_cte") or "").strip()
-                    if "CTE" in normalize_text(row.get("tipo_documento"))
+                    if is_cte_document_type(row.get("tipo_documento"))
                     else normalized_nf(row.get("numero_nf"))
                 ),
                 axis=1,
@@ -7561,7 +7564,7 @@ elif page == "Pendências":
             send_view["parte"] = send_view.apply(
                 lambda row: (
                     str(row.get("transportadora") or "").strip()
-                    if "CTE" in normalize_text(row.get("tipo_documento"))
+                    if is_cte_document_type(row.get("tipo_documento"))
                     else str(row.get("fornecedor_padrao") or "").strip()
                 ),
                 axis=1,
@@ -7569,7 +7572,7 @@ elif page == "Pendências":
             send_view["vinculo"] = send_view.apply(
                 lambda row: (
                     str(row.get("nfs_vinculadas") or "").strip()
-                    if "CTE" in normalize_text(row.get("tipo_documento"))
+                    if is_cte_document_type(row.get("tipo_documento"))
                     else ""
                 ),
                 axis=1,
