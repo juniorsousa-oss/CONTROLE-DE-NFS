@@ -461,6 +461,7 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
         cnpj = digits_only(cell_text(row.get("cnpj_fornecedor")))
         supplier = cell_text(row.get("fornecedor_padrao"))
         nature = cell_text(row.get("natureza")).upper()
+        company = cell_text(row.get("empresa_sigla")).upper()
 
         missing = []
         if due is None:
@@ -473,6 +474,8 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
             missing.append("fornecedor")
         if not nature:
             missing.append("natureza")
+        if company not in {"SEN", "SEE", "STA"}:
+            missing.append("empresa")
 
         names.append(build_final_name(due, num, supplier))
 
@@ -2368,10 +2371,37 @@ def company_sigla_from_document(
     ]):
         return "SEN"
 
-    # Mantém o CNPJ disponível para futura tabela exata sem assumir uma
-    # empresa quando o nome do destinatário não estiver claro.
     _ = digits_only(cnpj_destinatario)
     return ""
+
+
+def company_sigla_from_pdf_text(text: object) -> str:
+    """Lê somente a região do destinatário para evitar confundir o emitente."""
+    raw = str(text or "")
+    normalized = normalize_text(raw)
+
+    start = normalized.find("DESTINATARIO/REMETENTE")
+    if start < 0:
+        start = normalized.find("DESTINATARIO")
+
+    if start >= 0:
+        end_candidates = [
+            normalized.find(marker, start + 10)
+            for marker in [
+                "FATURA",
+                "DUPLICATA",
+                "CALCULO DO IMPOSTO",
+                "TRANSPORTADOR",
+                "DADOS DOS PRODUTOS",
+            ]
+        ]
+        end_candidates = [value for value in end_candidates if value > start]
+        end = min(end_candidates) if end_candidates else min(len(raw), start + 2500)
+        scope = raw[start:end]
+    else:
+        scope = raw[:3500]
+
+    return company_sigla_from_document(text=scope)
 
 
 def nf_package_class(natureza: object) -> str:
@@ -3006,8 +3036,8 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
             )
         except Exception:
             pdf_text = ""
-        row["empresa_sigla"] = company_sigla_from_document(
-            text=pdf_text,
+        row["empresa_sigla"] = company_sigla_from_pdf_text(
+            pdf_text,
         )
 
     row["origem_dados"] = source_mode
@@ -4031,6 +4061,7 @@ def render_nf_treatment_center() -> None:
                 "numero_nf",
                 "cnpj_fornecedor",
                 "fornecedor_padrao",
+                "empresa_sigla",
                 "natureza",
                 "status",
                 "validacao",
@@ -4069,6 +4100,11 @@ def render_nf_treatment_center() -> None:
                         "Fornecedor",
                         width="large",
                     ),
+                    "empresa_sigla": st.column_config.SelectboxColumn(
+                        "Empresa",
+                        options=["SEN", "SEE", "STA"],
+                        help="SEN = Energy | SEE = Engenharia | STA = Astec",
+                    ),
                     "natureza": st.column_config.TextColumn(
                         "Natureza",
                         width="large",
@@ -4102,6 +4138,7 @@ def render_nf_treatment_center() -> None:
                     "numero_nf",
                     "cnpj_fornecedor",
                     "fornecedor_padrao",
+                    "empresa_sigla",
                     "status",
                 ]
                 for idx in treatment_editor.index:
