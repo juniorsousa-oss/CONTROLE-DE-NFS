@@ -1250,8 +1250,8 @@ def draw_operational_stamp_block(
 ) -> None:
     """Desenha o componente retangular de CONTROLE INTERNO — SETTA.
 
-    Esta função NÃO escolhe posição e NÃO é chamada pelo fluxo atual.
-    Ela ficará pronta para uso quando a posição definitiva for validada.
+    A função cuida apenas do desenho do componente; a posição é definida por
+    apply_operational_stamp, atualmente validada dentro de RESERVADO AO FISCO.
     """
     x0, y0, x1, y1 = rect
     if x1 <= x0 or y1 <= y0:
@@ -1361,9 +1361,8 @@ def apply_operational_stamp(
 ) -> bytes:
     """Renderiza o carimbo retangular de controle interno no PDF.
 
-    Nesta etapa de homologação o bloco é colocado dentro/próximo ao quadro
-    RESERVADO AO FISCO para facilitar a validação visual. A função de desenho
-    permanece independente da posição para podermos mover o carimbo depois.
+    O bloco é colocado dentro do quadro RESERVADO AO FISCO, mantendo a camada
+    fiscal original separada da camada de controle interno SETTA.
     """
     if not pdf_bytes:
         return pdf_bytes
