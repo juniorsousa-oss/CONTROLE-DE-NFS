@@ -167,6 +167,7 @@ def init():
         "cte_outputs": {},
         "cte_ignored_count": 0,
         "document_link_stats": {},
+        "document_upload_cache": [],
         "document_reprocess_needed": False,
         "base_analysis_ready": False,
         "base_analysis_at": None,
@@ -5964,6 +5965,7 @@ def render_file_processing():
         st.session_state.cte_outputs = {}
         st.session_state.cte_ignored_count = 0
         st.session_state.document_link_stats = {}
+        st.session_state.document_upload_cache = []
         st.session_state.document_reprocess_needed = False
         st.session_state.pop("pending_fiscal_documents", None)
         st.session_state.current_test_manifest = []
