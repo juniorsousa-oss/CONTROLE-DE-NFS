@@ -3941,825 +3941,317 @@ def render_nf_treatment_center() -> None:
 
 
 def render_file_processing():
-    st.markdown('<div class="section-title">Processamento de arquivos</div>', unsafe_allow_html=True)
-    tab_feed, tab_danfe, tab_cte = st.tabs(["Alimentação", "XML → DANFE", "CTEs"])
+    st.markdown(
+        '<div class="section-title">Processamento de arquivos</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Etapa 1 — alimente somente os relatórios-base. O aplicativo identifica "
+        "as pré-notas pendentes, verifica NFs ausentes no confronto MRP e calcula "
+        "as prioridades. Os XMLs só entram depois, em Pré-notas pendentes."
+    )
 
-    with tab_feed:
-        st.caption(
-            "Carregue todos os arquivos primeiro. O aplicativo só valida, cruza e calcula "
-            "quando você clicar em PROCESSAR TODA A ALIMENTAÇÃO."
+    with st.container(border=True):
+        st.markdown("#### Relatórios-base")
+        r1, r2, r3 = st.columns(3)
+        pre_file = r1.file_uploader(
+            "Pré-notas",
+            type=["csv", "xlsx", "xls", "xlt", "xltx"],
+            key="base_pre_file",
+        )
+        material_file = r2.file_uploader(
+            "Materiais",
+            type=["xlsx", "xltx", "xls", "csv"],
+            key="base_material_file",
+        )
+        nf_file = r3.file_uploader(
+            "NFs / STSUP01",
+            type=["xlsx", "xltx", "xls", "csv"],
+            key="base_nf_file",
         )
 
-        with st.container(border=True):
-            st.markdown("#### 1. Relatórios obrigatórios")
-            st.caption("Selecione os três relatórios que formam a base da análise.")
-            r1, r2, r3 = st.columns(3)
-            pre_file = r1.file_uploader(
-                "Pré-notas",
-                type=["csv", "xlsx", "xls", "xlt", "xltx"],
-                key="unified_pre_file",
-            )
-            material_file = r2.file_uploader(
-                "Materiais",
-                type=["xlsx", "xltx", "xls", "csv"],
-                key="unified_material_file",
-            )
-            nf_file = r3.file_uploader(
-                "NFs / STSUP01",
-                type=["xlsx", "xltx", "xls", "csv"],
-                key="unified_nf_file",
-            )
-
-        with st.container(border=True):
-            st.markdown("#### 2. Base de fornecedores")
-            supplier_file = st.file_uploader(
-                "Fornecedores — opcional",
-                type=["csv", "xlsx", "xls", "xlt", "xltx"],
-                key="unified_supplier_file",
-                help=(
-                    "Se não selecionar um arquivo, o aplicativo usa a base de fornecedores "
-                    "já cadastrada."
-                ),
-            )
-
-        with st.container(border=True):
-            st.markdown("#### 3. XMLs e PDFs")
-            files = st.file_uploader(
-                "Documentos disponíveis para análise e comparação",
-                type=["xml", "pdf"],
-                accept_multiple_files=True,
-                key="unified_nf_documents",
-            )
-
-        required_ready = bool(pre_file and material_file and nf_file and files)
-        if not required_ready:
-            st.caption(
-                "Para processar, carregue Pré-notas, Materiais, NFs/STSUP01 "
-                "e pelo menos um XML ou PDF."
-            )
-
-        analyze = st.button(
-            "PROCESSAR TODA A ALIMENTAÇÃO",
-            type="primary",
-            use_container_width=True,
-            disabled=not required_ready,
-            key="process_all_feed",
+        supplier_file = st.file_uploader(
+            "Fornecedores — opcional",
+            type=["csv", "xlsx", "xls", "xlt", "xltx"],
+            key="base_supplier_file",
+            help="Se não selecionar, será usada a base de fornecedores já cadastrada.",
         )
 
-        if analyze:
-            st.session_state.current_test_manifest = []
-            st.session_state.zip_outputs = {}
-            st.session_state.analysis = pd.DataFrame()
-            st.session_state.pdfs = {}
-            st.session_state.prefilter_rejected = []
-            st.session_state.prefilter_resolved = []
-            st.session_state.prefilter_files = {}
-            st.session_state.prefilter_stats = {}
+    ready = bool(pre_file and material_file and nf_file)
+    analyze_bases = st.button(
+        "ANALISAR BASES",
+        type="primary",
+        use_container_width=True,
+        disabled=not ready,
+        key="analyze_base_reports",
+    )
 
-            try:
-                with st.spinner("Validando relatórios, calculando MRP e preparando o cruzamento..."):
-                    # 1) Fornecedores: opcional. Quando enviado, substitui a base antes
-                    # dos demais cruzamentos para que todos usem a mesma referência.
-                    if supplier_file:
-                        raw_sup, _ = read_uploaded_table(
-                            supplier_file,
-                            header_row=None,
-                        )
-                        if raw_sup.shape[1] < 15:
-                            raise ValueError(
-                                "O relatório FORNECEDORES precisa conter pelo menos as colunas A até O."
-                            )
+    if analyze_bases:
+        # Uma nova análise de base invalida qualquer lote documental anterior.
+        st.session_state.analysis = pd.DataFrame()
+        st.session_state.pdfs = {}
+        st.session_state.zip_outputs = {}
+        st.session_state.prefilter_rejected = []
+        st.session_state.prefilter_resolved = []
+        st.session_state.prefilter_files = {}
+        st.session_state.prefilter_stats = {}
+        st.session_state.current_test_manifest = []
+        st.session_state.base_analysis_ready = False
+        st.session_state.base_analysis_missing_mrp = pd.DataFrame()
 
-                        incoming = pd.DataFrame({
-                            "codigo": raw_sup.iloc[:, 0].fillna("").astype(str).str.strip(),
-                            "loja": raw_sup.iloc[:, 1].fillna("").astype(str).str.strip(),
-                            "nome_padrao": raw_sup.iloc[:, 2].fillna("").astype(str).str.strip(),
-                            "nome_fantasia": raw_sup.iloc[:, 3].fillna("").astype(str).str.strip(),
-                            "tipo": raw_sup.iloc[:, 10].fillna("").astype(str).str.strip(),
-                            "cnpj": raw_sup.iloc[:, 14].map(digits_only),
-                        })
-                        incoming = incoming[
-                            ~incoming["cnpj"].map(normalize_text).str.contains("CNPJ", na=False)
-                        ].copy()
-                        incoming["aliases"] = incoming["nome_fantasia"]
-                        incoming["ativo"] = True
-                        valid_sup = incoming[
-                            incoming["cnpj"].map(valid_cnpj)
-                            & incoming["nome_padrao"].ne("")
-                        ].copy()
-
-                        preferred_rows = []
-                        conflict_cnpjs = []
-                        for cnpj, group in valid_sup.groupby("cnpj", sort=False):
-                            if len(group) == 1:
-                                preferred_rows.append(group.iloc[0])
-                                continue
-
-                            compact_names = [
-                                re.sub(r"[^A-Z0-9]", "", normalize_text(name))
-                                for name in group["nome_padrao"].tolist()
-                            ]
-                            base_name = min(compact_names, key=len)
-                            equivalent = all(
-                                name == base_name
-                                or name.startswith(base_name)
-                                or base_name.startswith(name)
-                                for name in compact_names
-                            )
-                            if equivalent:
-                                chosen_idx = group["nome_padrao"].map(
-                                    lambda value: len(normalize_text(value))
-                                ).idxmin()
-                                preferred_rows.append(group.loc[chosen_idx])
-                            else:
-                                conflict_cnpjs.append(cnpj)
-
-                        if conflict_cnpjs:
-                            raise ValueError(
-                                f"A base de fornecedores possui {len(conflict_cnpjs)} CNPJ(s) "
-                                "vinculado(s) a razões sociais conflitantes."
-                            )
-                        if not preferred_rows:
-                            raise ValueError(
-                                "Nenhum fornecedor válido foi encontrado no relatório."
-                            )
-
-                        clean_sup = pd.DataFrame(preferred_rows).copy()
-                        final_sup = supplier_dataframe(
-                            clean_sup[
-                                [
-                                    "cnpj",
-                                    "nome_padrao",
-                                    "aliases",
-                                    "ativo",
-                                    "codigo",
-                                    "loja",
-                                    "nome_fantasia",
-                                    "tipo",
-                                ]
-                            ]
-                        )
-                        if db.configured():
-                            db.replace_suppliers(
-                                final_sup.to_dict("records"),
-                                supplier_file.name,
-                                {
-                                    "total": len(incoming),
-                                    "validos": len(final_sup),
-                                    "invalidos": int(
-                                        (
-                                            ~incoming["cnpj"].map(valid_cnpj)
-                                            | incoming["nome_padrao"].eq("")
-                                        ).sum()
-                                    ),
-                                    "conflitos": 0,
-                                },
-                            )
-                        st.session_state.suppliers = final_sup
-
-                    # 2) Pré-notas.
-                    temp_pre, _ = read_uploaded_table(
-                        pre_file,
-                        header_row=None,
-                    )
-                    if temp_pre.shape[1] < 6:
+        try:
+            with st.spinner("Analisando relatórios e calculando o impacto MRP..."):
+                # Fornecedores: atualização opcional antes dos cruzamentos.
+                if supplier_file:
+                    raw_sup, _ = read_uploaded_table(supplier_file, header_row=None)
+                    if raw_sup.shape[1] < 15:
                         raise ValueError(
-                            "O relatório de Pré-notas precisa conter pelo menos as colunas A até F."
+                            "O relatório FORNECEDORES precisa conter pelo menos as colunas A até O."
                         )
 
-                    normalized_pre = pd.DataFrame({
-                        "data_pre_nota": pd.to_datetime(
-                            temp_pre.iloc[:, 0],
-                            errors="coerce",
-                            dayfirst=True,
-                        ).dt.date,
-                        "recebedor": temp_pre.iloc[:, 1].fillna("").astype(str).str.strip(),
-                        "numero_nf": temp_pre.iloc[:, 2].map(normalized_nf),
-                        "fornecedor": temp_pre.iloc[:, 3].fillna("").astype(str).str.strip(),
-                        "cnpj": temp_pre.iloc[:, 4].map(digits_only),
-                        "status": temp_pre.iloc[:, 5].fillna("").astype(str).str.strip(),
+                    incoming = pd.DataFrame({
+                        "codigo": raw_sup.iloc[:, 0].fillna("").astype(str).str.strip(),
+                        "loja": raw_sup.iloc[:, 1].fillna("").astype(str).str.strip(),
+                        "nome_padrao": raw_sup.iloc[:, 2].fillna("").astype(str).str.strip(),
+                        "nome_fantasia": raw_sup.iloc[:, 3].fillna("").astype(str).str.strip(),
+                        "tipo": raw_sup.iloc[:, 10].fillna("").astype(str).str.strip(),
+                        "cnpj": raw_sup.iloc[:, 14].map(digits_only),
                     })
-                    normalized_pre["status_normalizado"] = normalized_pre["status"].map(
-                        normalize_text
-                    )
-                    pre_valid = normalized_pre[
-                        normalized_pre["status_normalizado"].eq("PRE-NOTA LANCADA")
-                        & normalized_pre["numero_nf"].ne("")
-                        & normalized_pre["fornecedor"].ne("")
-                        & normalized_pre["data_pre_nota"].notna()
+                    incoming = incoming[
+                        ~incoming["cnpj"].map(normalize_text).str.contains("CNPJ", na=False)
                     ].copy()
-                    pre_valid = (
-                        pre_valid.sort_values(
-                            ["data_pre_nota", "numero_nf"],
-                            ascending=[False, True],
-                            na_position="last",
+                    incoming["aliases"] = incoming["nome_fantasia"]
+                    incoming["ativo"] = True
+
+                    valid_sup = incoming[
+                        incoming["cnpj"].map(valid_cnpj)
+                        & incoming["nome_padrao"].ne("")
+                    ].copy()
+
+                    preferred_rows = []
+                    conflict_cnpjs = []
+                    for cnpj, group in valid_sup.groupby("cnpj", sort=False):
+                        if len(group) == 1:
+                            preferred_rows.append(group.iloc[0])
+                            continue
+
+                        compact_names = [
+                            re.sub(r"[^A-Z0-9]", "", normalize_text(name))
+                            for name in group["nome_padrao"].tolist()
+                        ]
+                        base_name = min(compact_names, key=len)
+                        equivalent = all(
+                            name == base_name
+                            or name.startswith(base_name)
+                            or base_name.startswith(name)
+                            for name in compact_names
                         )
-                        .drop_duplicates(
-                            ["data_pre_nota", "numero_nf", "fornecedor"],
-                            keep="last",
-                        )
-                        .drop(columns=["status_normalizado"], errors="ignore")
-                        .reset_index(drop=True)
-                    )
-                    if pre_valid.empty:
+                        if equivalent:
+                            chosen_idx = group["nome_padrao"].map(
+                                lambda value: len(normalize_text(value))
+                            ).idxmin()
+                            preferred_rows.append(group.loc[chosen_idx])
+                        else:
+                            conflict_cnpjs.append(cnpj)
+
+                    if conflict_cnpjs:
                         raise ValueError(
-                            "Nenhuma Pré-nota lançada válida foi encontrada no relatório."
+                            f"A base de fornecedores possui {len(conflict_cnpjs)} CNPJ(s) "
+                            "com razões sociais conflitantes."
                         )
-
-                    st.session_state.pre_notes = pre_valid
-                    if SAVE_NF_HISTORY and db.configured():
-                        pre_rows = []
-                        for _, row in pre_valid.iterrows():
-                            pre_rows.append({
-                                "numero_nf": row["numero_nf"],
-                                "cnpj": row["cnpj"],
-                                "fornecedor": str(row.get("fornecedor") or "").strip(),
-                                "recebedor": str(row.get("recebedor") or "").strip(),
-                                "status": row["status"],
-                                "data_pre_nota": (
-                                    row["data_pre_nota"].isoformat()
-                                    if isinstance(row["data_pre_nota"], date)
-                                    else None
-                                ),
-                                "natureza": "",
-                            })
-                        db.replace_pre_notes(pre_rows, pre_file.name)
-
-                    # 3) Impacto MRP: cálculo interno, sem abrir tabela técnica.
-                    materials, mat_stats = _clean_mrp_materials_cached(
-                        material_file.getvalue(),
-                        material_file.name,
-                    )
-                    entries, nf_stats = _clean_mrp_nf_cached(
-                        nf_file.getvalue(),
-                        nf_file.name,
-                        now_local().date().isoformat(),
-                    )
-                    detail, summary, impact_stats = _build_mrp_impact(
-                        materials,
-                        entries,
-                    )
-                    st.session_state.mrp_impact_detail = detail.copy()
-                    st.session_state.mrp_priority_summary = summary.copy()
-                    st.session_state.mrp_priority_stats = {
-                        **mat_stats,
-                        **nf_stats,
-                        **impact_stats,
-                    }
-                    st.session_state.mrp_priority_files = (
-                        material_file.name,
-                        nf_file.name,
-                    )
-                    st.session_state.mrp_ignored_records = []
-
-                    high = (
-                        summary[
-                            summary["prioridade"]
-                            .fillna("")
-                            .astype(str)
-                            .str.upper()
-                            .eq("ALTA")
-                        ].copy()
-                        if isinstance(summary, pd.DataFrame) and not summary.empty
-                        else pd.DataFrame()
-                    )
-                    st.session_state.priority_date_nf_keys = set(
-                        high.get("data_nf", pd.Series(dtype=str))
-                        .dropna()
-                        .astype(str)
-                        .tolist()
-                    )
-                    st.session_state.priority_nf_doc_keys = set()
-                    st.session_state.priority_nf_keys = set()
-                    st.session_state.priority_nf_numbers = set(
-                        high.get("numero_nf", pd.Series(dtype=str))
-                        .dropna()
-                        .astype(str)
-                        .tolist()
-                    )
-
-                    persisted_mrp = persist_mrp_current()
-                    if db.configured() and not bool(persisted_mrp.get("ok", False)):
-                        raise RuntimeError(
-                            "O Supabase não confirmou a gravação do cálculo MRP."
-                        )
-
-                    pending_base = current_pending_pre_notes()
-                    if pending_base.empty:
+                    if not preferred_rows:
                         raise ValueError(
-                            "A carga foi lida, mas não restou nenhuma Pré-nota pendente "
-                            "para confronto com os XMLs/PDFs."
+                            "Nenhum fornecedor válido foi encontrado no relatório."
                         )
-            except Exception as exc:
-                st.error(f"Não foi possível processar a alimentação: {exc}")
-                return
 
-            groups: dict[str, dict] = {}
-            rejected: list[dict] = []
-            uploaded = []
-
-            st.session_state.prefilter_files = {}
-            for file in files:
-                ext = Path(file.name).suffix.lower()
-                file_id = uuid.uuid4().hex[:16]
-                raw = file.getvalue()
-                uploaded.append(
-                    {
-                        "file_id": file_id,
-                        "name": file.name,
-                        "ext": ext,
-                        "raw": raw,
-                    }
-                )
-                st.session_state.prefilter_files[file_id] = {
-                    "name": file.name,
-                    "ext": ext,
-                    "raw": raw,
-                }
-
-            # 1) XML primeiro: identificação é estruturada e muito mais barata/confiável.
-            xml_entries = [item for item in uploaded if item["ext"] == ".xml"]
-            pdf_entries = [item for item in uploaded if item["ext"] == ".pdf"]
-
-            prefilter_progress = st.progress(0, text="Pré-filtrando documentos...")
-            total_prefilter = max(1, len(uploaded))
-            done_prefilter = 0
-
-            for item in xml_entries:
-                try:
-                    xml_data = extract_nfe_processing_data(item["raw"])
-                    identity = _xml_prefilter_identity(xml_data)
-                    match = match_document_to_pre_note(
-                        identity,
-                        pre_notes=pending_base,
+                    clean_sup = pd.DataFrame(preferred_rows).copy()
+                    final_sup = supplier_dataframe(
+                        clean_sup[
+                            [
+                                "cnpj", "nome_padrao", "aliases", "ativo",
+                                "codigo", "loja", "nome_fantasia", "tipo",
+                            ]
+                        ]
                     )
-
-                    if not match.get("matched"):
-                        rejected.append({
-                            "file_id": item.get("file_id", ""),
-                            "arquivo": item["name"],
-                            "tipo": "XML",
-                            "nf": normalized_nf(xml_data.get("numero_nf")),
-                            "fornecedor": str(xml_data.get("fornecedor_lido") or ""),
-                            "motivo": str(match.get("situacao") or "SEM CORRESPONDÊNCIA"),
-                            "aderencia_fornecedor": int(match.get("score_fornecedor") or 0),
-                        })
-                    else:
-                        pre_row = match["row"]
-                        group_key = pending_document_group_key(pre_row)
-                        group = groups.setdefault(
-                            group_key,
+                    if db.configured():
+                        db.replace_suppliers(
+                            final_sup.to_dict("records"),
+                            supplier_file.name,
                             {
-                                "pre": pre_row,
-                                "xmls": [],
-                                "pdfs": [],
+                                "total": len(incoming),
+                                "validos": len(final_sup),
+                                "invalidos": int(
+                                    (
+                                        ~incoming["cnpj"].map(valid_cnpj)
+                                        | incoming["nome_padrao"].eq("")
+                                    ).sum()
+                                ),
+                                "conflitos": 0,
                             },
                         )
-                        group["xmls"].append({
-                            "file_id": item.get("file_id", ""),
-                            "name": item["name"],
-                            "raw": item["raw"],
-                            "data": xml_data,
-                            "score": int(match.get("score_fornecedor") or 0),
-                        })
-                except Exception as exc:
-                    rejected.append({
-                        "file_id": item.get("file_id", ""),
-                        "arquivo": item["name"],
-                        "tipo": "XML",
-                        "nf": "",
-                        "fornecedor": "",
-                        "motivo": f"XML inválido/não processável: {exc}",
-                        "aderencia_fornecedor": 0,
-                    })
+                    st.session_state.suppliers = final_sup
 
-                done_prefilter += 1
-                prefilter_progress.progress(
-                    done_prefilter / total_prefilter,
-                    text=f"Pré-filtro {done_prefilter}/{len(uploaded)} — {item['name']}",
-                )
-
-            # 2) PDF: leitura leve, sem OCR completo. O OCR só roda se o PDF sobreviver ao filtro.
-            for item in pdf_entries:
-                identity = inspect_nf_pdf_identity(
-                    item["name"],
-                    item["raw"],
-                    st.session_state.suppliers,
-                )
-                match = match_document_to_pre_note(
-                    identity,
-                    pre_notes=pending_base,
-                )
-
-                group_key = ""
-                pre_row = None
-
-                if match.get("matched"):
-                    pre_row = match["row"]
-                    group_key = pending_document_group_key(pre_row)
-                else:
-                    # Se o PDF não trouxer fornecedor legível, mas houver um XML já validado
-                    # para a mesma NF e somente uma pré-nota possível, ele pode complementar
-                    # aquele XML sem ampliar o conjunto de notas aceitas.
-                    pdf_nf = normalized_nf(identity.get("numero_nf"))
-                    possible = [
-                        (key, group)
-                        for key, group in groups.items()
-                        if normalized_nf(group["pre"].get("numero_nf")) == pdf_nf
-                    ]
-                    if pdf_nf and len(possible) == 1:
-                        group_key, existing_group = possible[0]
-                        pre_row = existing_group["pre"]
-
-                if not group_key or pre_row is None:
-                    rejected.append({
-                        "file_id": item.get("file_id", ""),
-                        "arquivo": item["name"],
-                        "tipo": "PDF",
-                        "nf": normalized_nf(identity.get("numero_nf")),
-                        "fornecedor": str(
-                            identity.get("fornecedor_padrao")
-                            or identity.get("fornecedor_lido")
-                            or ""
-                        ),
-                        "motivo": str(
-                            match.get("situacao")
-                            or identity.get("erro")
-                            or "SEM CORRESPONDÊNCIA"
-                        ),
-                        "aderencia_fornecedor": int(match.get("score_fornecedor") or 0),
-                    })
-                else:
-                    group = groups.setdefault(
-                        group_key,
-                        {
-                            "pre": pre_row,
-                            "xmls": [],
-                            "pdfs": [],
-                        },
+                # Pré-notas.
+                temp_pre, _ = read_uploaded_table(pre_file, header_row=None)
+                if temp_pre.shape[1] < 6:
+                    raise ValueError(
+                        "O relatório de Pré-notas precisa conter pelo menos as colunas A até F."
                     )
-                    group["pdfs"].append({
-                        "file_id": item.get("file_id", ""),
-                        "name": item["name"],
-                        "raw": item["raw"],
-                        "identity": identity,
-                        "score": int(match.get("score_fornecedor") or 0),
-                    })
 
-                done_prefilter += 1
-                prefilter_progress.progress(
-                    done_prefilter / total_prefilter,
-                    text=f"Pré-filtro {done_prefilter}/{len(uploaded)} — {item['name']}",
+                normalized_pre = pd.DataFrame({
+                    "data_pre_nota": pd.to_datetime(
+                        temp_pre.iloc[:, 0],
+                        errors="coerce",
+                        dayfirst=True,
+                    ).dt.date,
+                    "recebedor": temp_pre.iloc[:, 1].fillna("").astype(str).str.strip(),
+                    "numero_nf": temp_pre.iloc[:, 2].map(normalized_nf),
+                    "fornecedor": temp_pre.iloc[:, 3].fillna("").astype(str).str.strip(),
+                    "cnpj": temp_pre.iloc[:, 4].map(digits_only),
+                    "status": temp_pre.iloc[:, 5].fillna("").astype(str).str.strip(),
+                })
+                normalized_pre["status_normalizado"] = normalized_pre["status"].map(
+                    normalize_text
+                )
+                pre_valid = normalized_pre[
+                    normalized_pre["status_normalizado"].eq("PRE-NOTA LANCADA")
+                    & normalized_pre["numero_nf"].ne("")
+                    & normalized_pre["fornecedor"].ne("")
+                    & normalized_pre["data_pre_nota"].notna()
+                ].copy()
+                pre_valid = (
+                    pre_valid.sort_values(
+                        ["data_pre_nota", "numero_nf"],
+                        ascending=[False, True],
+                        na_position="last",
+                    )
+                    .drop_duplicates(
+                        ["data_pre_nota", "numero_nf", "fornecedor"],
+                        keep="last",
+                    )
+                    .drop(columns=["status_normalizado"], errors="ignore")
+                    .reset_index(drop=True)
+                )
+                if pre_valid.empty:
+                    raise ValueError(
+                        "Nenhuma Pré-nota lançada válida foi encontrada no relatório."
+                    )
+
+                st.session_state.pre_notes = pre_valid
+                if SAVE_NF_HISTORY and db.configured():
+                    persist_pre_notes_current(pre_file.name)
+
+                # Impacto MRP.
+                materials, mat_stats = _clean_mrp_materials_cached(
+                    material_file.getvalue(),
+                    material_file.name,
+                )
+                entries, nf_stats = _clean_mrp_nf_cached(
+                    nf_file.getvalue(),
+                    nf_file.name,
+                    now_local().date().isoformat(),
+                )
+                detail, summary, impact_stats = _build_mrp_impact(
+                    materials,
+                    entries,
+                )
+                st.session_state.mrp_impact_detail = detail.copy()
+                st.session_state.mrp_priority_summary = summary.copy()
+                st.session_state.mrp_priority_stats = {
+                    **mat_stats,
+                    **nf_stats,
+                    **impact_stats,
+                }
+                st.session_state.mrp_priority_files = (
+                    material_file.name,
+                    nf_file.name,
+                )
+                st.session_state.mrp_ignored_records = []
+
+                high = (
+                    summary[
+                        summary["prioridade"]
+                        .fillna("")
+                        .astype(str)
+                        .str.upper()
+                        .eq("ALTA")
+                    ].copy()
+                    if isinstance(summary, pd.DataFrame) and not summary.empty
+                    else pd.DataFrame()
+                )
+                st.session_state.priority_date_nf_keys = set(
+                    high.get("data_nf", pd.Series(dtype=str))
+                    .dropna().astype(str).tolist()
+                )
+                st.session_state.priority_nf_doc_keys = set()
+                st.session_state.priority_nf_keys = set()
+                st.session_state.priority_nf_numbers = set(
+                    high.get("numero_nf", pd.Series(dtype=str))
+                    .dropna().astype(str).tolist()
                 )
 
-            prefilter_progress.empty()
-
-            # Mantém apenas um XML e um PDF por pré-nota. Repetições não entram no lote.
-            for group in groups.values():
-                if len(group["xmls"]) > 1:
-                    group["xmls"].sort(
-                        key=lambda item: item.get("score", 0),
-                        reverse=True,
+                persisted_mrp = persist_mrp_current()
+                if db.configured() and not bool(persisted_mrp.get("ok", False)):
+                    raise RuntimeError(
+                        "O Supabase não confirmou a gravação do cálculo MRP."
                     )
-                    for duplicate in group["xmls"][1:]:
-                        rejected.append({
-                            "file_id": duplicate.get("file_id", ""),
-                            "arquivo": duplicate["name"],
-                            "tipo": "XML",
-                            "nf": normalized_nf(group["pre"].get("numero_nf")),
-                            "fornecedor": pre_supplier_name(group["pre"]),
-                            "motivo": "XML DUPLICADO PARA A MESMA PRÉ-NOTA",
-                            "aderencia_fornecedor": duplicate.get("score", 0),
-                        })
-                    group["xmls"] = group["xmls"][:1]
 
-                if len(group["pdfs"]) > 1:
-                    group["pdfs"].sort(
-                        key=lambda item: item.get("score", 0),
-                        reverse=True,
-                    )
-                    for duplicate in group["pdfs"][1:]:
-                        rejected.append({
-                            "file_id": duplicate.get("file_id", ""),
-                            "arquivo": duplicate["name"],
-                            "tipo": "PDF",
-                            "nf": normalized_nf(group["pre"].get("numero_nf")),
-                            "fornecedor": pre_supplier_name(group["pre"]),
-                            "motivo": "PDF DUPLICADO PARA A MESMA PRÉ-NOTA",
-                            "aderencia_fornecedor": duplicate.get("score", 0),
-                        })
-                    group["pdfs"] = group["pdfs"][:1]
+                # NFs existentes no MRP mas ausentes/divergentes nas Pré-notas.
+                missing_rows = []
+                if isinstance(summary, pd.DataFrame) and not summary.empty:
+                    for _, mrp_row in summary.iterrows():
+                        match = match_mrp_to_pre_note(mrp_row, pre_valid)
+                        if not match.get("matched"):
+                            item = mrp_row.to_dict()
+                            item["situacao_vinculo"] = str(
+                                match.get("situacao") or "AUSENTE NAS PRÉ-NOTAS"
+                            )
+                            item["score_fornecedor"] = int(
+                                match.get("score_fornecedor") or 0
+                            )
+                            missing_rows.append(item)
 
-            rows, store = [], {}
-            process_groups = [
-                group
-                for group in groups.values()
-                if group.get("xmls") or group.get("pdfs")
-            ]
-
-            process_progress = st.progress(0, text="Processando documentos correspondentes...")
-            for idx, group in enumerate(process_groups, start=1):
-                try:
-                    row, stored = _build_hybrid_nf_document(group)
-                    rows.append(row)
-                    store[row["file_id"]] = stored
-                except Exception as exc:
-                    source_files = [
-                        item["name"]
-                        for item in (group.get("pdfs") or []) + (group.get("xmls") or [])
-                    ]
-                    source_items = (group.get("pdfs") or []) + (group.get("xmls") or [])
-                    rejected.append({
-                        "file_id": (
-                            str(source_items[0].get("file_id") or "")
-                            if len(source_items) == 1
-                            else ""
-                        ),
-                        "arquivo": " + ".join(source_files) or "Documento",
-                        "tipo": "PROCESSAMENTO",
-                        "nf": normalized_nf(group["pre"].get("numero_nf")),
-                        "fornecedor": pre_supplier_name(group["pre"]),
-                        "motivo": f"Falha após o pré-filtro: {exc}",
-                        "aderencia_fornecedor": 0,
-                    })
-
-                process_progress.progress(
-                    idx / max(1, len(process_groups)),
-                    text=f"Processando {idx}/{len(process_groups)}",
+                st.session_state.base_analysis_missing_mrp = pd.DataFrame(
+                    missing_rows
                 )
-            process_progress.empty()
+                st.session_state.base_analysis_ready = True
+                st.session_state.base_analysis_at = now_local().isoformat(
+                    timespec="seconds"
+                )
 
-            frame = pd.DataFrame(rows)
-            if not frame.empty:
-                frame["vencimento"] = pd.to_datetime(
-                    frame["vencimento"],
-                    errors="coerce",
-                ).dt.date
-                frame = apply_cross_checks(frame)
-                frame = recalc(frame)
-
-            used_xml = sum(bool(group.get("xmls")) for group in process_groups)
-            used_pdf = sum(bool(group.get("pdfs")) for group in process_groups)
-
-            st.session_state.analysis = frame
-            st.session_state.pdfs = store
-            st.session_state.prefilter_rejected = rejected
-            st.session_state.prefilter_stats = {
-                "enviados": len(uploaded),
-                "xml_enviados": len(xml_entries),
-                "pdf_enviados": len(pdf_entries),
-                "notas_correspondentes": len(frame),
-                "xml_utilizados": used_xml,
-                "pdf_utilizados": used_pdf,
-                "excluidos": len(rejected),
-            }
-
-            st.success(
-                f"Alimentação processada: {len(frame)} NF(s) vinculada(s) e "
-                f"{len(rejected)} arquivo(s) encaminhado(s) para tratativa. "
-                "Continue em Pré-notas pendentes."
-            )
-
-
-
-    with tab_danfe:
-        st.markdown("### XML → DANFE")
-        st.caption(
-            "Geração do DANFE da NF-e modelo 55 baseada no MOC 7.0 / Anexo II: A4 retrato, "
-            "margens regulamentares, fonte Times, CODE-128, paginação de produtos e repetição do "
-            "cabeçalho fiscal. Primeiro é gerada a camada fiscal exclusivamente a partir do XML; "
-            "depois o controle interno SETTA é aplicado como segunda camada PDF "
-            "na área RESERVADO AO FISCO. Os XMLs e PDFs ficam somente nesta sessão."
-        )
-
-        xml_files = st.file_uploader(
-            "Selecione ou arraste os XMLs das NF-e",
-            type=["xml"],
-            accept_multiple_files=True,
-            key="danfe_xml_uploads",
-        )
-
-        d1, d2 = st.columns([4, 1])
-        generate_danfe = d1.button(
-            "GERAR DANFEs",
-            type="primary",
-            use_container_width=True,
-            disabled=not xml_files,
-            key="generate_danfe_batch",
-        )
-        clear_danfe = d2.button(
-            "Limpar",
-            use_container_width=True,
-            key="clear_danfe_batch",
-        )
-
-        if clear_danfe:
-            st.session_state.danfe_outputs = {}
-            st.session_state.danfe_results = []
-            st.session_state.danfe_errors = []
             st.rerun()
+        except Exception as exc:
+            st.session_state.base_analysis_ready = False
+            st.error(f"Não foi possível concluir a análise das bases: {exc}")
 
-        if generate_danfe:
-            outputs = {}
-            results = []
-            errors = []
-
-            progress = st.progress(0, text="Gerando DANFEs...")
-            total_files = len(xml_files)
-
-            for idx, xml_file in enumerate(xml_files, start=1):
-                try:
-                    raw_xml = xml_file.getvalue()
-                    meta = extract_danfe_metadata(raw_xml)
-                    xml_data = extract_nfe_processing_data(raw_xml)
-
-                    pdf_bytes = generate_danfe_pdf(raw_xml)
-                    pdf_name = danfe_file_name(meta)
-
-                    compliance_status = "MOC 7.0 / NF-e 55 + CAMADA INTERNA"
-                    data_chegada = None
-                    recebedor = ""
-                    cr = ""
-                    desc_cr = ""
-                    natureza = ""
-
-                    pending_for_stamp = current_pending_pre_notes()
-                    if isinstance(pending_for_stamp, pd.DataFrame) and not pending_for_stamp.empty:
-                        identity = _xml_prefilter_identity(xml_data)
-                        pre_match = match_document_to_pre_note(
-                            identity,
-                            pre_notes=pending_for_stamp,
-                        )
-                        if pre_match.get("matched"):
-                            pre_row = pre_match["row"]
-                            operational = operational_fields_from_nf_load(
-                                pre_row,
-                                identity,
-                            )
-                            data_chegada = normalized_business_date(
-                                pre_row.get("data_pre_nota")
-                            )
-                            recebedor = str(
-                                pre_row.get("recebedor") or ""
-                            ).strip()
-                            cr = str(operational.get("cr") or "").strip()
-                            desc_cr = str(
-                                operational.get("desc_cr") or ""
-                            ).strip()
-                            natureza = str(
-                                operational.get("natureza") or ""
-                            ).strip().upper()
-
-                    pdf_bytes = apply_operational_stamp(
-                        pdf_bytes,
-                        data_chegada=data_chegada,
-                        cr=cr,
-                        desc_cr=desc_cr,
-                        natureza=natureza,
-                        recebido_por=recebedor,
-                    )
-                    stamp_applied = True
-                    stamp_status = (
-                        "APLICADO — RESERVADO AO FISCO"
-                        if any([data_chegada, cr, desc_cr, natureza, recebedor])
-                        else "APLICADO — AGUARDANDO DADOS OPERACIONAIS"
-                    )
-
-                    outputs[pdf_name] = {
-                        "bytes": pdf_bytes,
-                        "xml_name": xml_file.name,
-                        "numero_nf": meta.numero_nf,
-                        "serie": meta.serie,
-                        "emitente": meta.emitente,
-                        "cnpj": meta.cnpj_emitente,
-                        "chave": meta.chave,
-                        "protocolo": meta.protocolo,
-                        "status_codigo": meta.status_codigo,
-                        "status_motivo": meta.status_motivo,
-                        "carimbo": stamp_status,
-                        "carimbo_aplicado": stamp_applied,
-                        "conformidade": compliance_status,
-                    }
-
-                    status_label = (
-                        f"{meta.status_codigo} - {meta.status_motivo}"
-                        if meta.status_codigo
-                        else "SEM PROTOCOLO NO XML"
-                    )
-
-                    results.append({
-                        "XML": xml_file.name,
-                        "NF": meta.numero_nf,
-                        "Série": meta.serie,
-                        "Emitente": meta.emitente,
-                        "CNPJ": meta.cnpj_emitente,
-                        "Protocolo": meta.protocolo,
-                        "Status": status_label,
-                        "Controle SETTA": stamp_status,
-                        "Conformidade": compliance_status,
-                        "PDF": pdf_name,
-                    })
-                except Exception as exc:
-                    errors.append({
-                        "arquivo": xml_file.name,
-                        "erro": str(exc),
-                    })
-
-                progress.progress(
-                    idx / total_files,
-                    text=f"{idx}/{total_files} — {xml_file.name}",
-                )
-
-            progress.empty()
-            st.session_state.danfe_outputs = outputs
-            st.session_state.danfe_results = results
-            st.session_state.danfe_errors = errors
-
-            if outputs:
-                st.success(
-                    f"{len(outputs)} DANFE(s) gerado(s) com sucesso. "
-                    "Os arquivos estão prontos para conferência e download."
-                )
-            if errors:
-                st.warning(
-                    f"{len(errors)} XML(s) não puderam ser convertidos. "
-                    "Veja os detalhes abaixo."
-                )
-
-        danfe_results = st.session_state.get("danfe_results") or []
-        danfe_errors = st.session_state.get("danfe_errors") or []
-        danfe_outputs = st.session_state.get("danfe_outputs") or {}
-
-        if danfe_results:
-            st.markdown("#### Conferência dos DANFEs gerados")
-            danfe_view = pd.DataFrame(danfe_results)
-            visible_danfe_cols = [
-                column
-                for column in ["XML", "NF", "Série", "Emitente", "CNPJ", "PDF"]
-                if column in danfe_view.columns
-            ]
-            st.dataframe(
-                danfe_view[visible_danfe_cols],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "XML": st.column_config.TextColumn("XML de origem", width="medium"),
-                    "NF": "NF",
-                    "Série": "Série",
-                    "Emitente": st.column_config.TextColumn("Emitente", width="large"),
-                    "CNPJ": "CNPJ",
-                    "PDF": st.column_config.TextColumn("Arquivo gerado", width="large"),
-                },
+    if st.session_state.get("base_analysis_ready"):
+        pending_count = len(current_pending_pre_notes())
+        missing = st.session_state.get("base_analysis_missing_mrp")
+        missing_count = (
+            len(missing)
+            if isinstance(missing, pd.DataFrame)
+            else 0
+        )
+        summary = st.session_state.get("mrp_priority_summary")
+        high_count = (
+            int(
+                summary["prioridade"]
+                .fillna("")
+                .astype(str)
+                .str.upper()
+                .eq("ALTA")
+                .sum()
             )
+            if isinstance(summary, pd.DataFrame) and not summary.empty
+            else 0
+        )
 
-        if danfe_errors:
-            with st.expander(
-                f"XMLs com erro ({len(danfe_errors)})",
-                expanded=True,
-            ):
-                st.dataframe(
-                    pd.DataFrame(danfe_errors),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "arquivo": "Arquivo",
-                        "erro": st.column_config.TextColumn("Erro", width="large"),
-                    },
-                )
-
-        if danfe_outputs:
-            st.markdown("#### Arquivos para download")
-
-            # Um único download para o lote inteiro. Mesmo quando houver apenas
-            # uma NF, o comportamento continua igual e evita uma sequência de
-            # botões individuais na tela.
-            batch_buffer = io.BytesIO()
-            with zipfile.ZipFile(
-                batch_buffer,
-                "w",
-                zipfile.ZIP_DEFLATED,
-            ) as archive:
-                for pdf_name, item in danfe_outputs.items():
-                    archive.writestr(pdf_name, item["bytes"])
-
-            st.download_button(
-                "BAIXAR TODOS OS DANFEs (.ZIP)",
-                batch_buffer.getvalue(),
-                file_name=f"DANFEs_{now_local():%Y%m%d_%H%M%S}.zip",
-                mime="application/zip",
-                type="primary",
-                use_container_width=True,
-                key="download_all_danfes",
-            )
-            st.caption(
-                f"{len(danfe_outputs)} DANFE(s) incluída(s) no arquivo compactado."
-            )
-
-
-    with tab_cte:
-        st.markdown("### CT-e")
-        st.info("Módulo reservado. O fluxo seguirá a mesma arquitetura validada para NF-e, mas só será ativado após recebermos exemplos reais de CT-e e fecharmos as regras de extração e nomenclatura.")
-        st.code("NUMERO CTE - TRANSPORTADORA - NUMERO NF - FORNECEDOR NF.pdf", language=None)
+        st.success(
+            f"Análise concluída: {pending_count} pré-nota(s) pendente(s), "
+            f"{missing_count} NF(s) do MRP sem correspondência segura e "
+            f"{high_count} NF(s) com prioridade ALTA. "
+            "As tratativas e a vinculação dos XMLs ficam em Pré-notas pendentes."
+        )
 
 
 with st.sidebar:
