@@ -2709,6 +2709,7 @@ def make_zip_outputs(df: pd.DataFrame):
         for company in companies:
             ctes_by_company[company].append(cte)
 
+    cte_manifested = set()
     for company, ctes in ctes_by_company.items():
         if not ctes:
             continue
@@ -2738,6 +2739,56 @@ def make_zip_outputs(df: pd.DataFrame):
                     continue
                 used.add(cte_name)
                 archive.writestr(cte_name, cte_bytes)
+
+                cte_key = (
+                    str(cte.get("chave_cte") or "").strip()
+                    or str(cte.get("cte_id") or "").strip()
+                    or cte_name
+                )
+                if cte_key not in cte_manifested:
+                    cte_manifested.add(cte_key)
+                    manifest.append(
+                        {
+                            "lote_id": batch,
+                            "arquivo_original": str(
+                                cte.get("arquivo_original") or ""
+                            ),
+                            "arquivo_final": cte_name,
+                            "tipo_documento": "CT-e",
+                            "numero_cte": str(
+                                cte.get("numero_cte") or ""
+                            ),
+                            "chave_cte": str(
+                                cte.get("chave_cte") or ""
+                            ),
+                            "nfs_vinculadas": ", ".join(
+                                [
+                                    normalized_nf(value)
+                                    for value in (
+                                        cte.get("linked_nf_numbers") or []
+                                    )
+                                    if normalized_nf(value)
+                                ]
+                            ),
+                            "transportadora": str(
+                                cte.get("transportadora") or ""
+                            ),
+                            "cnpj_transportadora": str(
+                                cte.get("cnpj_transportadora") or ""
+                            ),
+                            "empresa_sigla": company,
+                            "status": "REALIZADO",
+                            "operador": operator or None,
+                            "recebido_em": processed_at,
+                            "pdf_criado_em": processed_at,
+                            "processado_em": processed_at,
+                            "origem_dados": str(
+                                cte.get("origem") or "CT-e"
+                            ),
+                            "carimbo_aplicado": False,
+                            "prioridade_mrp": False,
+                        }
+                    )
 
         zip_name = f"CTE´s - {date_label} - {company}.zip"
         outputs[zip_name] = buffer.getvalue()
