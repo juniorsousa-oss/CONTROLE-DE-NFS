@@ -5041,6 +5041,20 @@ elif page == "Pendências":
                 pending_view["situacao_mrp"] = "IMPACTO MRP NÃO CARREGADO"
                 pending_view["aderencia_fornecedor"] = 0
 
+            def _pending_treatment_label(row):
+                situacao = str(row.get("situacao_mrp") or "").strip().upper()
+                prioridade = str(row.get("prioridade") or "").strip().upper()
+                if situacao not in {"OK", "IMPACTO MRP NÃO CARREGADO"}:
+                    return "REVISAR VÍNCULO MRP"
+                if prioridade == "ALTA":
+                    return "PRIORIDADE MRP"
+                return "AGUARDANDO XML"
+
+            pending_view["tratativa"] = pending_view.apply(
+                _pending_treatment_label,
+                axis=1,
+            )
+
             mrp_errors = int(
                 (
                     ~pending_view["situacao_mrp"].eq("OK")
@@ -5188,6 +5202,7 @@ elif page == "Pendências":
                 "prioridade",
                 "situacao_mrp",
                 "aderencia_fornecedor",
+                "tratativa",
                 "validacao_documento",
             ]
 
@@ -5222,6 +5237,10 @@ elif page == "Pendências":
                     "aderencia_fornecedor": st.column_config.NumberColumn(
                         "Aderência fornecedor",
                         format="%d%%",
+                    ),
+                    "tratativa": st.column_config.TextColumn(
+                        "Tratativa",
+                        width="medium",
                     ),
                     "validacao_documento": st.column_config.TextColumn(
                         "Validação documento",
