@@ -740,3 +740,86 @@ grant execute on function public.nf_salvar_mrp_carga(jsonb, jsonb, jsonb, jsonb)
 grant execute on function public.nf_criar_usuario(text, text) to anon, authenticated;
 grant execute on function public.nf_atualizar_usuario(uuid, text, text, boolean) to anon, authenticated;
 grant execute on function public.nf_excluir_usuario(uuid) to anon, authenticated;
+
+
+-- EVOLUCAO V5 - CT-e NO MESMO CONTROLE OPERACIONAL DAS NF-e
+alter table public.nf_processamentos
+  add column if not exists numero_cte text,
+  add column if not exists chave_cte text,
+  add column if not exists nfs_vinculadas text,
+  add column if not exists transportadora text,
+  add column if not exists cnpj_transportadora text,
+  add column if not exists empresa_sigla text;
+
+create index if not exists nf_processamentos_tipo_idx
+  on public.nf_processamentos(tipo_documento);
+create index if not exists nf_processamentos_cte_idx
+  on public.nf_processamentos(numero_cte);
+create index if not exists nf_processamentos_empresa_idx
+  on public.nf_processamentos(empresa_sigla);
+
+create or replace function public.nf_registrar_processamentos(p_rows jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  if p_rows is null or jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'p_rows deve ser um array JSON';
+  end if;
+
+  insert into public.nf_processamentos(
+    lote_id, arquivo_original, arquivo_final, tipo_documento, chave_nfe,
+    numero_nf, serie, cnpj_fornecedor, fornecedor_padrao, vencimento,
+    natureza, prioridade_mrp, pre_nota_status, pre_nota_em, metodo_fornecedor,
+    confianca, status, operador, recebido_em, pdf_criado_em, processado_em,
+    cr, desc_cr, recebedor, origem_dados, data_chegada, carimbo_aplicado,
+    numero_cte, chave_cte, nfs_vinculadas, transportadora,
+    cnpj_transportadora, empresa_sigla
+  )
+  select
+    coalesce(x->>'lote_id',''),
+    coalesce(x->>'arquivo_original',''),
+    coalesce(x->>'arquivo_final',''),
+    coalesce(x->>'tipo_documento','NF-e'),
+    nullif(x->>'chave_nfe',''),
+    nullif(x->>'numero_nf',''),
+    nullif(x->>'serie',''),
+    nullif(x->>'cnpj_fornecedor',''),
+    nullif(x->>'fornecedor_padrao',''),
+    nullif(x->>'vencimento','')::date,
+    nullif(x->>'natureza',''),
+    coalesce((x->>'prioridade_mrp')::boolean, false),
+    nullif(x->>'pre_nota_status',''),
+    nullif(x->>'pre_nota_em','')::date,
+    nullif(x->>'metodo_fornecedor',''),
+    nullif(x->>'confianca','')::integer,
+    coalesce(nullif(x->>'status',''), 'REALIZADO'),
+    nullif(x->>'operador',''),
+    coalesce(nullif(x->>'recebido_em','')::timestamptz, now()),
+    coalesce(nullif(x->>'pdf_criado_em','')::timestamptz, now()),
+    coalesce(nullif(x->>'processado_em','')::timestamptz, now()),
+    nullif(x->>'cr',''),
+    nullif(x->>'desc_cr',''),
+    nullif(x->>'recebedor',''),
+    nullif(x->>'origem_dados',''),
+    nullif(x->>'data_chegada','')::date,
+    coalesce((x->>'carimbo_aplicado')::boolean, false),
+    nullif(x->>'numero_cte',''),
+    nullif(x->>'chave_cte',''),
+    nullif(x->>'nfs_vinculadas',''),
+    nullif(x->>'transportadora',''),
+    nullif(x->>'cnpj_transportadora',''),
+    nullif(x->>'empresa_sigla','')
+  from jsonb_array_elements(p_rows) x;
+
+  get diagnostics v_count = row_count;
+  return jsonb_build_object('ok', true, 'inseridos', v_count);
+end;
+$$;
+
+revoke all on function public.nf_registrar_processamentos(jsonb) from public;
+grant execute on function public.nf_registrar_processamentos(jsonb) to anon, authenticated;
