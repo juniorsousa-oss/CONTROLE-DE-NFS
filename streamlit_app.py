@@ -5342,15 +5342,32 @@ def render_document_linking_stage() -> None:
         key="pending_fiscal_documents",
     )
 
+    live_documents = []
+    if uploaded:
+        live_documents = [
+            {
+                "name": file.name,
+                "raw": file.getvalue(),
+                "ext": Path(file.name).suffix.lower(),
+            }
+            for file in uploaded
+        ]
+        st.session_state.document_upload_cache = live_documents
+
+    cached_documents = list(
+        st.session_state.get("document_upload_cache") or []
+    )
+    documents_to_process = live_documents or cached_documents
+
     process_documents = st.button(
         "ANALISAR E VINCULAR DOCUMENTOS",
         type="primary",
         use_container_width=True,
-        disabled=not bool(uploaded),
+        disabled=not bool(documents_to_process),
         key="process_fiscal_documents",
     )
     auto_reprocess = bool(
-        uploaded
+        documents_to_process
         and st.session_state.get("document_reprocess_needed")
     )
 
