@@ -20,6 +20,7 @@ import db
 from nf_processor import (
     build_final_name,
     digits_only,
+    extract_pdf_text,
     inspect_nf_pdf_identity,
     process_nf_pdf,
     supplier_dataframe,
@@ -165,6 +166,7 @@ def init():
         "cte_rejected": [],
         "cte_outputs": {},
         "cte_ignored_count": 0,
+        "document_link_stats": {},
         "base_analysis_ready": False,
         "base_analysis_at": None,
         "base_analysis_missing_mrp": pd.DataFrame(),
@@ -4946,6 +4948,7 @@ def render_file_processing():
         st.session_state.cte_rejected = []
         st.session_state.cte_outputs = {}
         st.session_state.cte_ignored_count = 0
+        st.session_state.document_link_stats = {}
         st.session_state.current_test_manifest = []
         st.session_state.base_analysis_ready = False
         st.session_state.base_analysis_missing_mrp = pd.DataFrame()
