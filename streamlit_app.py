@@ -1629,9 +1629,9 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     else pd.DataFrame()
                 )
 
-                # A prioridade oficial passa a ser vinculada por DATA + NF.
-                # O nome do fornecedor é usado como validação da correspondência,
-                # não o CNPJ.
+                # A NF é vinculada entre relatórios por número + fornecedor.
+                # A prioridade MRP vem do confronto dos códigos de produto da NF
+                # com os códigos presentes no relatório de peças/materiais.
                 st.session_state.priority_date_nf_keys = set(
                     high.get("data_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
                 )
@@ -7006,8 +7006,9 @@ elif page == "Pendências":
                     row.get("validacao_documento") or ""
                 ).strip().upper()
 
-                if situacao not in {"OK", "IMPACTO MRP NÃO CARREGADO"}:
-                    return "REVISAR VÍNCULO MRP"
+                mrp_ok = situacao.startswith("OK")
+                if not mrp_ok and situacao != "IMPACTO MRP NÃO CARREGADO":
+                    return "REVISAR VÍNCULO NF"
                 if documento == "NF-E VINCULADA":
                     if prioridade == "ALTA":
                         return "PRIORIDADE / PRONTO"
@@ -7021,16 +7022,24 @@ elif page == "Pendências":
                 axis=1,
             )
 
+            mrp_status = (
+                pending_view["situacao_mrp"]
+                .fillna("")
+                .astype(str)
+                .str.upper()
+                .str.strip()
+            )
             mrp_errors = int(
                 (
-                    ~pending_view["situacao_mrp"].eq("OK")
-                    & ~pending_view["situacao_mrp"].eq("IMPACTO MRP NÃO CARREGADO")
+                    ~mrp_status.str.startswith("OK")
+                    & ~mrp_status.eq("IMPACTO MRP NÃO CARREGADO")
                 ).sum()
             )
             if mrp_errors:
                 st.error(
-                    f"{mrp_errors} pré-nota(s) não tiveram correspondência segura no Impacto MRP. "
-                    "A chave principal agora é Data + NF e o nome do fornecedor precisa validar a correspondência."
+                    f"{mrp_errors} pré-nota(s) não foram localizadas com segurança no relatório de NFs. "
+                    "O vínculo usa número da NF e fornecedor; o impacto MRP é calculado depois, "
+                    "comparando os códigos de produto da NF com o relatório de peças/materiais."
                 )
 
             st.markdown(
@@ -7040,7 +7049,7 @@ elif page == "Pendências":
                         <div>
                             <div style="font-size:1.12rem;font-weight:800;color:#0f172a;">Pré-notas pendentes de documento</div>
                             <div style="margin-top:.24rem;font-size:.82rem;color:#64748b;">
-                                Vínculo com Impacto MRP por Data + NF, validado pelo nome do fornecedor. O CNPJ permanece apenas informativo.
+                                Vínculo da NF por número + fornecedor. A prioridade MRP é calculada pelos códigos dos produtos da NF comparados ao relatório de peças/materiais.
                             </div>
                         </div>
                         <div style="font-size:.82rem;font-weight:800;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:.45rem .75rem;">
