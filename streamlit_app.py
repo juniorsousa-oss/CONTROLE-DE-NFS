@@ -953,8 +953,9 @@ def pre_supplier_name(row: pd.Series | dict) -> str:
 def match_pre_note_to_mrp(
     pre_row: pd.Series | dict,
     summary: pd.DataFrame,
-    min_supplier_score: int = 82,
+    min_supplier_score: int = 0,
 ) -> dict:
+    """Vincula Pré-nota ao MRP por NF e usa fornecedor apenas para desambiguação."""
     result = {
         "matched": False,
         "situacao": "NÃO LOCALIZADA NO IMPACTO MRP",
@@ -965,57 +966,76 @@ def match_pre_note_to_mrp(
         result["situacao"] = "IMPACTO MRP NÃO CARREGADO"
         return result
 
-    key = date_nf_key(pre_row.get("data_pre_nota"), pre_row.get("numero_nf"))
-    if not key:
-        result["situacao"] = "DATA OU NF INVÁLIDA"
+    nf = normalized_nf(pre_row.get("numero_nf"))
+    if not nf:
+        result["situacao"] = "NF INVÁLIDA"
         return result
 
-    if "data_nf" not in summary.columns:
+    if "numero_nf" not in summary.columns:
         return result
 
-    candidates = summary[summary["data_nf"].astype(str).eq(key)].copy()
+    candidates = summary[
+        summary["numero_nf"].map(normalized_nf).eq(nf)
+    ].copy()
     if candidates.empty:
         return result
 
     pre_supplier = pre_supplier_name(pre_row)
-    if not pre_supplier:
-        result["situacao"] = "FORNECEDOR DA PRÉ-NOTA NÃO LOCALIZADO"
-        return result
+    pre_supplier_norm = supplier_validation_name(pre_supplier)
 
-    candidates["_score_supplier"] = candidates["fornecedor"].map(
-        lambda value: supplier_similarity(pre_supplier, value)
-    )
+    candidates["_supplier_norm"] = candidates.get(
+        "fornecedor",
+        pd.Series("", index=candidates.index),
+    ).map(supplier_validation_name)
+
+    if pre_supplier_norm:
+        candidates["_supplier_exact"] = candidates["_supplier_norm"].eq(
+            pre_supplier_norm
+        )
+        candidates["_score_supplier"] = candidates.get(
+            "fornecedor",
+            pd.Series("", index=candidates.index),
+        ).map(lambda value: supplier_similarity(pre_supplier, value))
+    else:
+        candidates["_supplier_exact"] = False
+        candidates["_score_supplier"] = 0
+
+    sort_cols = ["_supplier_exact", "_score_supplier"]
+    ascending = [False, False]
+    if "prioridade" in candidates.columns:
+        sort_cols.append("prioridade")
+        ascending.append(True)
+    if "data_cm" in candidates.columns:
+        sort_cols.append("data_cm")
+        ascending.append(True)
+
     candidates = candidates.sort_values(
-        ["_score_supplier", "prioridade", "data_cm"],
-        ascending=[False, True, True],
+        sort_cols,
+        ascending=ascending,
         na_position="last",
     )
 
     best = candidates.iloc[0]
-    best_score = int(best["_score_supplier"])
+    best_score = int(best.get("_score_supplier") or 0)
+    exact = bool(best.get("_supplier_exact"))
 
-    if best_score < min_supplier_score:
-        result["situacao"] = "FORNECEDOR DIVERGENTE"
-        result["score_fornecedor"] = best_score
-        return result
-
-    if len(candidates) > 1:
-        second_score = int(candidates.iloc[1]["_score_supplier"])
-        best_supplier = supplier_validation_name(best.get("fornecedor"))
-        second_supplier = supplier_validation_name(candidates.iloc[1].get("fornecedor"))
-        if (
-            best_supplier != second_supplier
-            and second_score >= min_supplier_score
-            and best_score - second_score <= 3
-        ):
-            result["situacao"] = "CORRESPONDÊNCIA AMBÍGUA"
-            result["score_fornecedor"] = best_score
-            return result
+    if len(candidates) == 1:
+        situacao = (
+            "OK - FORNECEDOR IDÊNTICO"
+            if exact
+            else "OK - NF ÚNICA"
+        )
+    else:
+        situacao = (
+            "OK - FORNECEDOR IDÊNTICO"
+            if exact
+            else "OK - FORNECEDOR MAIS SEMELHANTE"
+        )
 
     result.update(
         matched=True,
-        situacao="OK",
-        score_fornecedor=best_score,
+        situacao=situacao,
+        score_fornecedor=100 if exact else best_score,
         row=best.to_dict(),
     )
     return result
@@ -1024,8 +1044,9 @@ def match_pre_note_to_mrp(
 def match_mrp_to_pre_note(
     mrp_row: pd.Series | dict,
     pre_notes: pd.DataFrame,
-    min_supplier_score: int = 82,
+    min_supplier_score: int = 0,
 ) -> dict:
+    """Vincula MRP à Pré-nota por NF e usa fornecedor apenas para desambiguação."""
     result = {
         "matched": False,
         "situacao": "AUSENTE NAS PRÉ-NOTAS",
@@ -1035,66 +1056,70 @@ def match_mrp_to_pre_note(
     if not isinstance(pre_notes, pd.DataFrame) or pre_notes.empty:
         return result
 
-    key = date_nf_key(mrp_row.get("data_pre_nota"), mrp_row.get("numero_nf"))
-    if not key:
-        result["situacao"] = "DATA OU NF INVÁLIDA"
+    nf = normalized_nf(mrp_row.get("numero_nf"))
+    if not nf:
+        result["situacao"] = "NF INVÁLIDA"
         return result
 
-    candidates = pre_notes.copy()
-    candidates["_data_nf"] = candidates.apply(
-        lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
-        axis=1,
-    )
-    candidates = candidates[candidates["_data_nf"].eq(key)].copy()
+    candidates = pre_notes[
+        pre_notes["numero_nf"].map(normalized_nf).eq(nf)
+    ].copy()
     if candidates.empty:
         return result
 
-    mrp_supplier = str(mrp_row.get("fornecedor") or "").strip()
-    candidates["_supplier_pre"] = candidates.apply(pre_supplier_name, axis=1)
-    candidates["_score_supplier"] = candidates["_supplier_pre"].map(
-        lambda value: supplier_similarity(value, mrp_supplier)
+    mrp_supplier = str(
+        mrp_row.get("fornecedor")
+        or mrp_row.get("fornecedor_validacao")
+        or ""
+    ).strip()
+    mrp_supplier_norm = supplier_validation_name(mrp_supplier)
+
+    candidates["_supplier_pre"] = candidates.apply(
+        pre_supplier_name,
+        axis=1,
     )
-    candidates = candidates.sort_values("_score_supplier", ascending=False)
+    candidates["_supplier_norm"] = candidates["_supplier_pre"].map(
+        supplier_validation_name
+    )
+
+    if mrp_supplier_norm:
+        candidates["_supplier_exact"] = candidates["_supplier_norm"].eq(
+            mrp_supplier_norm
+        )
+        candidates["_score_supplier"] = candidates["_supplier_pre"].map(
+            lambda value: supplier_similarity(value, mrp_supplier)
+        )
+    else:
+        candidates["_supplier_exact"] = False
+        candidates["_score_supplier"] = 0
+
+    candidates = candidates.sort_values(
+        ["_supplier_exact", "_score_supplier"],
+        ascending=[False, False],
+        na_position="last",
+    )
 
     best = candidates.iloc[0]
-    best_score = int(best["_score_supplier"])
+    best_score = int(best.get("_score_supplier") or 0)
+    exact = bool(best.get("_supplier_exact"))
 
-    if best_score < min_supplier_score:
-        result["situacao"] = "FORNECEDOR DIVERGENTE"
-        result["score_fornecedor"] = best_score
-        return result
-
-    strong_candidates = candidates[
-        candidates["_score_supplier"] >= min_supplier_score
-    ].copy()
-    if len(strong_candidates) > 1:
-        strong_dates = {
-            normalized_business_date(value)
-            for value in strong_candidates["data_pre_nota"].tolist()
-            if normalized_business_date(value) is not None
-        }
-        if len(strong_dates) > 1:
-            result["situacao"] = "CORRESPONDÊNCIA AMBÍGUA ENTRE DATAS"
-            result["score_fornecedor"] = best_score
-            return result
-
-    if len(candidates) > 1:
-        second = candidates.iloc[1]
-        second_score = int(second["_score_supplier"])
-        if (
-            supplier_validation_name(best.get("_supplier_pre"))
-            != supplier_validation_name(second.get("_supplier_pre"))
-            and second_score >= min_supplier_score
-            and best_score - second_score <= 3
-        ):
-            result["situacao"] = "CORRESPONDÊNCIA AMBÍGUA"
-            result["score_fornecedor"] = best_score
-            return result
+    if len(candidates) == 1:
+        situacao = (
+            "OK - FORNECEDOR IDÊNTICO"
+            if exact
+            else "OK - NF ÚNICA"
+        )
+    else:
+        situacao = (
+            "OK - FORNECEDOR IDÊNTICO"
+            if exact
+            else "OK - FORNECEDOR MAIS SEMELHANTE"
+        )
 
     result.update(
         matched=True,
-        situacao="OK",
-        score_fornecedor=best_score,
+        situacao=situacao,
+        score_fornecedor=100 if exact else best_score,
         row=best.to_dict(),
     )
     return result
