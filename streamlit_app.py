@@ -2921,13 +2921,14 @@ def current_process_records_for_tests() -> pd.DataFrame:
         "ENVIADO",
         "PDF CRIADO",
     }
-    return frame[
+    frame = frame[
         frame["status"]
         .fillna("")
         .astype(str)
         .str.upper()
         .isin(completed)
     ].copy()
+    return enrich_cte_records_with_nf_data(frame)
 
 
 def persist_pre_notes_current(source_name: str = "app") -> dict:
@@ -6426,6 +6427,8 @@ if page == "Dashboard":
             records = pd.DataFrame(st.session_state.history)
     else:
         records = pd.DataFrame(st.session_state.history)
+
+    records = enrich_cte_records_with_nf_data(records)
 
     if records.empty:
         records = pd.DataFrame(columns=[
