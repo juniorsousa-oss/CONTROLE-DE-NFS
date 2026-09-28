@@ -3329,6 +3329,154 @@ def render_nf_treatment_center() -> None:
                 target_map[key] = row
                 target_options.append(key)
 
+        # Se o XML/PDF estiver inválido ou precisar ser corrigido na origem,
+        # o operador pode substituir o arquivo aqui mesmo, sem retornar à tela
+        # de Processamento de arquivos.
+        replace_map = {}
+        for item in rejected:
+            rid = str(item.get("file_id") or "").strip()
+            if not rid:
+                continue
+            label = (
+                f"{item.get('arquivo') or 'Arquivo'}"
+                f" | {str(item.get('motivo') or '')[:90]}"
+            )
+            # Garante rótulos únicos mesmo quando há nomes repetidos.
+            replace_map[f"{rid}::{label}"] = rid
+
+        if replace_map:
+            with st.expander("Substituir XML/PDF corrigido", expanded=False):
+                selected_replace = st.selectbox(
+                    "Arquivo que será substituído",
+                    list(replace_map.keys()),
+                    format_func=lambda value: value.split("::", 1)[-1],
+                    key="prefilter_replace_target",
+                )
+                replacement_file = st.file_uploader(
+                    "Selecione o XML ou PDF corrigido",
+                    type=["xml", "pdf"],
+                    key="prefilter_replacement_file",
+                )
+
+                if st.button(
+                    "REPROCESSAR ARQUIVO CORRIGIDO",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=not bool(replacement_file),
+                    key="reprocess_corrected_file",
+                ):
+                    file_id = replace_map.get(selected_replace, "")
+                    try:
+                        raw = replacement_file.getvalue()
+                        ext = Path(replacement_file.name).suffix.lower()
+                        pending_base = current_pending_pre_notes()
+                        if pending_base.empty:
+                            raise ValueError(
+                                "Não há pré-notas pendentes disponíveis para validar o arquivo."
+                            )
+
+                        group = None
+                        if ext == ".xml":
+                            xml_data = extract_nfe_processing_data(raw)
+                            identity = _xml_prefilter_identity(xml_data)
+                            match = match_document_to_pre_note(
+                                identity,
+                                pre_notes=pending_base,
+                            )
+                            if not match.get("matched"):
+                                raise ValueError(
+                                    "O XML corrigido ainda não possui correspondência segura "
+                                    f"com as pré-notas: {match.get('situacao') or 'SEM CORRESPONDÊNCIA'}."
+                                )
+                            group = {
+                                "pre": match["row"],
+                                "xmls": [{
+                                    "file_id": file_id,
+                                    "name": replacement_file.name,
+                                    "raw": raw,
+                                    "data": xml_data,
+                                    "score": int(match.get("score_fornecedor") or 100),
+                                }],
+                                "pdfs": [],
+                            }
+                        elif ext == ".pdf":
+                            identity = inspect_nf_pdf_identity(
+                                replacement_file.name,
+                                raw,
+                                st.session_state.suppliers,
+                            )
+                            match = match_document_to_pre_note(
+                                identity,
+                                pre_notes=pending_base,
+                            )
+                            if not match.get("matched"):
+                                raise ValueError(
+                                    "O PDF corrigido ainda não possui correspondência segura "
+                                    f"com as pré-notas: {match.get('situacao') or 'SEM CORRESPONDÊNCIA'}."
+                                )
+                            group = {
+                                "pre": match["row"],
+                                "xmls": [],
+                                "pdfs": [{
+                                    "file_id": file_id,
+                                    "name": replacement_file.name,
+                                    "raw": raw,
+                                    "identity": identity,
+                                    "score": int(match.get("score_fornecedor") or 100),
+                                }],
+                            }
+                        else:
+                            raise ValueError("Tipo de arquivo não suportado.")
+
+                        row, stored = _build_hybrid_nf_document(group)
+                        row["status"] = "REVISAR"
+                        row["observacao"] = (
+                            (str(row.get("observacao") or "") + " | ")
+                            + "ARQUIVO CORRIGIDO E REPROCESSADO PELO OPERADOR"
+                        ).strip(" |")
+
+                        current = st.session_state.analysis.copy()
+                        appended = pd.DataFrame([row])
+                        combined = (
+                            pd.concat([current, appended], ignore_index=True)
+                            if not current.empty
+                            else appended
+                        )
+                        combined = apply_cross_checks(combined)
+                        combined = recalc(combined)
+                        st.session_state.analysis = combined
+                        st.session_state.pdfs[row["file_id"]] = stored
+
+                        st.session_state.prefilter_files[file_id] = {
+                            "name": replacement_file.name,
+                            "ext": ext,
+                            "raw": raw,
+                        }
+                        original = next(
+                            (
+                                item for item in rejected
+                                if str(item.get("file_id") or "") == file_id
+                            ),
+                            {},
+                        )
+                        resolved_item = dict(original)
+                        resolved_item["decisao"] = "ARQUIVO CORRIGIDO E REPROCESSADO"
+                        resolved_item["tratado_em"] = now_local().isoformat(timespec="seconds")
+                        st.session_state.prefilter_resolved = (
+                            list(st.session_state.get("prefilter_resolved") or [])
+                            + [resolved_item]
+                        )
+                        st.session_state.prefilter_rejected = [
+                            item for item in rejected
+                            if str(item.get("file_id") or "") != file_id
+                        ]
+
+                        st.session_state.pop("prefilter_replacement_file", None)
+                        st.success("Arquivo corrigido reprocessado e enviado para conferência.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Não foi possível reprocessar o arquivo corrigido: {exc}")
+
         review_df = pd.DataFrame(rejected).copy()
         if "file_id" not in review_df.columns:
             review_df["file_id"] = ""
