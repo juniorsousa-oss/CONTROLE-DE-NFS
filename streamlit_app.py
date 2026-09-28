@@ -5405,64 +5405,13 @@ elif page == "Pendências":
                     send_view["pre_nota_em"],
                     errors="coerce",
                 )
-            send_view.insert(0, "Confirmar", False)
-
-            send_editor = st.data_editor(
-                send_view,
-                use_container_width=True,
-                hide_index=True,
-                disabled=[x for x in send_view.columns if x != "Confirmar"],
-                key="pre_notes_send_confirmation",
-                column_config={
-                    # ID permanece no DataFrame para a atualização no banco,
-                    # mas não faz parte da interface do usuário.
-                    "id": None,
-                    "Confirmar": st.column_config.CheckboxColumn(
-                        "Confirmar",
-                        help="Marque somente após o envio efetivo da NF.",
-                    ),
-                    "pre_nota_em": st.column_config.DateColumn(
-                        "Data pré-nota",
-                        format="DD/MM/YYYY",
-                    ),
-                    "numero_nf": "NF",
-                    "fornecedor_padrao": st.column_config.TextColumn(
-                        "Fornecedor",
-                        width="large",
-                    ),
-                    "natureza": st.column_config.TextColumn(
-                        "Natureza",
-                        width="medium",
-                    ),
-                    "vencimento": st.column_config.DateColumn(
-                        "Vencimento",
-                        format="DD/MM/YYYY",
-                    ),
-                    "prioridade_mrp": st.column_config.CheckboxColumn(
-                        "Prioridade MRP"
-                    ),
-                    "pdf_criado_em": st.column_config.DatetimeColumn(
-                        "PDF criado em",
-                        format="DD/MM/YYYY HH:mm",
-                    ),
-                    "arquivo_final": st.column_config.TextColumn(
-                        "Arquivo",
-                        width="large",
-                    ),
-                },
+            select_all_send = st.checkbox(
+                "Selecionar todas as NFs",
+                value=False,
+                key="select_all_send",
+                help="Marca ou desmarca todas de uma vez. A seleção individual continua disponível.",
             )
-
-            selected_send_ids = (
-                send_editor.loc[
-                    send_editor["Confirmar"].fillna(False).astype(bool),
-                    "id",
-                ]
-                .dropna()
-                .astype(str)
-                .tolist()
-                if "id" in send_editor.columns
-                else []
-            )
+            send_view.insert(0, "Confirmar", bool(select_all_send))
 
             operator_ready = bool(str(st.session_state.operator or "").strip())
             if not operator_ready:
@@ -5470,43 +5419,109 @@ elif page == "Pendências":
                     "Selecione o operador no menu lateral para confirmar o envio."
                 )
 
-            if st.button(
-                "CONFIRMAR ENVIO DAS NFs SELECIONADAS",
-                type="primary",
-                use_container_width=True,
-                disabled=(not selected_send_ids or not operator_ready),
-                key="confirm_selected_nf_sent",
-            ):
-                try:
-                    if SAVE_NF_HISTORY and db.configured():
-                        result = db.mark_sent(
-                            selected_send_ids,
-                            st.session_state.operator,
-                        )
-                        updated_count = int(result.get("atualizados", 0))
-                    else:
-                        now_sent = now_local().isoformat()
-                        updated_count = 0
-                        manifest = list(
-                            st.session_state.get("current_test_manifest") or []
-                        )
-                        selected_set = set(selected_send_ids)
-                        for row in manifest:
-                            row_id = str(row.get("id") or row.get("file_id") or "")
-                            if row_id in selected_set:
-                                row["status"] = "ENVIADO"
-                                row["enviado_em"] = now_sent
-                                row["operador"] = st.session_state.operator
-                                updated_count += 1
-                        st.session_state.current_test_manifest = manifest
+            editor_key = (
+                f"pre_notes_send_confirmation_"
+                f"{'all' if select_all_send else 'individual'}_{len(send_view)}"
+            )
+            with st.form("send_confirmation_form"):
+                send_editor = st.data_editor(
+                    send_view,
+                    use_container_width=True,
+                    hide_index=True,
+                    disabled=[x for x in send_view.columns if x != "Confirmar"],
+                    key=editor_key,
+                    column_config={
+                        # ID permanece no DataFrame para a atualização no banco,
+                        # mas não faz parte da interface do usuário.
+                        "id": None,
+                        "Confirmar": st.column_config.CheckboxColumn(
+                            "Confirmar",
+                            help="Marque somente após o envio efetivo da NF.",
+                        ),
+                        "pre_nota_em": st.column_config.DateColumn(
+                            "Data pré-nota",
+                            format="DD/MM/YYYY",
+                        ),
+                        "numero_nf": "NF",
+                        "fornecedor_padrao": st.column_config.TextColumn(
+                            "Fornecedor",
+                            width="large",
+                        ),
+                        "natureza": st.column_config.TextColumn(
+                            "Natureza",
+                            width="medium",
+                        ),
+                        "vencimento": st.column_config.DateColumn(
+                            "Vencimento",
+                            format="DD/MM/YYYY",
+                        ),
+                        "prioridade_mrp": st.column_config.CheckboxColumn(
+                            "Prioridade"
+                        ),
+                        "pdf_criado_em": st.column_config.DatetimeColumn(
+                            "PDF criado em",
+                            format="DD/MM/YYYY HH:mm",
+                        ),
+                        "arquivo_final": st.column_config.TextColumn(
+                            "Arquivo",
+                            width="large",
+                        ),
+                    },
+                )
+                confirm_send = st.form_submit_button(
+                    "CONFIRMAR ENVIO DAS NFs SELECIONADAS",
+                    type="primary",
+                    use_container_width=True,
+                    disabled=not operator_ready,
+                )
 
-                    st.success(
-                        f"{updated_count} NF(s) confirmada(s) como enviada(s). "
-                        "Elas já estão disponíveis no Dashboard de finalizados."
-                    )
-                    st.rerun()
-                except Exception as exc:
-                    st.error(f"Falha ao confirmar envio: {exc}")
+            if confirm_send:
+                selected_send_ids = (
+                    send_editor.loc[
+                        send_editor["Confirmar"].fillna(False).astype(bool),
+                        "id",
+                    ]
+                    .dropna()
+                    .astype(str)
+                    .tolist()
+                    if "id" in send_editor.columns
+                    else []
+                )
+
+                if not selected_send_ids:
+                    st.warning("Selecione pelo menos uma NF para confirmar o envio.")
+                else:
+                    try:
+                        if SAVE_NF_HISTORY and db.configured():
+                            result = db.mark_sent(
+                                selected_send_ids,
+                                st.session_state.operator,
+                            )
+                            updated_count = int(result.get("atualizados", 0))
+                        else:
+                            now_sent = now_local().isoformat()
+                            updated_count = 0
+                            manifest = list(
+                                st.session_state.get("current_test_manifest") or []
+                            )
+                            selected_set = set(selected_send_ids)
+                            for row in manifest:
+                                row_id = str(row.get("id") or row.get("file_id") or "")
+                                if row_id in selected_set:
+                                    row["status"] = "ENVIADO"
+                                    row["enviado_em"] = now_sent
+                                    row["operador"] = st.session_state.operator
+                                    updated_count += 1
+                            st.session_state.current_test_manifest = manifest
+
+                        st.session_state.select_all_send = False
+                        st.success(
+                            f"{updated_count} NF(s) confirmada(s) como enviada(s). "
+                            "Elas já estão disponíveis no Dashboard de finalizados."
+                        )
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Falha ao confirmar envio: {exc}")
 
     with pend_process_tab:
         render_file_processing()
