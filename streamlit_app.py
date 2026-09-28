@@ -4472,10 +4472,36 @@ def render_xml_linking_stage() -> None:
             )
 
             if not match.get("matched"):
-                # A base define o universo de trabalho. XML que não pertence a
-                # uma Pré-nota válida é apenas sobressalente e não gera tratativa.
-                ignored_xmls += 1
-                file_store.pop(file_id, None)
+                nf_doc = normalized_nf(xml_data.get("numero_nf"))
+                nf_candidates = pending_base[
+                    pending_base["numero_nf"].map(normalized_nf).eq(nf_doc)
+                ].copy()
+
+                if nf_candidates.empty:
+                    # A base define o universo de trabalho. XML cujo número de NF
+                    # não existe na base é sobressalente e não gera tratativa.
+                    ignored_xmls += 1
+                    file_store.pop(file_id, None)
+                else:
+                    # O número da NF pertence ao universo válido; portanto este
+                    # XML não pode ser descartado silenciosamente.
+                    rejected.append({
+                        "file_id": file_id,
+                        "arquivo": xml_file.name,
+                        "tipo": "XML",
+                        "vinculado_base": True,
+                        "nf": nf_doc,
+                        "fornecedor": str(
+                            xml_data.get("fornecedor_lido") or ""
+                        ),
+                        "motivo": str(
+                            match.get("situacao")
+                            or "XML NÃO VINCULADO À NF DA BASE"
+                        ),
+                        "aderencia_fornecedor": int(
+                            match.get("score_fornecedor") or 0
+                        ),
+                    })
             else:
                 pre_row = match["row"]
                 group_key = pending_document_group_key(pre_row)
