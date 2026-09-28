@@ -627,7 +627,20 @@ def _draw_main_header(page, data, y, page_no, total_pages):
     _rect(page, (x2 - 23, y + 54, x2 - 7, y + 73))
     _fit_text(page, x2 - 23, y + 68, x2 - 7, data.get("tpNF") or "1", 10.0, 10.0, True, "center")
     _fit_text(page, x1 + 5, y + 87, x2 - 5, f"Nº {_fmt_nf(data['nf'])}", 10.0, 10.0, True, "center")
-    _fit_text(page, x1 + 5, y + 98, x2 - 5, f"SÉRIE {data['serie']} | FOLHA {page_no}/{total_pages}", 10.0, 8.0, True, "center")
+    # Mantém a identificação da folha totalmente dentro do quadro DANFE.
+    # A linha anterior usava baseline em y+98, ficando próxima demais da borda
+    # inferior (y+100) e podia ser visualmente cortada.
+    _fit_text(
+        page,
+        x1 + 5,
+        y + 95.0,
+        x2 - 5,
+        f"SÉRIE {data['serie']} | FOLHA {page_no}/{total_pages}",
+        8.8,
+        6.8,
+        True,
+        "center",
+    )
 
     # direita
     _barcode(page, (x2 + 12, y + 7, RIGHT - 12, y + 32), data["key"])
