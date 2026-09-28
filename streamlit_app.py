@@ -6344,27 +6344,67 @@ if page == "Dashboard":
         ).notna()
         finalized_records = finalized_records[status_final | sent_at].copy()
 
-    received = int(records.get("recebido_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-    completed_status = (
-        records.get("status", pd.Series("", index=records.index))
+    if "tipo_documento" not in records.columns:
+        records["tipo_documento"] = "NF-e"
+
+    type_norm = (
+        records["tipo_documento"]
+        .fillna("NF-e")
+        .astype(str)
+        .map(normalize_text)
+    )
+    is_cte = type_norm.str.contains("CTE", na=False)
+    nf_records = records[~is_cte].copy()
+    cte_records = records[is_cte].copy()
+
+    nf_received = int(
+        nf_records.get(
+            "recebido_em",
+            pd.Series(pd.NaT, index=nf_records.index),
+        ).notna().sum()
+    )
+    cte_received = int(
+        cte_records.get(
+            "recebido_em",
+            pd.Series(pd.NaT, index=cte_records.index),
+        ).notna().sum()
+    )
+    nf_completed_status = (
+        nf_records.get("status", pd.Series("", index=nf_records.index))
         .fillna("")
         .astype(str)
         .str.upper()
         .isin({"REALIZADO", "ENVIADO", "PDF CRIADO"})
     )
-    linked_pre_note = records.get(
+    linked_pre_note = nf_records.get(
         "pre_nota_em",
-        pd.Series(pd.NaT, index=records.index),
+        pd.Series(pd.NaT, index=nf_records.index),
     ).notna()
-    pre_done = int((completed_status & linked_pre_note).sum())
-    created = int(records.get("pdf_criado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
-    sent = int(records.get("enviado_em", pd.Series(pd.NaT, index=records.index)).notna().sum())
+    pre_done = int((nf_completed_status & linked_pre_note).sum())
+    created = int(
+        records.get(
+            "pdf_criado_em",
+            pd.Series(pd.NaT, index=records.index),
+        ).notna().sum()
+    )
+    nf_sent = int(
+        nf_records.get(
+            "enviado_em",
+            pd.Series(pd.NaT, index=nf_records.index),
+        ).notna().sum()
+    )
+    cte_sent = int(
+        cte_records.get(
+            "enviado_em",
+            pd.Series(pd.NaT, index=cte_records.index),
+        ).notna().sum()
+    )
 
     kpis = [
-        ("Notas recebidas", received, "Documentos registrados", "#2563eb", "#dbeafe", True),
+        ("NFs recebidas", nf_received, "Notas fiscais vinculadas", "#2563eb", "#dbeafe", True),
+        ("CT-es vinculados", cte_received, "Conhecimentos no controle", "#7c3aed", "#ede9fe", False),
         ("Pré-notas realizadas", pre_done, "Vinculadas ao controle", "#d97706", "#ffedd5", False),
-        ("PDFs criados", created, "Renomeados e compactados", "#0891b2", "#cffafe", False),
-        ("Enviadas", sent, "Fluxo concluído", "#16a34a", "#dcfce7", False),
+        ("Arquivos criados", created, "DANFEs + DACTEs", "#0891b2", "#cffafe", False),
     ]
     for col, item in zip(st.columns(4), kpis):
         label, value, delta, accent, soft, selected = item
