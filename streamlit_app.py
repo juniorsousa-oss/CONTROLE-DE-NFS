@@ -143,6 +143,8 @@ def init():
         "pdfs": {},
         "zip_outputs": {},
         "prefilter_rejected": [],
+        "prefilter_resolved": [],
+        "prefilter_files": {},
         "prefilter_stats": {},
         "danfe_outputs": {},
         "danfe_results": [],
@@ -258,12 +260,12 @@ if not st.session_state.get(_reset_marker):
     ):
         st.session_state[_key] = pd.DataFrame()
     for _key in (
-        "pdfs", "zip_outputs", "prefilter_stats",
+        "pdfs", "zip_outputs", "prefilter_stats", "prefilter_files",
         "mrp_priority_stats", "danfe_outputs",
     ):
         st.session_state[_key] = {}
     for _key in (
-        "prefilter_rejected", "danfe_results", "danfe_errors",
+        "prefilter_rejected", "prefilter_resolved", "danfe_results", "danfe_errors",
         "history", "current_test_manifest", "mrp_ignored_records",
     ):
         st.session_state[_key] = []
@@ -2754,6 +2756,107 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
 
 
 
+def render_mrp_background_feed() -> None:
+    """Alimenta o cálculo de impacto MRP sem expor a grade técnica ao operador."""
+    show_flash("_flash_mrp")
+    st.markdown("### Relatórios para cálculo de impacto MRP")
+    st.caption(
+        "O resultado é usado automaticamente na priorização das NFs. "
+        "A tabela técnica de Impacto MRP não é exibida no fluxo operacional."
+    )
+
+    material_file = st.file_uploader(
+        "Relatório de Materiais",
+        type=["xlsx", "xltx", "xls", "csv"],
+        key="process_feed_mrp_materials",
+    )
+    nf_file = st.file_uploader(
+        "Relatório de NFs / STSUP01",
+        type=["xlsx", "xltx", "xls", "csv"],
+        key="process_feed_mrp_entries",
+    )
+
+    if st.button(
+        "PROCESSAR RELATÓRIOS MRP",
+        type="primary",
+        use_container_width=True,
+        disabled=not bool(material_file and nf_file),
+        key="process_feed_mrp_process",
+    ):
+        try:
+            with st.spinner("Calculando impacto MRP e atualizando prioridades..."):
+                materials, mat_stats = _clean_mrp_materials_cached(
+                    material_file.getvalue(),
+                    material_file.name,
+                )
+                entries, nf_stats = _clean_mrp_nf_cached(
+                    nf_file.getvalue(),
+                    nf_file.name,
+                    now_local().date().isoformat(),
+                )
+                detail, summary, impact_stats = _build_mrp_impact(materials, entries)
+
+                st.session_state.mrp_impact_detail = detail.copy()
+                st.session_state.mrp_priority_summary = summary.copy()
+                st.session_state.mrp_priority_stats = {
+                    **mat_stats,
+                    **nf_stats,
+                    **impact_stats,
+                }
+                st.session_state.mrp_priority_files = (
+                    material_file.name,
+                    nf_file.name,
+                )
+                st.session_state.mrp_ignored_records = []
+
+                high = (
+                    summary[summary["prioridade"].eq("ALTA")].copy()
+                    if isinstance(summary, pd.DataFrame) and not summary.empty
+                    else pd.DataFrame()
+                )
+                st.session_state.priority_date_nf_keys = set(
+                    high.get("data_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
+                )
+                st.session_state.priority_nf_doc_keys = set()
+                st.session_state.priority_nf_keys = set()
+                st.session_state.priority_nf_numbers = set(
+                    high.get("numero_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
+                )
+
+                if not st.session_state.analysis.empty:
+                    st.session_state.analysis = apply_cross_checks(
+                        st.session_state.analysis
+                    )
+
+                persisted = persist_mrp_current()
+                if db.configured() and not bool(persisted.get("ok", False)):
+                    raise RuntimeError("O Supabase não confirmou a gravação da carga MRP.")
+
+            set_flash(
+                "_flash_mrp",
+                "success",
+                (
+                    f"Cálculo MRP atualizado: {len(summary)} NF(s) avaliadas; "
+                    f"{len(high)} com prioridade ALTA."
+                ),
+            )
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Falha ao calcular impacto MRP: {exc}")
+
+    summary = st.session_state.get("mrp_priority_summary")
+    if isinstance(summary, pd.DataFrame) and not summary.empty:
+        high_count = int(
+            summary["prioridade"].fillna("").astype(str).str.upper().eq("ALTA").sum()
+        )
+        st.success(
+            f"Impacto MRP carregado: {len(summary)} NF(s) avaliadas, "
+            f"{high_count} prioridade(s) ALTA."
+        )
+    else:
+        st.info("Nenhum cálculo MRP carregado.")
+
+
 def render_pre_notes_feed() -> None:
     show_flash("_flash_pre")
     st.markdown("### Validação de pré-notas")
@@ -3187,6 +3290,501 @@ def render_suppliers_feed() -> None:
                 st.error(f"Falha ao gravar base de fornecedores: {exc}")
 
 
+
+def render_nf_treatment_center() -> None:
+    """Central única para todas as decisões operacionais de NF."""
+    rejected = list(st.session_state.get("prefilter_rejected") or [])
+    resolved = list(st.session_state.get("prefilter_resolved") or [])
+    file_store = st.session_state.get("prefilter_files") or {}
+
+    st.markdown("### Central de tratativas de NF")
+    st.caption(
+        "Tudo que exigir decisão humana aparece aqui: arquivo sem correspondência, "
+        "divergência de XML/PDF, correção de dados, aprovação, geração e baixa."
+    )
+
+    if rejected:
+        st.markdown("#### Arquivos que exigem decisão")
+        st.warning(
+            f"{len(rejected)} arquivo(s) precisam ser avaliados antes de encerrar a carga."
+        )
+
+        pending_pre = current_pending_pre_notes()
+        target_map = {}
+        target_options = [""]
+        if isinstance(pending_pre, pd.DataFrame) and not pending_pre.empty:
+            for idx, row in pending_pre.iterrows():
+                nf = normalized_nf(row.get("numero_nf"))
+                supplier = pre_supplier_name(row)
+                date_value = normalized_business_date(row.get("data_pre_nota"))
+                label = " | ".join(
+                    part for part in [
+                        f"NF {nf}" if nf else "",
+                        supplier,
+                        date_value.strftime("%d/%m/%Y") if date_value else "",
+                    ]
+                    if part
+                )
+                key = f"{idx}::{label}"
+                target_map[key] = row
+                target_options.append(key)
+
+        review_df = pd.DataFrame(rejected).copy()
+        if "file_id" not in review_df.columns:
+            review_df["file_id"] = ""
+        review_df.insert(0, "Decisão", "PENDENTE")
+        review_df["Vincular à pré-nota"] = ""
+
+        editor = st.data_editor(
+            review_df,
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            key="prefilter_treatment_editor",
+            disabled=[
+                col for col in review_df.columns
+                if col not in {"Decisão", "Vincular à pré-nota"}
+            ],
+            column_config={
+                "file_id": None,
+                "Decisão": st.column_config.SelectboxColumn(
+                    "Decisão",
+                    options=["PENDENTE", "INCLUIR", "NÃO INCLUIR"],
+                    required=True,
+                ),
+                "Vincular à pré-nota": st.column_config.SelectboxColumn(
+                    "Vincular à pré-nota",
+                    options=target_options,
+                    help="Obrigatório quando a decisão for INCLUIR manualmente.",
+                ),
+                "arquivo": st.column_config.TextColumn("Arquivo", width="large"),
+                "tipo": "Tipo",
+                "nf": "NF identificada",
+                "fornecedor": st.column_config.TextColumn("Fornecedor identificado", width="large"),
+                "motivo": st.column_config.TextColumn("Motivo / atenção necessária", width="large"),
+                "aderencia_fornecedor": st.column_config.NumberColumn(
+                    "Aderência fornecedor",
+                    format="%d%%",
+                ),
+            },
+        )
+
+        if st.button(
+            "APLICAR DECISÕES DOS ARQUIVOS",
+            type="primary",
+            use_container_width=True,
+            key="apply_prefilter_decisions",
+        ):
+            remaining = []
+            newly_resolved = []
+            new_rows = []
+            new_store = {}
+
+            for _, decision_row in editor.iterrows():
+                decision = str(decision_row.get("Decisão") or "PENDENTE").strip().upper()
+                original = {
+                    key: decision_row.get(key)
+                    for key in ["file_id", "arquivo", "tipo", "nf", "fornecedor", "motivo", "aderencia_fornecedor"]
+                }
+
+                if decision == "PENDENTE":
+                    remaining.append(original)
+                    continue
+
+                if decision == "NÃO INCLUIR":
+                    original["decisao"] = "NÃO INCLUIR"
+                    original["tratado_em"] = now_local().isoformat(timespec="seconds")
+                    newly_resolved.append(original)
+                    continue
+
+                target_key = str(decision_row.get("Vincular à pré-nota") or "").strip()
+                target_pre = target_map.get(target_key)
+                file_id = str(decision_row.get("file_id") or "").strip()
+                stored_file = file_store.get(file_id)
+
+                if target_pre is None:
+                    original["motivo"] = (
+                        str(original.get("motivo") or "")
+                        + " | Selecione a pré-nota de destino para incluir."
+                    ).strip(" |")
+                    remaining.append(original)
+                    continue
+
+                if not stored_file:
+                    original["motivo"] = (
+                        str(original.get("motivo") or "")
+                        + " | Arquivo original não está mais disponível nesta sessão."
+                    ).strip(" |")
+                    remaining.append(original)
+                    continue
+
+                try:
+                    ext = str(stored_file.get("ext") or "").lower()
+                    raw = stored_file.get("raw") or b""
+                    group = {
+                        "pre": target_pre,
+                        "xmls": [],
+                        "pdfs": [],
+                    }
+
+                    if ext == ".xml":
+                        xml_data = extract_nfe_processing_data(raw)
+                        group["xmls"].append({
+                            "file_id": file_id,
+                            "name": stored_file.get("name") or original.get("arquivo") or "arquivo.xml",
+                            "raw": raw,
+                            "data": xml_data,
+                            "score": 100,
+                        })
+                    elif ext == ".pdf":
+                        identity = inspect_nf_pdf_identity(
+                            stored_file.get("name") or original.get("arquivo") or "arquivo.pdf",
+                            raw,
+                            st.session_state.suppliers,
+                        )
+                        group["pdfs"].append({
+                            "file_id": file_id,
+                            "name": stored_file.get("name") or original.get("arquivo") or "arquivo.pdf",
+                            "raw": raw,
+                            "identity": identity,
+                            "score": 100,
+                        })
+                    else:
+                        raise ValueError("Tipo de arquivo não suportado para inclusão manual.")
+
+                    row, stored = _build_hybrid_nf_document(group)
+                    row["status"] = "REVISAR"
+                    row["observacao"] = (
+                        (str(row.get("observacao") or "") + " | ")
+                        + "INCLUSÃO MANUAL VALIDADA PELO OPERADOR"
+                    ).strip(" |")
+                    new_rows.append(row)
+                    new_store[row["file_id"]] = stored
+
+                    original["decisao"] = "INCLUIR"
+                    original["tratado_em"] = now_local().isoformat(timespec="seconds")
+                    newly_resolved.append(original)
+                except Exception as exc:
+                    original["motivo"] = (
+                        str(original.get("motivo") or "")
+                        + f" | Não foi possível incluir: {exc}"
+                    ).strip(" |")
+                    remaining.append(original)
+
+            if new_rows:
+                current = st.session_state.analysis.copy()
+                appended = pd.DataFrame(new_rows)
+                combined = (
+                    pd.concat([current, appended], ignore_index=True)
+                    if not current.empty
+                    else appended
+                )
+                combined = apply_cross_checks(combined)
+                combined = recalc(combined)
+                st.session_state.analysis = combined
+                st.session_state.pdfs.update(new_store)
+
+            st.session_state.prefilter_rejected = remaining
+            st.session_state.prefilter_resolved = resolved + newly_resolved
+            st.session_state.pop("prefilter_treatment_editor", None)
+            st.rerun()
+
+    elif resolved:
+        st.success("Nenhum arquivo aguardando decisão manual nesta carga.")
+
+    # Conferência, correções, aprovação, geração e download que antes ficavam
+    # em Processamento de arquivos agora vivem integralmente nesta central.
+frame = st.session_state.analysis.copy()
+if not frame.empty and "origem_dados" not in frame.columns:
+    frame["origem_dados"] = "PDF"
+if frame.empty:
+    st.info("Nenhum lote analisado nesta sessão.")
+else:
+    frame = apply_cross_checks(frame)
+    frame = recalc(frame)
+    st.markdown("### Conferência das correspondências")
+    metrics(frame)
+    st.caption(
+        "Vencimento, número da NF, fornecedor e status podem ser tratados antes da geração definitiva. "
+        "A Natureza é somente leitura e vem da carga de Nota Fiscal (STSUP01)."
+    )
+    st.info(
+        "Tratamento de exceções: quando uma linha ficar em REVISAR, corrija somente os campos permitidos "
+        "(por exemplo, Vencimento) e então altere o Status para APROVADO. "
+        "Se a Natureza estiver vazia, a correção deve ser feita na carga de Nota Fiscal, não manualmente nesta tela."
+    )
+
+    merged = frame.copy()
+    pending_mask = treatment_mask(merged)
+    pending = merged.loc[pending_mask].copy()
+
+    with st.expander(
+        f"Documentos sem tratativa ({int((~pending_mask).sum())})",
+        expanded=False,
+    ):
+        ready_cols = [
+            "arquivo_original",
+            "origem_dados",
+            "numero_nf",
+            "fornecedor_padrao",
+            "vencimento",
+            "natureza",
+            "nome_sugerido",
+            "prioridade_mrp",
+        ]
+        st.dataframe(
+            merged.loc[~pending_mask, ready_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "arquivo_original": "Arquivo",
+                "origem_dados": "Origem",
+                "numero_nf": "NF",
+                "fornecedor_padrao": "Fornecedor",
+                "vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
+                "natureza": "Natureza",
+                "nome_sugerido": "Nome final",
+                "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
+            },
+        )
+
+    st.markdown("### Tratativas necessárias")
+    if pending.empty:
+        st.success("Nenhum documento precisa de correção. O lote está pronto para geração dos arquivos.")
+    else:
+        st.warning(
+            f"{len(pending)} documento(s) precisam de tratativa. "
+            "Corrija somente os campos necessários abaixo e clique em **Aplicar correções**."
+        )
+
+        treatment_cols = [
+            "arquivo_original",
+            "origem_dados",
+            "vencimento",
+            "numero_nf",
+            "cnpj_fornecedor",
+            "fornecedor_padrao",
+            "natureza",
+            "status",
+            "validacao",
+            "observacao",
+        ]
+
+        treatment_editor = st.data_editor(
+            pending[treatment_cols],
+            use_container_width=True,
+            hide_index=True,
+            num_rows="fixed",
+            key="treatment_editor",
+            disabled=[
+                "arquivo_original",
+                "origem_dados",
+                "natureza",
+                "validacao",
+                "observacao",
+            ],
+            column_config={
+                "arquivo_original": st.column_config.TextColumn(
+                    "Arquivo",
+                    width="medium",
+                ),
+                "origem_dados": st.column_config.TextColumn(
+                    "Origem",
+                    width="small",
+                ),
+                "vencimento": st.column_config.DateColumn(
+                    "Vencimento",
+                    format="DD/MM/YYYY",
+                ),
+                "numero_nf": st.column_config.TextColumn("NF"),
+                "cnpj_fornecedor": st.column_config.TextColumn("CNPJ emitente"),
+                "fornecedor_padrao": st.column_config.TextColumn(
+                    "Fornecedor",
+                    width="large",
+                ),
+                "natureza": st.column_config.TextColumn(
+                    "Natureza",
+                    width="large",
+                    help="Somente leitura. Retornada exclusivamente da carga de Nota Fiscal (STSUP01, coluna Natureza).",
+                ),
+                "status": st.column_config.SelectboxColumn(
+                    "Status",
+                    options=["REVISAR", "APROVADO"],
+                    required=True,
+                ),
+                "validacao": st.column_config.TextColumn(
+                    "Pendência",
+                    width="medium",
+                ),
+                "observacao": st.column_config.TextColumn(
+                    "Leitura automática",
+                    width="large",
+                ),
+            },
+        )
+
+        if st.button(
+            "APLICAR CORREÇÕES",
+            type="primary",
+            use_container_width=True,
+            key="apply_treatments",
+        ):
+            updated = merged.copy()
+            editable_cols = [
+                "vencimento",
+                "numero_nf",
+                "cnpj_fornecedor",
+                "fornecedor_padrao",
+                "status",
+            ]
+            for idx in treatment_editor.index:
+                for col in editable_cols:
+                    updated.loc[idx, col] = treatment_editor.loc[idx, col]
+
+            updated["natureza"] = (
+                updated["natureza"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.upper()
+            )
+            updated = apply_cross_checks(updated)
+            updated = recalc(updated)
+
+            # Clicar em Aplicar correções representa a confirmação do
+            # operador. Se a linha ficou completa após as correções,
+            # aprova automaticamente; linhas ainda inválidas continuam
+            # como REVISAR pelo recalc.
+            for idx in treatment_editor.index:
+                validation = str(
+                    updated.loc[idx, "validacao"]
+                    if idx in updated.index
+                    else ""
+                ).strip()
+                final_name = str(
+                    updated.loc[idx, "nome_sugerido"]
+                    if idx in updated.index
+                    else ""
+                ).strip()
+                if idx in updated.index and not validation and final_name:
+                    updated.loc[idx, "status"] = "APROVADO"
+
+            updated = recalc(updated)
+            st.session_state.analysis = updated
+
+            # Limpa o estado do editor para a próxima renderização usar
+            # exatamente os dados já salvos no DataFrame.
+            st.session_state.pop("treatment_editor", None)
+            st.rerun()
+
+    merged = st.session_state.analysis.copy()
+    merged = apply_cross_checks(merged)
+    merged = recalc(merged)
+    st.session_state.analysis = merged
+
+    invalid_mask = treatment_mask(merged)
+    invalid = merged.loc[invalid_mask].copy()
+    duplicate = (
+        merged["nome_sugerido"].fillna("").astype(str).str.strip().duplicated(keep=False)
+        & merged["nome_sugerido"].fillna("").astype(str).str.strip().ne("")
+    )
+
+    if duplicate.any():
+        st.error("Há nomes finais duplicados no lote. Os arquivos duplicados precisam ser tratados antes do ZIP.")
+    elif not invalid.empty:
+        st.info("O botão de geração ficará liberado quando todas as tratativas forem concluídas.")
+    else:
+        normal = int((~merged["prioridade_mrp"].fillna(False).astype(bool)).sum())
+        priority = int(merged["prioridade_mrp"].fillna(False).astype(bool).sum())
+        st.success(
+            f"Lote aprovado: {normal} documento(s) no fluxo normal e "
+            f"{priority} em prioridade MRP."
+        )
+        with st.expander("Prévia final dos nomes", expanded=False):
+            st.dataframe(
+                merged[
+                    [
+                        "arquivo_original",
+                        "nome_sugerido",
+                        "natureza",
+                        "prioridade_mrp",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "arquivo_original": "Arquivo original",
+                    "nome_sugerido": "Nome final",
+                    "natureza": "Natureza",
+                    "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
+                },
+            )
+
+    if st.button("GERAR ARQUIVOS RENOMEADOS E COMPACTADOS", type="primary", use_container_width=True, disabled=(not invalid.empty or duplicate.any())):
+        try:
+            outputs, manifest = make_zip_outputs(merged)
+            st.session_state.zip_outputs = outputs
+
+            if SAVE_NF_HISTORY:
+                st.session_state.history.extend(manifest)
+                if db.configured():
+                    try:
+                        db.save_process_records(manifest)
+                        st.success("ZIPs criados e registros gravados no Supabase. Nenhum PDF foi salvo no banco.")
+                    except Exception as exc:
+                        st.warning(f"ZIPs criados, mas o histórico não pôde ser gravado no Supabase: {exc}")
+                else:
+                    st.success("ZIPs criados. Histórico mantido nesta sessão; nenhum PDF foi salvo em banco.")
+            else:
+                # Mantém somente a carga atual para testar a conferência.
+                # Ao processar uma nova carga, esta referência é substituída.
+                st.session_state.current_test_manifest = manifest
+                st.success(
+                    "ZIPs criados em modo de testes. A conferência usa apenas esta carga atual; "
+                    "nenhum histórico foi acumulado e nada foi gravado no Supabase."
+                )
+        except Exception as exc:
+            st.error(f"Falha ao gerar ZIP: {exc}")
+
+    if st.session_state.zip_outputs:
+        all_zips_buffer = io.BytesIO()
+        with zipfile.ZipFile(
+            all_zips_buffer,
+            "w",
+            compression=zipfile.ZIP_STORED,
+        ) as master_zip:
+            for zip_name, zip_bytes in st.session_state.zip_outputs.items():
+                master_zip.writestr(zip_name, zip_bytes)
+
+        all_zips_name = (
+            f"{now_local():%d-%m-%Y} - TODOS OS ZIPS - NOTAS FISCAIS.zip"
+        )
+        st.download_button(
+            "BAIXAR TODOS OS ZIPs",
+            all_zips_buffer.getvalue(),
+            file_name=all_zips_name,
+            mime="application/zip",
+            type="primary",
+            use_container_width=True,
+            key="download_all_nf_zips",
+        )
+        st.caption(
+            f"O arquivo acima reúne {len(st.session_state.zip_outputs)} ZIP(s) "
+            "gerado(s) nesta carga. Os downloads individuais permanecem disponíveis abaixo."
+        )
+
+        for zip_name, zip_bytes in st.session_state.zip_outputs.items():
+            st.download_button(
+                f"Baixar {zip_name}",
+                zip_bytes,
+                file_name=zip_name,
+                mime="application/zip",
+                use_container_width=True,
+                key=f"download_{zip_name}",
+            )
+
+
+
 def render_file_processing():
     st.markdown('<div class="section-title">Processamento de arquivos</div>', unsafe_allow_html=True)
     tab_feed, tab_danfe, tab_cte = st.tabs(["Alimentação", "XML → DANFE", "CTEs"])
@@ -3204,7 +3802,7 @@ def render_file_processing():
 
         render_pre_notes_feed()
         st.divider()
-        render_mrp_priority_feed("process_feed_mrp")
+        render_mrp_background_feed()
         st.divider()
         render_suppliers_feed()
         st.divider()
@@ -3254,6 +3852,8 @@ def render_file_processing():
             st.session_state.pdfs = {}
             st.session_state.zip_outputs = {}
             st.session_state.prefilter_rejected = []
+            st.session_state.prefilter_resolved = []
+            st.session_state.prefilter_files = {}
             st.session_state.prefilter_stats = {}
             st.session_state.current_test_manifest = []
             st.rerun()
@@ -3266,15 +3866,24 @@ def render_file_processing():
             rejected: list[dict] = []
             uploaded = []
 
+            st.session_state.prefilter_files = {}
             for file in files:
                 ext = Path(file.name).suffix.lower()
+                file_id = uuid.uuid4().hex[:16]
+                raw = file.getvalue()
                 uploaded.append(
                     {
+                        "file_id": file_id,
                         "name": file.name,
                         "ext": ext,
-                        "raw": file.getvalue(),
+                        "raw": raw,
                     }
                 )
+                st.session_state.prefilter_files[file_id] = {
+                    "name": file.name,
+                    "ext": ext,
+                    "raw": raw,
+                }
 
             # 1) XML primeiro: identificação é estruturada e muito mais barata/confiável.
             xml_entries = [item for item in uploaded if item["ext"] == ".xml"]
@@ -3295,6 +3904,7 @@ def render_file_processing():
 
                     if not match.get("matched"):
                         rejected.append({
+                            "file_id": item.get("file_id", ""),
                             "arquivo": item["name"],
                             "tipo": "XML",
                             "nf": normalized_nf(xml_data.get("numero_nf")),
@@ -3314,6 +3924,7 @@ def render_file_processing():
                             },
                         )
                         group["xmls"].append({
+                            "file_id": item.get("file_id", ""),
                             "name": item["name"],
                             "raw": item["raw"],
                             "data": xml_data,
@@ -3321,6 +3932,7 @@ def render_file_processing():
                         })
                 except Exception as exc:
                     rejected.append({
+                        "file_id": item.get("file_id", ""),
                         "arquivo": item["name"],
                         "tipo": "XML",
                         "nf": "",
@@ -3369,6 +3981,7 @@ def render_file_processing():
 
                 if not group_key or pre_row is None:
                     rejected.append({
+                        "file_id": item.get("file_id", ""),
                         "arquivo": item["name"],
                         "tipo": "PDF",
                         "nf": normalized_nf(identity.get("numero_nf")),
@@ -3394,6 +4007,7 @@ def render_file_processing():
                         },
                     )
                     group["pdfs"].append({
+                        "file_id": item.get("file_id", ""),
                         "name": item["name"],
                         "raw": item["raw"],
                         "identity": identity,
@@ -3417,6 +4031,7 @@ def render_file_processing():
                     )
                     for duplicate in group["xmls"][1:]:
                         rejected.append({
+                            "file_id": duplicate.get("file_id", ""),
                             "arquivo": duplicate["name"],
                             "tipo": "XML",
                             "nf": normalized_nf(group["pre"].get("numero_nf")),
@@ -3433,6 +4048,7 @@ def render_file_processing():
                     )
                     for duplicate in group["pdfs"][1:]:
                         rejected.append({
+                            "file_id": duplicate.get("file_id", ""),
                             "arquivo": duplicate["name"],
                             "tipo": "PDF",
                             "nf": normalized_nf(group["pre"].get("numero_nf")),
@@ -3460,7 +4076,13 @@ def render_file_processing():
                         item["name"]
                         for item in (group.get("pdfs") or []) + (group.get("xmls") or [])
                     ]
+                    source_items = (group.get("pdfs") or []) + (group.get("xmls") or [])
                     rejected.append({
+                        "file_id": (
+                            str(source_items[0].get("file_id") or "")
+                            if len(source_items) == 1
+                            else ""
+                        ),
                         "arquivo": " + ".join(source_files) or "Documento",
                         "tipo": "PROCESSAMENTO",
                         "nf": normalized_nf(group["pre"].get("numero_nf")),
@@ -3521,315 +4143,25 @@ def render_file_processing():
             pf4.metric("Arquivos excluídos", prefilter_stats.get("excluidos", 0))
 
         if prefilter_rejected:
-            with st.expander(
-                f"Arquivos eliminados pelo pré-filtro ({len(prefilter_rejected)})",
-                expanded=False,
-            ):
-                st.dataframe(
-                    pd.DataFrame(prefilter_rejected),
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "arquivo": st.column_config.TextColumn("Arquivo", width="large"),
-                        "tipo": "Tipo",
-                        "nf": "NF",
-                        "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
-                        "motivo": st.column_config.TextColumn("Motivo da exclusão", width="large"),
-                        "aderencia_fornecedor": st.column_config.NumberColumn(
-                            "Aderência fornecedor",
-                            format="%d%%",
-                        ),
-                    },
-                )
+            st.warning(
+                f"{len(prefilter_rejected)} arquivo(s) exigem decisão do operador. "
+                "A tratativa foi enviada para Pré-notas pendentes."
+            )
 
         frame = st.session_state.analysis.copy()
-        if not frame.empty and "origem_dados" not in frame.columns:
-            frame["origem_dados"] = "PDF"
         if frame.empty:
-            st.info("Nenhum lote analisado nesta sessão.")
-        else:
-            frame = apply_cross_checks(frame)
-            frame = recalc(frame)
-            st.markdown("### Conferência das correspondências")
-            metrics(frame)
-            st.caption(
-                "Vencimento, número da NF, fornecedor e status podem ser tratados antes da geração definitiva. "
-                "A Natureza é somente leitura e vem da carga de Nota Fiscal (STSUP01)."
-            )
             st.info(
-                "Tratamento de exceções: quando uma linha ficar em REVISAR, corrija somente os campos permitidos "
-                "(por exemplo, Vencimento) e então altere o Status para APROVADO. "
-                "Se a Natureza estiver vazia, a correção deve ser feita na carga de Nota Fiscal, não manualmente nesta tela."
+                "Nenhuma NF foi encaminhada para tratativa nesta carga. "
+                "Consulte Pré-notas pendentes para arquivos rejeitados ou sem correspondência."
             )
-
-            merged = frame.copy()
-            pending_mask = treatment_mask(merged)
-            pending = merged.loc[pending_mask].copy()
-
-            with st.expander(
-                f"Documentos sem tratativa ({int((~pending_mask).sum())})",
-                expanded=False,
-            ):
-                ready_cols = [
-                    "arquivo_original",
-                    "origem_dados",
-                    "numero_nf",
-                    "fornecedor_padrao",
-                    "vencimento",
-                    "natureza",
-                    "nome_sugerido",
-                    "prioridade_mrp",
-                ]
-                st.dataframe(
-                    merged.loc[~pending_mask, ready_cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "arquivo_original": "Arquivo",
-                        "origem_dados": "Origem",
-                        "numero_nf": "NF",
-                        "fornecedor_padrao": "Fornecedor",
-                        "vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
-                        "natureza": "Natureza",
-                        "nome_sugerido": "Nome final",
-                        "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
-                    },
-                )
-
-            st.markdown("### Tratativas necessárias")
-            if pending.empty:
-                st.success("Nenhum documento precisa de correção. O lote está pronto para geração dos arquivos.")
-            else:
-                st.warning(
-                    f"{len(pending)} documento(s) precisam de tratativa. "
-                    "Corrija somente os campos necessários abaixo e clique em **Aplicar correções**."
-                )
-
-                treatment_cols = [
-                    "arquivo_original",
-                    "origem_dados",
-                    "vencimento",
-                    "numero_nf",
-                    "cnpj_fornecedor",
-                    "fornecedor_padrao",
-                    "natureza",
-                    "status",
-                    "validacao",
-                    "observacao",
-                ]
-
-                treatment_editor = st.data_editor(
-                    pending[treatment_cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    num_rows="fixed",
-                    key="treatment_editor",
-                    disabled=[
-                        "arquivo_original",
-                        "origem_dados",
-                        "natureza",
-                        "validacao",
-                        "observacao",
-                    ],
-                    column_config={
-                        "arquivo_original": st.column_config.TextColumn(
-                            "Arquivo",
-                            width="medium",
-                        ),
-                        "origem_dados": st.column_config.TextColumn(
-                            "Origem",
-                            width="small",
-                        ),
-                        "vencimento": st.column_config.DateColumn(
-                            "Vencimento",
-                            format="DD/MM/YYYY",
-                        ),
-                        "numero_nf": st.column_config.TextColumn("NF"),
-                        "cnpj_fornecedor": st.column_config.TextColumn("CNPJ emitente"),
-                        "fornecedor_padrao": st.column_config.TextColumn(
-                            "Fornecedor",
-                            width="large",
-                        ),
-                        "natureza": st.column_config.TextColumn(
-                            "Natureza",
-                            width="large",
-                            help="Somente leitura. Retornada exclusivamente da carga de Nota Fiscal (STSUP01, coluna Natureza).",
-                        ),
-                        "status": st.column_config.SelectboxColumn(
-                            "Status",
-                            options=["REVISAR", "APROVADO"],
-                            required=True,
-                        ),
-                        "validacao": st.column_config.TextColumn(
-                            "Pendência",
-                            width="medium",
-                        ),
-                        "observacao": st.column_config.TextColumn(
-                            "Leitura automática",
-                            width="large",
-                        ),
-                    },
-                )
-
-                if st.button(
-                    "APLICAR CORREÇÕES",
-                    type="primary",
-                    use_container_width=True,
-                    key="apply_treatments",
-                ):
-                    updated = merged.copy()
-                    editable_cols = [
-                        "vencimento",
-                        "numero_nf",
-                        "cnpj_fornecedor",
-                        "fornecedor_padrao",
-                        "status",
-                    ]
-                    for idx in treatment_editor.index:
-                        for col in editable_cols:
-                            updated.loc[idx, col] = treatment_editor.loc[idx, col]
-
-                    updated["natureza"] = (
-                        updated["natureza"]
-                        .fillna("")
-                        .astype(str)
-                        .str.strip()
-                        .str.upper()
-                    )
-                    updated = apply_cross_checks(updated)
-                    updated = recalc(updated)
-
-                    # Clicar em Aplicar correções representa a confirmação do
-                    # operador. Se a linha ficou completa após as correções,
-                    # aprova automaticamente; linhas ainda inválidas continuam
-                    # como REVISAR pelo recalc.
-                    for idx in treatment_editor.index:
-                        validation = str(
-                            updated.loc[idx, "validacao"]
-                            if idx in updated.index
-                            else ""
-                        ).strip()
-                        final_name = str(
-                            updated.loc[idx, "nome_sugerido"]
-                            if idx in updated.index
-                            else ""
-                        ).strip()
-                        if idx in updated.index and not validation and final_name:
-                            updated.loc[idx, "status"] = "APROVADO"
-
-                    updated = recalc(updated)
-                    st.session_state.analysis = updated
-
-                    # Limpa o estado do editor para a próxima renderização usar
-                    # exatamente os dados já salvos no DataFrame.
-                    st.session_state.pop("treatment_editor", None)
-                    st.rerun()
-
-            merged = st.session_state.analysis.copy()
-            merged = apply_cross_checks(merged)
-            merged = recalc(merged)
-            st.session_state.analysis = merged
-
-            invalid_mask = treatment_mask(merged)
-            invalid = merged.loc[invalid_mask].copy()
-            duplicate = (
-                merged["nome_sugerido"].fillna("").astype(str).str.strip().duplicated(keep=False)
-                & merged["nome_sugerido"].fillna("").astype(str).str.strip().ne("")
+        else:
+            st.success(
+                f"{len(frame)} NF(s) encaminhada(s) para a central de tratativas em Pré-notas pendentes."
             )
-
-            if duplicate.any():
-                st.error("Há nomes finais duplicados no lote. Os arquivos duplicados precisam ser tratados antes do ZIP.")
-            elif not invalid.empty:
-                st.info("O botão de geração ficará liberado quando todas as tratativas forem concluídas.")
-            else:
-                normal = int((~merged["prioridade_mrp"].fillna(False).astype(bool)).sum())
-                priority = int(merged["prioridade_mrp"].fillna(False).astype(bool).sum())
-                st.success(
-                    f"Lote aprovado: {normal} documento(s) no fluxo normal e "
-                    f"{priority} em prioridade MRP."
-                )
-                with st.expander("Prévia final dos nomes", expanded=False):
-                    st.dataframe(
-                        merged[
-                            [
-                                "arquivo_original",
-                                "nome_sugerido",
-                                "natureza",
-                                "prioridade_mrp",
-                            ]
-                        ],
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "arquivo_original": "Arquivo original",
-                            "nome_sugerido": "Nome final",
-                            "natureza": "Natureza",
-                            "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
-                        },
-                    )
-
-            if st.button("GERAR ARQUIVOS RENOMEADOS E COMPACTADOS", type="primary", use_container_width=True, disabled=(not invalid.empty or duplicate.any())):
-                try:
-                    outputs, manifest = make_zip_outputs(merged)
-                    st.session_state.zip_outputs = outputs
-
-                    if SAVE_NF_HISTORY:
-                        st.session_state.history.extend(manifest)
-                        if db.configured():
-                            try:
-                                db.save_process_records(manifest)
-                                st.success("ZIPs criados e registros gravados no Supabase. Nenhum PDF foi salvo no banco.")
-                            except Exception as exc:
-                                st.warning(f"ZIPs criados, mas o histórico não pôde ser gravado no Supabase: {exc}")
-                        else:
-                            st.success("ZIPs criados. Histórico mantido nesta sessão; nenhum PDF foi salvo em banco.")
-                    else:
-                        # Mantém somente a carga atual para testar a conferência.
-                        # Ao processar uma nova carga, esta referência é substituída.
-                        st.session_state.current_test_manifest = manifest
-                        st.success(
-                            "ZIPs criados em modo de testes. A conferência usa apenas esta carga atual; "
-                            "nenhum histórico foi acumulado e nada foi gravado no Supabase."
-                        )
-                except Exception as exc:
-                    st.error(f"Falha ao gerar ZIP: {exc}")
-
-            if st.session_state.zip_outputs:
-                all_zips_buffer = io.BytesIO()
-                with zipfile.ZipFile(
-                    all_zips_buffer,
-                    "w",
-                    compression=zipfile.ZIP_STORED,
-                ) as master_zip:
-                    for zip_name, zip_bytes in st.session_state.zip_outputs.items():
-                        master_zip.writestr(zip_name, zip_bytes)
-
-                all_zips_name = (
-                    f"{now_local():%d-%m-%Y} - TODOS OS ZIPS - NOTAS FISCAIS.zip"
-                )
-                st.download_button(
-                    "BAIXAR TODOS OS ZIPs",
-                    all_zips_buffer.getvalue(),
-                    file_name=all_zips_name,
-                    mime="application/zip",
-                    type="primary",
-                    use_container_width=True,
-                    key="download_all_nf_zips",
-                )
-                st.caption(
-                    f"O arquivo acima reúne {len(st.session_state.zip_outputs)} ZIP(s) "
-                    "gerado(s) nesta carga. Os downloads individuais permanecem disponíveis abaixo."
-                )
-
-                for zip_name, zip_bytes in st.session_state.zip_outputs.items():
-                    st.download_button(
-                        f"Baixar {zip_name}",
-                        zip_bytes,
-                        file_name=zip_name,
-                        mime="application/zip",
-                        use_container_width=True,
-                        key=f"download_{zip_name}",
-                    )
+            st.caption(
+                "Correções, aprovação, decisão de incluir/não incluir, geração dos arquivos "
+                "e baixa são realizadas na tela Pré-notas pendentes."
+            )
 
 
     with tab_danfe:
@@ -4300,7 +4632,7 @@ elif page == "Pendências":
         unsafe_allow_html=True,
     )
     st.caption(
-        "Centraliza a conferência de pré-notas, o impacto no MRP e o processamento de XMLs/PDFs em um único fluxo operacional."
+        "Pré-notas pendentes é a central de tratativa geral das NFs. O Impacto MRP é calculado em segundo plano e apenas influencia a prioridade."
     )
 
     pending_records = current_process_records_for_tests()
@@ -4326,7 +4658,7 @@ elif page == "Pendências":
             temp["chave_validacao"].ne("") & ~temp["chave_validacao"].isin(pre_keys)
         ].copy()
 
-    pend_pre_tab, pend_mrp_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Impacto MRP", "Processamento de arquivos"])
+    pend_pre_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Processamento de arquivos"])
 
     with pend_pre_tab:
         show_last_update("pre")
@@ -4599,6 +4931,10 @@ elif page == "Pendências":
                 f"Exibindo {len(filtered)} de {len(pending_view)} pré-nota(s) pendente(s)."
             )
 
+        st.divider()
+        render_nf_treatment_center()
+        st.divider()
+
         # Etapa final do fluxo: depois de baixar/enviar os ZIPs, a confirmação
         # acontece ainda nesta aba de Pré-notas. Só após esta ação a NF entra
         # na consulta de finalizados do Dashboard.
@@ -4755,9 +5091,6 @@ elif page == "Pendências":
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Falha ao confirmar envio: {exc}")
-
-    with pend_mrp_tab:
-        render_mrp_priority_feed("pendencias_mrp", allow_feed=False)
 
     with pend_process_tab:
         show_last_update("process")
