@@ -4691,6 +4691,7 @@ def render_mrp_missing_pre_treatments() -> None:
         "numero_nf",
         "cnpj",
         "fornecedor",
+        "recebedor",
         "prioridade",
         "data_cm",
         "situacao_vinculo",
@@ -4698,13 +4699,18 @@ def render_mrp_missing_pre_treatments() -> None:
     ]
     visible_cols = [col for col in visible_cols if col in missing.columns]
     view = missing[visible_cols].copy()
+    if "recebedor" not in view.columns:
+        view["recebedor"] = ""
     view.insert(0, "Selecionar", False)
 
     edited = st.data_editor(
         view,
         use_container_width=True,
         hide_index=True,
-        disabled=[col for col in view.columns if col != "Selecionar"],
+        disabled=[
+            col for col in view.columns
+            if col not in {"Selecionar", "recebedor"}
+        ],
         key="base_missing_mrp_editor",
         column_config={
             "_mrp_key": None,
@@ -4718,6 +4724,11 @@ def render_mrp_missing_pre_treatments() -> None:
             "fornecedor": st.column_config.TextColumn(
                 "Fornecedor",
                 width="large",
+            ),
+            "recebedor": st.column_config.TextColumn(
+                "Recebedor",
+                width="medium",
+                help="Obrigatório para adicionar a NF ao fluxo.",
             ),
             "prioridade": "Prioridade",
             "data_cm": st.column_config.DateColumn(
@@ -4757,6 +4768,26 @@ def render_mrp_missing_pre_treatments() -> None:
         key="apply_base_missing_mrp",
     ):
         if action == "Adicionar às Pré-notas pendentes":
+            missing_receiver = selected[
+                selected["recebedor"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .eq("")
+            ].copy()
+            if not missing_receiver.empty:
+                nfs = ", ".join(
+                    missing_receiver["numero_nf"]
+                    .fillna("")
+                    .astype(str)
+                    .tolist()
+                )
+                st.error(
+                    "Informe o Recebedor antes de adicionar ao fluxo. "
+                    f"NF(s) pendente(s): {nfs}."
+                )
+                return
+
             additions = []
             for _, row in selected.iterrows():
                 additions.append({
@@ -4766,7 +4797,7 @@ def render_mrp_missing_pre_treatments() -> None:
                     "numero_nf": normalized_nf(row.get("numero_nf")),
                     "cnpj": digits_only(row.get("cnpj")),
                     "fornecedor": str(row.get("fornecedor") or "").strip(),
-                    "recebedor": "",
+                    "recebedor": str(row.get("recebedor") or "").strip(),
                     "status": "Pré-nota lançada",
                     "natureza": str(row.get("natureza") or "").strip(),
                     "origem": "Impacto MRP / Protheus",
