@@ -3848,6 +3848,89 @@ def render_nf_treatment_center() -> None:
             & merged["nome_sugerido"].fillna("").astype(str).str.strip().ne("")
         )
 
+        st.markdown("### Definição de prioridade")
+        st.caption(
+            "A prioridade calculada pelo MRP permanece automática. O operador pode "
+            "marcar prioridade adicional para qualquer NF antes da geração dos arquivos."
+        )
+        priority_cols = [
+            col for col in [
+                "file_id",
+                "numero_nf",
+                "fornecedor_padrao",
+                "natureza",
+                "prioridade_mrp_base",
+                "prioridade_manual",
+            ]
+            if col in merged.columns
+        ]
+        priority_view = merged[priority_cols].copy()
+        if "prioridade_mrp_base" not in priority_view.columns:
+            priority_view["prioridade_mrp_base"] = False
+        if "prioridade_manual" not in priority_view.columns:
+            priority_view["prioridade_manual"] = False
+
+        with st.form("priority_selection_form"):
+            priority_editor = st.data_editor(
+                priority_view,
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                key="priority_selection_editor",
+                disabled=[
+                    col for col in priority_view.columns
+                    if col != "prioridade_manual"
+                ],
+                column_config={
+                    "file_id": None,
+                    "numero_nf": "NF",
+                    "fornecedor_padrao": st.column_config.TextColumn(
+                        "Fornecedor",
+                        width="large",
+                    ),
+                    "natureza": st.column_config.TextColumn(
+                        "Natureza",
+                        width="medium",
+                    ),
+                    "prioridade_mrp_base": st.column_config.CheckboxColumn(
+                        "Prioridade MRP",
+                        help="Definida automaticamente pelo cálculo do MRP.",
+                    ),
+                    "prioridade_manual": st.column_config.CheckboxColumn(
+                        "Prioridade",
+                        help="Marque para adicionar esta NF ao fluxo prioritário.",
+                    ),
+                },
+            )
+            save_priorities = st.form_submit_button(
+                "SALVAR PRIORIDADES",
+                use_container_width=True,
+            )
+
+        if save_priorities:
+            updated = st.session_state.analysis.copy()
+            if "prioridade_manual" not in updated.columns:
+                updated["prioridade_manual"] = False
+
+            if "file_id" in priority_editor.columns and "file_id" in updated.columns:
+                priority_map = {
+                    str(row.get("file_id") or ""): bool(row.get("prioridade_manual"))
+                    for _, row in priority_editor.iterrows()
+                }
+                updated["prioridade_manual"] = updated.apply(
+                    lambda row: priority_map.get(
+                        str(row.get("file_id") or ""),
+                        bool(row.get("prioridade_manual", False)),
+                    ),
+                    axis=1,
+                )
+
+            updated = apply_cross_checks(updated)
+            updated = recalc(updated)
+            st.session_state.analysis = updated
+            st.session_state.pop("priority_selection_editor", None)
+            st.rerun()
+
         if duplicate.any():
             st.error("Há nomes finais duplicados no lote. Os arquivos duplicados precisam ser tratados antes do ZIP.")
         elif not invalid.empty:
