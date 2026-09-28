@@ -6730,10 +6730,9 @@ elif page == "Pendências":
             ).replace("", "NÃO LOCALIZADO")
             if "recebedor" not in pending_view.columns:
                 pending_view["recebedor"] = ""
-            pending_view["validacao_documento"] = "PENDENTE DE DOCUMENTO"
-
-            # CT-e vinculado à NF no lote atual.
+            # Situação documental da NF dentro da sessão atual.
             cte_by_pre_key = {}
+            linked_nf_keys = set()
             analysis_now = st.session_state.get("analysis")
             if isinstance(analysis_now, pd.DataFrame) and not analysis_now.empty:
                 analysis_by_file = {
@@ -6741,6 +6740,14 @@ elif page == "Pendências":
                     for _, row in analysis_now.iterrows()
                     if str(row.get("file_id") or "").strip()
                 }
+                for nf_row in analysis_by_file.values():
+                    key = pre_note_key(
+                        nf_row.get("numero_nf"),
+                        nf_row.get("cnpj_fornecedor"),
+                    )
+                    if key:
+                        linked_nf_keys.add(key)
+
                 for cte in st.session_state.get("cte_links") or []:
                     cte_number = str(cte.get("numero_cte") or "").strip()
                     if not cte_number:
