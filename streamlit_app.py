@@ -6416,6 +6416,19 @@ if page == "Dashboard":
             unsafe_allow_html=True,
         )
 
+    sent_cards = [
+        ("NFs enviadas", nf_sent, "Envio confirmado", "#16a34a", "#dcfce7"),
+        ("CT-es enviados", cte_sent, "Envio confirmado", "#15803d", "#dcfce7"),
+    ]
+    for col, item in zip(st.columns(2), sent_cards):
+        label, value, delta, accent, soft = item
+        col.markdown(
+            f'<div class="kpi-card" style="--accent:{accent};--accent-soft:{soft};margin-top:.7rem">'
+            f'<div class="kpi-header"><span class="kpi-dot"></span><span class="kpi-label">{label}</span></div>'
+            f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>',
+            unsafe_allow_html=True,
+        )
+
     if not db.configured():
         st.caption("Persistência ainda não conectada neste deployment. Configure a chave do Supabase em Configurações.")
 
