@@ -2090,7 +2090,11 @@ def match_document_to_pre_note(
     min_supplier_score: int = 82,
     pre_notes: pd.DataFrame | None = None,
 ) -> dict:
-    frame = pre_notes if isinstance(pre_notes, pd.DataFrame) else st.session_state.pre_notes
+    frame = (
+        pre_notes
+        if isinstance(pre_notes, pd.DataFrame)
+        else st.session_state.pre_notes
+    )
     result = {
         "matched": False,
         "situacao": "PRÉ-NOTA NÃO LOCALIZADA",
@@ -2111,26 +2115,83 @@ def match_document_to_pre_note(
     if candidates.empty:
         return result
 
+    doc_cnpj = digits_only(
+        document_row.get("cnpj_fornecedor")
+        or document_row.get("cnpj")
+    )
+
+    # O CNPJ é o vínculo mais forte quando existe nos dois lados. Isso é
+    # especialmente importante para NFs adicionadas pela análise do MRP.
+    if doc_cnpj and "cnpj" in candidates.columns:
+        candidate_cnpj = candidates["cnpj"].map(digits_only)
+        exact_cnpj = candidates[candidate_cnpj.eq(doc_cnpj)].copy()
+        if len(exact_cnpj) == 1:
+            best = exact_cnpj.iloc[0]
+            result.update(
+                matched=True,
+                situacao="OK",
+                score_fornecedor=100,
+                row=best.to_dict(),
+            )
+            return result
+        if len(exact_cnpj) > 1:
+            candidates = exact_cnpj
+
     supplier_names = [
         str(document_row.get("fornecedor_padrao") or "").strip(),
         str(document_row.get("fornecedor_lido") or "").strip(),
     ]
     supplier_names = [name for name in supplier_names if name]
+
+    candidates["_supplier_pre"] = candidates.apply(
+        pre_supplier_name,
+        axis=1,
+    )
+
+    if supplier_names:
+        candidates["_score_supplier"] = candidates["_supplier_pre"].map(
+            lambda pre_name: max(
+                [
+                    supplier_similarity(pre_name, doc_name)
+                    for doc_name in supplier_names
+                ]
+                or [0]
+            )
+        )
+    else:
+        candidates["_score_supplier"] = 0
+
+    candidates = candidates.sort_values(
+        "_score_supplier",
+        ascending=False,
+    )
+
+    best = candidates.iloc[0]
+    best_score = int(best["_score_supplier"])
+
+    # Se existe uma única NF com esse número no universo válido e a base não
+    # dispõe de CNPJ para confrontar (situação comum de inclusão via MRP),
+    # o número da NF é suficiente para o vínculo. A base é a autoridade do fluxo.
+    if len(candidates) == 1:
+        candidate_cnpj = digits_only(best.get("cnpj"))
+        if doc_cnpj and candidate_cnpj and doc_cnpj != candidate_cnpj:
+            result["situacao"] = "CNPJ DIVERGENTE"
+            result["score_fornecedor"] = best_score
+            return result
+
+        if not candidate_cnpj or not doc_cnpj:
+            result.update(
+                matched=True,
+                situacao="OK - NF ÚNICA NA BASE",
+                score_fornecedor=max(best_score, 90),
+                row=best.to_dict(),
+            )
+            return result
+
     if not supplier_names:
         result["situacao"] = "FORNECEDOR DO DOCUMENTO NÃO LOCALIZADO"
         return result
 
-    candidates["_supplier_pre"] = candidates.apply(pre_supplier_name, axis=1)
-    candidates["_score_supplier"] = candidates["_supplier_pre"].map(
-        lambda pre_name: max(
-            [supplier_similarity(pre_name, doc_name) for doc_name in supplier_names]
-            or [0]
-        )
-    )
-    candidates = candidates.sort_values("_score_supplier", ascending=False)
-
-    best = candidates.iloc[0]
-    best_score = int(best["_score_supplier"])
     if best_score < min_supplier_score:
         result["situacao"] = "FORNECEDOR DIVERGENTE"
         result["score_fornecedor"] = best_score
@@ -2139,6 +2200,7 @@ def match_document_to_pre_note(
     strong_candidates = candidates[
         candidates["_score_supplier"] >= min_supplier_score
     ].copy()
+
     if len(strong_candidates) > 1:
         strong_dates = {
             normalized_business_date(value)
