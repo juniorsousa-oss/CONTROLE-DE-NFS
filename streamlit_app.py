@@ -924,13 +924,7 @@ def supplier_similarity(name_a: object, name_b: object) -> int:
 
 
 def mrp_row_key(row: pd.Series | dict) -> str:
-    data_nf = str(row.get("data_nf") or "").strip()
-    if not data_nf:
-        data_nf = date_nf_key(
-            row.get("data_pre_nota"),
-            row.get("numero_nf"),
-        )
-
+    nf = normalized_nf(row.get("numero_nf"))
     supplier = str(
         row.get("fornecedor_validacao")
         or row.get("fornecedor")
@@ -938,7 +932,9 @@ def mrp_row_key(row: pd.Series | dict) -> str:
     ).strip()
     supplier_norm = supplier_validation_name(supplier)
 
-    return f"{data_nf}|{supplier_norm}" if data_nf and supplier_norm else data_nf
+    if nf and supplier_norm:
+        return f"{nf}|{supplier_norm}"
+    return nf
 
 
 
@@ -1420,9 +1416,9 @@ def _build_mrp_impact(
     )
     detail["_grupo_vinculo"] = detail.apply(
         lambda row: (
-            f"{row.get('data_nf')}|{row.get('_fornecedor_norm')}"
-            if row.get("data_nf") and row.get("_fornecedor_norm")
-            else ""
+            f"{normalized_nf(row.get('numero_nf'))}|{row.get('_fornecedor_norm')}"
+            if normalized_nf(row.get("numero_nf")) and row.get("_fornecedor_norm")
+            else normalized_nf(row.get("numero_nf"))
         ),
         axis=1,
     )
@@ -1438,7 +1434,7 @@ def _build_mrp_impact(
 
     summary_rows = []
     valid_groups = detail[
-        detail["data_nf"].ne("")
+        detail["numero_nf"].map(normalized_nf).ne("")
         & detail["_grupo_vinculo"].ne("")
     ].copy()
 
@@ -1923,13 +1919,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                             ignore_index=True,
                             sort=False,
                         )
-                        updated["_data_nf"] = updated.apply(
-                            lambda row: date_nf_key(
-                                row.get("data_pre_nota"),
-                                row.get("numero_nf"),
-                            ),
-                            axis=1,
-                        )
+                        updated["_nf_key"] = updated["numero_nf"].map(normalized_nf)
                         updated["_supplier_norm"] = updated.apply(
                             lambda row: supplier_validation_name(
                                 pre_supplier_name(row)
@@ -1939,12 +1929,12 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                         updated = (
                             updated.sort_index()
                             .drop_duplicates(
-                                ["_data_nf", "_supplier_norm"],
+                                ["_nf_key", "_supplier_norm"],
                                 keep="last",
                             )
                             .drop(
                                 columns=[
-                                    "_data_nf",
+                                    "_nf_key",
                                     "_supplier_norm",
                                 ],
                                 errors="ignore",
@@ -2269,9 +2259,9 @@ def match_document_to_pre_note(
 def operational_fields_from_nf_load(
     pre_row: pd.Series | dict | None,
     document_row: pd.Series | dict,
-    min_supplier_score: int = 82,
+    min_supplier_score: int = 0,
 ) -> dict:
-    """Busca Natureza, CR e Desc. CR na carga STSUP01/Impacto MRP."""
+    """Busca Natureza, CR e Desc. CR por NF e fornecedor na carga STSUP01/MRP."""
     result = {
         "natureza": "",
         "cr": "",
@@ -2283,43 +2273,65 @@ def operational_fields_from_nf_load(
     if not isinstance(detail, pd.DataFrame) or detail.empty:
         return result
 
-    if not pre_row:
-        result["source"] = "PRÉ-NOTA NÃO LOCALIZADA"
-        return result
-
-    key = date_nf_key(
-        pre_row.get("data_pre_nota"),
-        document_row.get("numero_nf") or pre_row.get("numero_nf"),
+    nf = normalized_nf(
+        document_row.get("numero_nf")
+        or (pre_row.get("numero_nf") if pre_row else "")
     )
-    if not key:
-        result["source"] = "DATA/NF INVÁLIDA"
+    if not nf:
+        result["source"] = "NF INVÁLIDA"
         return result
 
     candidates = detail[
-        detail["data_nf"].fillna("").astype(str).eq(key)
+        detail["numero_nf"].map(normalized_nf).eq(nf)
     ].copy()
     if candidates.empty:
         result["source"] = "NF NÃO LOCALIZADA NA CARGA"
         return result
 
-    supplier_names = [
-        pre_supplier_name(pre_row),
+    supplier_names = []
+    if pre_row:
+        supplier_names.append(pre_supplier_name(pre_row))
+    supplier_names.extend([
         str(document_row.get("fornecedor_padrao") or "").strip(),
         str(document_row.get("fornecedor_lido") or "").strip(),
-    ]
+    ])
     supplier_names = [name for name in supplier_names if name]
 
-    if supplier_names and "fornecedor" in candidates.columns:
-        candidates["_op_supplier_score"] = candidates["fornecedor"].map(
-            lambda value: max(
-                [supplier_similarity(value, name) for name in supplier_names] or [0]
-            )
+    if "fornecedor" in candidates.columns and supplier_names:
+        candidates["_supplier_norm"] = candidates["fornecedor"].map(
+            supplier_validation_name
         )
-        strong = candidates[
-            candidates["_op_supplier_score"] >= min_supplier_score
-        ].copy()
-        if not strong.empty:
-            candidates = strong
+        supplier_norms = [
+            supplier_validation_name(name)
+            for name in supplier_names
+            if supplier_validation_name(name)
+        ]
+
+        if supplier_norms:
+            exact = candidates[
+                candidates["_supplier_norm"].isin(supplier_norms)
+            ].copy()
+            if not exact.empty:
+                candidates = exact
+                result["source"] = "CARGA NF - FORNECEDOR IDÊNTICO"
+            else:
+                candidates["_op_supplier_score"] = candidates["fornecedor"].map(
+                    lambda value: max(
+                        [supplier_similarity(value, name) for name in supplier_names]
+                        or [0]
+                    )
+                )
+                best_score = int(
+                    candidates["_op_supplier_score"].max()
+                )
+                candidates = candidates[
+                    candidates["_op_supplier_score"].eq(best_score)
+                ].copy()
+                result["source"] = "CARGA NF - FORNECEDOR MAIS SEMELHANTE"
+        else:
+            result["source"] = "CARGA NF - NF ÚNICA"
+    else:
+        result["source"] = "CARGA NF - NF ÚNICA"
 
     def unique_join(column: str) -> str:
         if column not in candidates.columns:
@@ -2339,7 +2351,6 @@ def operational_fields_from_nf_load(
     result["natureza"] = unique_join("natureza").upper()
     result["cr"] = unique_join("cr")
     result["desc_cr"] = unique_join("desc_cr")
-    result["source"] = "CARGA NF"
 
     if not result["natureza"]:
         result["source"] = "NATUREZA NÃO INFORMADA NA CARGA"
@@ -3050,10 +3061,10 @@ def current_pending_pre_notes() -> pd.DataFrame:
 
 
 def pending_document_group_key(pre_row: pd.Series | dict) -> str:
-    base = date_nf_key(pre_row.get("data_pre_nota"), pre_row.get("numero_nf"))
+    nf = normalized_nf(pre_row.get("numero_nf"))
     supplier = supplier_validation_name(pre_supplier_name(pre_row))
     cnpj = digits_only(pre_row.get("cnpj"))
-    return f"{base}|{supplier or cnpj}" if base else ""
+    return f"{nf}|{supplier or cnpj}" if nf else ""
 
 
 def _xml_prefilter_identity(xml_data: dict) -> dict:
@@ -4716,13 +4727,7 @@ def render_mrp_missing_pre_treatments() -> None:
                 ignore_index=True,
                 sort=False,
             )
-            updated["_data_nf"] = updated.apply(
-                lambda row: date_nf_key(
-                    row.get("data_pre_nota"),
-                    row.get("numero_nf"),
-                ),
-                axis=1,
-            )
+            updated["_nf_key"] = updated["numero_nf"].map(normalized_nf)
             updated["_supplier_norm"] = updated.apply(
                 lambda row: supplier_validation_name(
                     pre_supplier_name(row)
@@ -4731,11 +4736,11 @@ def render_mrp_missing_pre_treatments() -> None:
             )
             updated = (
                 updated.drop_duplicates(
-                    ["_data_nf", "_supplier_norm"],
+                    ["_nf_key", "_supplier_norm"],
                     keep="last",
                 )
                 .drop(
-                    columns=["_data_nf", "_supplier_norm"],
+                    columns=["_nf_key", "_supplier_norm"],
                     errors="ignore",
                 )
                 .reset_index(drop=True)
