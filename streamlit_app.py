@@ -4536,45 +4536,17 @@ def render_file_processing():
                 "excluidos": len(rejected),
             }
 
-            if frame.empty:
-                st.warning(
-                    "Nenhum documento enviado correspondeu com segurança às pré-notas pendentes."
-                )
-            else:
-                st.success(
-                    f"Pré-filtro concluído: {len(frame)} nota(s) seguiram para validação. "
-                    f"{len(rejected)} arquivo(s) foram excluídos do lote."
-                )
+            st.success(
+                f"Alimentação processada: {len(frame)} NF(s) vinculada(s) e "
+                f"{len(rejected)} arquivo(s) encaminhado(s) para tratativa. "
+                "Continue em Pré-notas pendentes."
+            )
 
         prefilter_stats = st.session_state.get("prefilter_stats") or {}
-        prefilter_rejected = st.session_state.get("prefilter_rejected") or []
-
         if prefilter_stats:
-            pf1, pf2, pf3, pf4 = st.columns(4)
-            pf1.metric("Arquivos enviados", prefilter_stats.get("enviados", 0))
-            pf2.metric("Notas correspondentes", prefilter_stats.get("notas_correspondentes", 0))
-            pf3.metric("XMLs utilizados", prefilter_stats.get("xml_utilizados", 0))
-            pf4.metric("Arquivos excluídos", prefilter_stats.get("excluidos", 0))
-
-        if prefilter_rejected:
-            st.warning(
-                f"{len(prefilter_rejected)} arquivo(s) exigem decisão do operador. "
-                "A tratativa foi enviada para Pré-notas pendentes."
-            )
-
-        frame = st.session_state.analysis.copy()
-        if frame.empty:
             st.info(
-                "Nenhuma NF foi encaminhada para tratativa nesta carga. "
-                "Consulte Pré-notas pendentes para arquivos rejeitados ou sem correspondência."
-            )
-        else:
-            st.success(
-                f"{len(frame)} NF(s) encaminhada(s) para a central de tratativas em Pré-notas pendentes."
-            )
-            st.caption(
-                "Correções, aprovação, decisão de incluir/não incluir, geração dos arquivos "
-                "e baixa são realizadas na tela Pré-notas pendentes."
+                "Carga concluída. As validações, correções, decisões de incluir/não incluir "
+                "e a baixa ficam concentradas em Pré-notas pendentes."
             )
 
 
@@ -5507,7 +5479,6 @@ elif page == "Pendências":
                     st.error(f"Falha ao confirmar envio: {exc}")
 
     with pend_process_tab:
-        show_last_update("process")
         render_file_processing()
 
 
