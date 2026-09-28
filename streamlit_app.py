@@ -57,6 +57,25 @@ def generate_danfe_pdf(raw_xml: bytes) -> bytes:
     return _impl(raw_xml)
 
 
+def apply_operational_stamp(
+    pdf_bytes: bytes,
+    data_chegada,
+    cr,
+    desc_cr,
+    natureza,
+    recebido_por,
+) -> bytes:
+    from danfe_generator import apply_operational_stamp as _impl
+    return _impl(
+        pdf_bytes,
+        data_chegada=data_chegada,
+        cr=cr,
+        desc_cr=desc_cr,
+        natureza=natureza,
+        recebido_por=recebido_por,
+    )
+
+
 def danfe_file_name(meta) -> str:
     from danfe_generator import danfe_file_name as _impl
     return _impl(meta)
@@ -2330,8 +2349,9 @@ def make_zip_outputs(df: pd.DataFrame):
                     raise ValueError(f"Nome final vazio ou duplicado: {final_name}")
                 used.add(final_name)
 
-                # Dados do controle interno SETTA ficam preparados, porém
-                # NÃO são inseridos no PDF enquanto a posição não for homologada.
+                # Controle interno SETTA: o carimbo é aplicado no quadro
+                # RESERVADO AO FISCO. Se o PDF já estiver carimbado, a função
+                # detecta o texto do componente e não cria uma segunda cópia.
                 data_chegada = (
                     normalized_business_date(row.get("pre_nota_em"))
                     or normalized_business_date(row.get("pre_nota_data"))
@@ -2345,7 +2365,20 @@ def make_zip_outputs(df: pd.DataFrame):
                 desc_cr = str(row.get("desc_cr") or "").strip()
 
                 final_pdf_bytes = item["bytes"]
-                stamp_applied = False
+                try:
+                    final_pdf_bytes = apply_operational_stamp(
+                        final_pdf_bytes,
+                        data_chegada=data_chegada,
+                        cr=cr,
+                        desc_cr=desc_cr,
+                        natureza=nature,
+                        recebido_por=recebedor,
+                    )
+                    stamp_applied = True
+                except Exception as exc:
+                    raise ValueError(
+                        f"Falha ao aplicar o controle interno na NF {row.numero_nf}: {exc}"
+                    ) from exc
 
                 archive.writestr(final_name, final_pdf_bytes)
 
@@ -3404,9 +3437,13 @@ def render_file_processing():
                     pdf_bytes = generate_danfe_pdf(raw_xml)
                     pdf_name = danfe_file_name(meta)
 
-                    stamp_status = "SEM DADOS OPERACIONAIS"
                     compliance_status = "MOC 7.0 / NF-e 55 + CAMADA INTERNA"
-                    stamp_applied = False
+                    data_chegada = None
+                    recebedor = ""
+                    cr = ""
+                    desc_cr = ""
+                    natureza = ""
+
                     pending_for_stamp = current_pending_pre_notes()
                     if isinstance(pending_for_stamp, pd.DataFrame) and not pending_for_stamp.empty:
                         identity = _xml_prefilter_identity(xml_data)
@@ -3434,14 +3471,20 @@ def render_file_processing():
                                 operational.get("natureza") or ""
                             ).strip().upper()
 
-                            if any([
-                                data_chegada,
-                                cr,
-                                desc_cr,
-                                natureza,
-                                recebedor,
-                            ]):
-                                stamp_status = "DADOS PRONTOS — POSIÇÃO A DEFINIR"
+                    pdf_bytes = apply_operational_stamp(
+                        pdf_bytes,
+                        data_chegada=data_chegada,
+                        cr=cr,
+                        desc_cr=desc_cr,
+                        natureza=natureza,
+                        recebido_por=recebedor,
+                    )
+                    stamp_applied = True
+                    stamp_status = (
+                        "APLICADO — RESERVADO AO FISCO"
+                        if any([data_chegada, cr, desc_cr, natureza, recebedor])
+                        else "APLICADO — AGUARDANDO DADOS OPERACIONAIS"
+                    )
 
                     outputs[pdf_name] = {
                         "bytes": pdf_bytes,
