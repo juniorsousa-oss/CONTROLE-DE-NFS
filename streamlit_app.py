@@ -172,6 +172,7 @@ def init():
         "base_analysis_ready": False,
         "base_analysis_at": None,
         "base_analysis_missing_mrp": pd.DataFrame(),
+        "excluded_flow_keys": set(),
         "danfe_outputs": {},
         "danfe_results": [],
         "danfe_errors": [],
@@ -3017,6 +3018,20 @@ def persist_mrp_current() -> dict:
     )
 
 
+def flow_nf_key(row: pd.Series | dict) -> str:
+    nf = normalized_nf(row.get("numero_nf"))
+    supplier = str(
+        row.get("fornecedor")
+        or row.get("fornecedor_padrao")
+        or row.get("fornecedor_validacao")
+        or ""
+    ).strip()
+    supplier_norm = supplier_validation_name(supplier)
+    if nf and supplier_norm:
+        return f"{nf}|{supplier_norm}"
+    return nf
+
+
 def current_pending_pre_notes() -> pd.DataFrame:
     """Retorna exatamente a base ainda pendente na tela de Pré-notas pendentes."""
     base = st.session_state.pre_notes
@@ -3024,6 +3039,12 @@ def current_pending_pre_notes() -> pd.DataFrame:
         return pd.DataFrame()
 
     pending = base.copy()
+    excluded_keys = set(st.session_state.get("excluded_flow_keys") or set())
+    if excluded_keys:
+        pending = pending[
+            ~pending.apply(flow_nf_key, axis=1).isin(excluded_keys)
+        ].copy()
+
     processed = current_process_records_for_tests()
 
     processed_pairs: list[tuple[str, str]] = []
@@ -4624,7 +4645,10 @@ def _refresh_missing_mrp_analysis() -> pd.DataFrame:
         and isinstance(pre, pd.DataFrame)
         and not pre.empty
     ):
+        excluded_keys = set(st.session_state.get("excluded_flow_keys") or set())
         for _, mrp_row in summary.iterrows():
+            if flow_nf_key(mrp_row) in excluded_keys:
+                continue
             match = match_mrp_to_pre_note(mrp_row, pre)
             if not match.get("matched"):
                 item = mrp_row.to_dict()
@@ -6149,6 +6173,7 @@ def render_file_processing():
         st.session_state.current_test_manifest = []
         st.session_state.base_analysis_ready = False
         st.session_state.base_analysis_missing_mrp = pd.DataFrame()
+        st.session_state.excluded_flow_keys = set()
 
         try:
             with st.spinner("Analisando relatórios e calculando o impacto MRP..."):
