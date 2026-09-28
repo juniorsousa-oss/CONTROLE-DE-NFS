@@ -6782,6 +6782,22 @@ elif page == "Pendências":
                 _cte_status,
                 axis=1,
             )
+
+            def _document_status(row):
+                key = pre_note_key(
+                    row.get("numero_nf"),
+                    row.get("cnpj"),
+                )
+                return (
+                    "NF-e VINCULADA"
+                    if key in linked_nf_keys
+                    else "PENDENTE DE DOCUMENTO"
+                )
+
+            pending_view["validacao_documento"] = pending_view.apply(
+                _document_status,
+                axis=1,
+            )
             pending_view["data_nf"] = pending_view.apply(
                 lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
                 axis=1,
