@@ -245,6 +245,7 @@ def _parse_cte(raw_xml: bytes) -> dict:
         "cfop": _text(ide, "CFOP"),
         "natureza": _text(ide, "natOp"),
         "data_emissao": _text(ide, "dhEmi"),
+        "tp_amb": _text(ide, "tpAmb"),
         "modal": modal,
         "tp_cte": _text(ide, "tpCTe"),
         "tp_serv": _text(ide, "tpServ"),
@@ -537,6 +538,15 @@ def generate_dacte_pdf(raw_xml: bytes) -> bytes:
     for idx, chunk in enumerate(chunks, start=1):
         page = doc.new_page(width=595.28, height=841.89)
         _draw_main_page(page, data, idx, total_pages, chunk)
+        if data.get("tp_amb") == "2" or not data.get("protocolo"):
+            page.insert_text(
+                fitz.Point(105, 430),
+                "SEM VALOR FISCAL",
+                fontsize=38,
+                fontname="Times-Bold",
+                color=(0.78, 0.78, 0.78),
+                overlay=True,
+            )
 
     output = doc.tobytes(garbage=4, deflate=True)
     doc.close()
