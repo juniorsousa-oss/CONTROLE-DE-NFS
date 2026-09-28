@@ -4587,9 +4587,8 @@ def render_cte_linking_stage() -> None:
                     )
 
                 if meta.chave and meta.chave in existing_keys:
-                    raise ValueError(
-                        f"CT-e {meta.numero} já foi vinculado nesta carga."
-                    )
+                    # Reenvio do mesmo CT-e não cria uma pendência falsa.
+                    continue
 
                 refs = [digits_only(value) for value in (meta.refs_nfe or [])]
                 refs = [value for value in refs if len(value) == 44]
