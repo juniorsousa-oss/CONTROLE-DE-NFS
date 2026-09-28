@@ -6274,7 +6274,7 @@ with st.sidebar:
     st.markdown('<div class="sidebar-section-label">Informações</div>', unsafe_allow_html=True)
     _mode_text = "TESTES — sem gravação no Supabase" if not SAVE_NF_HISTORY else "Produção"
     st.markdown(
-        f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e → conferência → ZIP<br><br><b>Modo</b><br>{_mode_text}<br><br><b>Versão</b><br>Protótipo 0.2</div>',
+        f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e / CT-e → conferência → ZIP<br><br><b>Modo</b><br>{_mode_text}<br><br><b>Versão</b><br>Protótipo 0.2</div>',
         unsafe_allow_html=True,
     )
     if st.session_state.get("db_sync_error"):
@@ -6648,7 +6648,7 @@ if page == "Dashboard":
             st.download_button(
                 "Exportar consulta para Excel",
                 export_payload,
-                file_name=f"controle_nfs_{now_local():%d%m%Y}.xlsx",
+                file_name=f"controle_documentos_{now_local():%d%m%Y}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
             )
@@ -7061,7 +7061,7 @@ elif page == "Pendências":
 
         st.markdown("#### Aguardando confirmação de envio")
         if awaiting_send.empty:
-            st.caption("Nenhuma NF processada aguardando confirmação de envio.")
+            st.caption("Nenhum documento processado aguardando confirmação de envio.")
         else:
             send_cols = [x for x in [
                 "id",
