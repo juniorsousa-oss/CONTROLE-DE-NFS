@@ -6304,9 +6304,11 @@ if page == "Dashboard":
 
     if records.empty:
         records = pd.DataFrame(columns=[
-            "id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza",
-            "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp",
-            "status", "recebido_em", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
+            "id", "processado_em", "tipo_documento", "numero_nf", "numero_cte",
+            "fornecedor_padrao", "transportadora", "nfs_vinculadas", "empresa_sigla",
+            "natureza", "vencimento", "pre_nota_status", "pre_nota_em",
+            "prioridade_mrp", "status", "recebido_em", "pdf_criado_em",
+            "enviado_em", "operador", "arquivo_final"
         ])
 
     # Timestamps do banco são gravados em UTC. Converte os eventos operacionais
