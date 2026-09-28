@@ -4501,6 +4501,294 @@ def render_xml_linking_stage() -> None:
     st.rerun()
 
 
+def render_cte_linking_stage() -> None:
+    st.markdown("### CT-e")
+    st.caption(
+        "Adicione os XMLs de CT-e depois que as NF-e já estiverem vinculadas. "
+        "O sistema usa as chaves de NF-e referenciadas no CT-e para fazer o vínculo "
+        "e gera o DACTE automaticamente."
+    )
+
+    analysis = st.session_state.get("analysis")
+    if not isinstance(analysis, pd.DataFrame) or analysis.empty:
+        st.info("Vincule primeiro os XMLs das NF-e antes de adicionar CT-e.")
+        return
+
+    cte_files = st.file_uploader(
+        "XMLs de CT-e",
+        type=["xml"],
+        accept_multiple_files=True,
+        key="pending_cte_xml_files",
+    )
+
+    if st.button(
+        "VINCULAR CT-e E GERAR DACTEs",
+        type="primary",
+        use_container_width=True,
+        disabled=not bool(cte_files),
+        key="link_cte_and_generate_dacte",
+    ):
+        links = list(st.session_state.get("cte_links") or [])
+        existing_keys = {
+            str(item.get("chave_cte") or "")
+            for item in links
+            if str(item.get("chave_cte") or "")
+        }
+        rejected = []
+        generated = {}
+        pending_pre = current_pending_pre_notes()
+
+        for cte_file in cte_files:
+            try:
+                raw = cte_file.getvalue()
+                meta = extract_cte_metadata(raw)
+
+                if meta.status_codigo and meta.status_codigo != "100":
+                    raise ValueError(
+                        f"CT-e {meta.numero} não autorizado: "
+                        f"{meta.status_codigo} - {meta.status_motivo}"
+                    )
+
+                if meta.chave and meta.chave in existing_keys:
+                    raise ValueError(
+                        f"CT-e {meta.numero} já foi vinculado nesta carga."
+                    )
+
+                refs = [digits_only(value) for value in (meta.refs_nfe or [])]
+                refs = [value for value in refs if len(value) == 44]
+                if not refs:
+                    raise ValueError(
+                        "O CT-e não possui chave de NF-e referenciada compatível com este fluxo."
+                    )
+
+                linked_rows = []
+                missing_refs = []
+
+                for ref_key in refs:
+                    row_match = pd.DataFrame()
+
+                    if "chave_nfe" in analysis.columns:
+                        key_series = (
+                            analysis["chave_nfe"]
+                            .fillna("")
+                            .astype(str)
+                            .map(digits_only)
+                        )
+                        row_match = analysis[key_series.eq(ref_key)].copy()
+
+                    if row_match.empty:
+                        nf_number = ""
+                        supplier_cnpj = ""
+                        if len(ref_key) == 44:
+                            raw_nf = ref_key[25:34]
+                            nf_number = (
+                                str(int(raw_nf))
+                                if raw_nf.isdigit()
+                                else raw_nf
+                            )
+                            supplier_cnpj = ref_key[6:20]
+
+                        candidates = analysis[
+                            analysis.get(
+                                "numero_nf",
+                                pd.Series("", index=analysis.index),
+                            )
+                            .fillna("")
+                            .astype(str)
+                            .map(normalized_nf)
+                            .eq(normalized_nf(nf_number))
+                        ].copy()
+
+                        if (
+                            not candidates.empty
+                            and supplier_cnpj
+                            and "cnpj_fornecedor" in candidates.columns
+                        ):
+                            cnpj_series = (
+                                candidates["cnpj_fornecedor"]
+                                .fillna("")
+                                .astype(str)
+                                .map(digits_only)
+                            )
+                            exact_supplier = candidates[
+                                cnpj_series.eq(supplier_cnpj)
+                            ].copy()
+                            if not exact_supplier.empty:
+                                candidates = exact_supplier
+
+                        if len(candidates) == 1:
+                            row_match = candidates
+
+                    if len(row_match) == 1:
+                        linked_rows.append(row_match.iloc[0].to_dict())
+                        continue
+
+                    nf_number = ""
+                    supplier_cnpj = ""
+                    if len(ref_key) == 44:
+                        raw_nf = ref_key[25:34]
+                        nf_number = (
+                            str(int(raw_nf))
+                            if raw_nf.isdigit()
+                            else raw_nf
+                        )
+                        supplier_cnpj = ref_key[6:20]
+
+                    pending_match = pd.DataFrame()
+                    if (
+                        isinstance(pending_pre, pd.DataFrame)
+                        and not pending_pre.empty
+                    ):
+                        pending_match = pending_pre[
+                            pending_pre.get(
+                                "numero_nf",
+                                pd.Series("", index=pending_pre.index),
+                            )
+                            .fillna("")
+                            .astype(str)
+                            .map(normalized_nf)
+                            .eq(normalized_nf(nf_number))
+                        ].copy()
+                        if (
+                            not pending_match.empty
+                            and supplier_cnpj
+                            and "cnpj" in pending_match.columns
+                        ):
+                            pending_cnpj = (
+                                pending_match["cnpj"]
+                                .fillna("")
+                                .astype(str)
+                                .map(digits_only)
+                            )
+                            pending_match = pending_match[
+                                pending_cnpj.eq(supplier_cnpj)
+                            ].copy()
+
+                    if not pending_match.empty:
+                        reason = (
+                            f"NF {nf_number} consta nas Pré-notas pendentes, "
+                            "mas ainda não possui XML de NF-e vinculado."
+                        )
+                    else:
+                        reason = (
+                            f"NF {nf_number or ref_key} referenciada pelo CT-e "
+                            "não foi localizada no lote atual."
+                        )
+                    missing_refs.append(reason)
+
+                if missing_refs:
+                    raise ValueError(" | ".join(missing_refs))
+
+                unique_rows = {}
+                for row in linked_rows:
+                    row_id = str(row.get("file_id") or "")
+                    if row_id:
+                        unique_rows[row_id] = row
+                linked_rows = list(unique_rows.values())
+
+                if not linked_rows:
+                    raise ValueError(
+                        "Nenhuma NF-e do CT-e pôde ser vinculada ao lote."
+                    )
+
+                dacte_bytes = generate_dacte_pdf(raw)
+                nf_numbers = [
+                    normalized_nf(row.get("numero_nf"))
+                    for row in linked_rows
+                    if normalized_nf(row.get("numero_nf"))
+                ]
+                suppliers = {
+                    str(row.get("fornecedor_padrao") or "").strip()
+                    for row in linked_rows
+                    if str(row.get("fornecedor_padrao") or "").strip()
+                }
+                supplier_name = (
+                    next(iter(suppliers))
+                    if len(suppliers) == 1
+                    else "MULTIPLOS FORNECEDORES"
+                )
+                final_name = cte_output_name(
+                    meta,
+                    nf_numbers,
+                    supplier_name,
+                )
+
+                cte_id = uuid.uuid4().hex[:16]
+                item = {
+                    "cte_id": cte_id,
+                    "chave_cte": meta.chave,
+                    "numero_cte": meta.numero,
+                    "serie_cte": meta.serie,
+                    "transportadora": meta.emitente,
+                    "cnpj_transportadora": meta.cnpj_emitente,
+                    "arquivo_original": cte_file.name,
+                    "arquivo_final": final_name,
+                    "bytes": dacte_bytes,
+                    "linked_file_ids": [
+                        str(row.get("file_id") or "")
+                        for row in linked_rows
+                        if str(row.get("file_id") or "")
+                    ],
+                    "linked_nf_numbers": nf_numbers,
+                    "refs_nfe": refs,
+                }
+                links.append(item)
+                existing_keys.add(meta.chave)
+                generated[cte_id] = item
+
+            except Exception as exc:
+                rejected.append({
+                    "arquivo": cte_file.name,
+                    "tipo": "CT-e",
+                    "motivo": str(exc),
+                })
+
+        st.session_state.cte_links = links
+        st.session_state.cte_outputs.update(generated)
+        st.session_state.cte_rejected = rejected
+        st.session_state.pop("pending_cte_xml_files", None)
+        st.rerun()
+
+    links = list(st.session_state.get("cte_links") or [])
+    rejected = list(st.session_state.get("cte_rejected") or [])
+
+    if links:
+        view = pd.DataFrame([
+            {
+                "CT-e": item.get("numero_cte"),
+                "Transportadora": item.get("transportadora"),
+                "NFs vinculadas": ", ".join(item.get("linked_nf_numbers") or []),
+                "Arquivo": item.get("arquivo_final"),
+            }
+            for item in links
+        ])
+        st.success(f"{len(links)} CT-e(s) vinculado(s) e DACTE(s) gerado(s).")
+        st.dataframe(
+            view,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+    if rejected:
+        st.error(
+            f"{len(rejected)} CT-e(s) precisam de atenção antes da geração final."
+        )
+        st.dataframe(
+            pd.DataFrame(rejected),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "arquivo": st.column_config.TextColumn("Arquivo", width="large"),
+                "tipo": "Tipo",
+                "motivo": st.column_config.TextColumn(
+                    "Motivo",
+                    width="large",
+                ),
+            },
+        )
+
+
+
 def render_file_processing():
     st.markdown(
         '<div class="section-title">Processamento de arquivos</div>',
