@@ -3019,13 +3019,10 @@ def current_pending_pre_notes() -> pd.DataFrame:
 
     if isinstance(processed, pd.DataFrame) and not processed.empty:
         for _, row in processed.iterrows():
-            data_nf = date_nf_key(
-                row.get("pre_nota_em"),
-                row.get("numero_nf"),
-            )
+            nf = normalized_nf(row.get("numero_nf"))
             supplier = str(row.get("fornecedor_padrao") or "").strip()
-            if data_nf and supplier:
-                processed_pairs.append((data_nf, supplier))
+            if nf and supplier:
+                processed_pairs.append((nf, supplier))
 
             # Compatibilidade apenas com lotes antigos da sessão.
             legacy_key = pre_note_key(
@@ -3036,18 +3033,29 @@ def current_pending_pre_notes() -> pd.DataFrame:
                 legacy_processed_keys.add(legacy_key)
 
     def already_processed(row) -> bool:
-        pre_data_nf = date_nf_key(
-            row.get("data_pre_nota"),
-            row.get("numero_nf"),
-        )
+        nf = normalized_nf(row.get("numero_nf"))
         pre_supplier = pre_supplier_name(row)
 
-        if pre_data_nf and pre_supplier:
-            for processed_data_nf, processed_supplier in processed_pairs:
-                if (
-                    processed_data_nf == pre_data_nf
-                    and supplier_similarity(pre_supplier, processed_supplier) >= 82
-                ):
+        if nf and pre_supplier:
+            matching_suppliers = [
+                processed_supplier
+                for processed_nf, processed_supplier in processed_pairs
+                if processed_nf == nf
+            ]
+            if matching_suppliers:
+                exact = any(
+                    supplier_validation_name(pre_supplier)
+                    == supplier_validation_name(processed_supplier)
+                    for processed_supplier in matching_suppliers
+                )
+                if exact:
+                    return True
+
+                best_score = max(
+                    supplier_similarity(pre_supplier, processed_supplier)
+                    for processed_supplier in matching_suppliers
+                )
+                if best_score > 0:
                     return True
 
         legacy_key = pre_note_key(
