@@ -17,13 +17,6 @@ from PIL import Image
 from openpyxl import load_workbook
 
 import db
-from danfe_generator import (
-    danfe_file_name,
-    extract_danfe_metadata,
-    extract_nfe_processing_data,
-    generate_danfe_pdf,
-)
-from operational_stamp import apply_operational_stamp
 from nf_processor import (
     build_final_name,
     digits_only,
@@ -45,6 +38,29 @@ SAVE_NF_HISTORY = True
 ENABLE_PENDING_REPORT = True
 
 FAVICON_FILE = ROOT / "config" / "favicon_setta.b64"
+
+
+# O motor DANFE é carregado somente quando a função XML/PDF é usada.
+# Assim uma falha isolada no renderizador não derruba o app inteiro no startup.
+def extract_danfe_metadata(raw_xml: bytes):
+    from danfe_generator import extract_danfe_metadata as _impl
+    return _impl(raw_xml)
+
+
+def extract_nfe_processing_data(raw_xml: bytes):
+    from danfe_generator import extract_nfe_processing_data as _impl
+    return _impl(raw_xml)
+
+
+def generate_danfe_pdf(raw_xml: bytes) -> bytes:
+    from danfe_generator import generate_danfe_pdf as _impl
+    return _impl(raw_xml)
+
+
+def danfe_file_name(meta) -> str:
+    from danfe_generator import danfe_file_name as _impl
+    return _impl(meta)
+
 
 st.set_page_config(
     page_title="Controle de NFs | Setta",
@@ -2314,9 +2330,8 @@ def make_zip_outputs(df: pd.DataFrame):
                     raise ValueError(f"Nome final vazio ou duplicado: {final_name}")
                 used.add(final_name)
 
-                # A DANFE/arquivo base já está pronto neste ponto. O controle
-                # interno é aplicado somente agora, como segunda camada PDF,
-                # sem participar da interpretação/renderização fiscal do XML.
+                # Dados do controle interno SETTA ficam preparados, porém
+                # NÃO são inseridos no PDF enquanto a posição não for homologada.
                 data_chegada = (
                     normalized_business_date(row.get("pre_nota_em"))
                     or normalized_business_date(row.get("pre_nota_data"))
@@ -2331,16 +2346,6 @@ def make_zip_outputs(df: pd.DataFrame):
 
                 final_pdf_bytes = item["bytes"]
                 stamp_applied = False
-                if any([data_chegada, cr, desc_cr, nature, recebedor]):
-                    final_pdf_bytes = apply_operational_stamp(
-                        final_pdf_bytes,
-                        data_chegada=data_chegada,
-                        cr=cr,
-                        desc_cr=desc_cr,
-                        natureza=nature,
-                        recebido_por=recebedor,
-                    )
-                    stamp_applied = True
 
                 archive.writestr(final_name, final_pdf_bytes)
 
@@ -3436,16 +3441,7 @@ def render_file_processing():
                                 natureza,
                                 recebedor,
                             ]):
-                                pdf_bytes = apply_operational_stamp(
-                                    pdf_bytes,
-                                    data_chegada=data_chegada,
-                                    cr=cr,
-                                    desc_cr=desc_cr,
-                                    natureza=natureza,
-                                    recebido_por=recebedor,
-                                )
-                                stamp_applied = True
-                                stamp_status = "APLICADO — CAMADA INTERNA PÓS-XML"
+                                stamp_status = "DADOS PRONTOS — POSIÇÃO A DEFINIR"
 
                     outputs[pdf_name] = {
                         "bytes": pdf_bytes,
