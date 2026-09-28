@@ -5862,7 +5862,6 @@ elif page == "Pendências":
                                     updated_count += 1
                             st.session_state.current_test_manifest = manifest
 
-                        st.session_state.select_all_send = False
                         st.success(
                             f"{updated_count} NF(s) confirmada(s) como enviada(s). "
                             "Elas já estão disponíveis no Dashboard de finalizados."
