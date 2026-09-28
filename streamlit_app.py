@@ -6437,46 +6437,200 @@ if page == "Dashboard":
         "Esta área é somente para consulta. O envio é confirmado em Geração de Arquivos → Pré-notas pendentes."
     )
     if finalized_records.empty:
-        st.caption("Nenhuma NF teve o envio confirmado até o momento.")
+        st.caption("Nenhum documento teve o envio confirmado até o momento.")
     else:
-        f1, f2, f3, f4 = st.columns(4)
         ref_date = (
-            pd.to_datetime(finalized_records.get("enviado_em"), errors="coerce").dt.date
+            pd.to_datetime(
+                finalized_records.get("enviado_em"),
+                errors="coerce",
+            ).dt.date
             if "enviado_em" in finalized_records.columns
-            else pd.to_datetime(finalized_records.get("processado_em"), errors="coerce").dt.date
+            else pd.to_datetime(
+                finalized_records.get("processado_em"),
+                errors="coerce",
+            ).dt.date
         )
         min_d = min([d for d in ref_date.dropna().tolist()] or [date.today()])
         max_d = max([d for d in ref_date.dropna().tolist()] or [date.today()])
+
+        f1, f2, f3, f4 = st.columns(4)
         start_date = f1.date_input("De", value=min_d)
         end_date = f2.date_input("Até", value=max_d)
-        natures = sorted(finalized_records.get("natureza", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
-        nature_filter = f3.multiselect("Natureza", natures, default=natures)
-        suppliers = sorted(finalized_records.get("fornecedor_padrao", pd.Series(dtype=str)).fillna("").astype(str).loc[lambda x: x.ne("")].unique().tolist())
-        supplier_filter = f4.multiselect("Fornecedor", suppliers)
+
+        types = sorted(
+            finalized_records.get(
+                "tipo_documento",
+                pd.Series("NF-e", index=finalized_records.index),
+            )
+            .fillna("NF-e")
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+        type_filter = f3.multiselect(
+            "Tipo",
+            types,
+            default=types,
+        )
+        companies = sorted(
+            finalized_records.get(
+                "empresa_sigla",
+                pd.Series(dtype=str),
+            )
+            .fillna("")
+            .astype(str)
+            .loc[lambda x: x.ne("")]
+            .unique()
+            .tolist()
+        )
+        company_filter = f4.multiselect(
+            "Empresa",
+            companies,
+            default=companies,
+        )
+
+        finalized_records["parte"] = finalized_records.apply(
+            lambda row: (
+                str(row.get("transportadora") or "").strip()
+                if "CTE" in normalize_text(row.get("tipo_documento"))
+                else str(row.get("fornecedor_padrao") or "").strip()
+            ),
+            axis=1,
+        )
+        finalized_records["documento"] = finalized_records.apply(
+            lambda row: (
+                str(row.get("numero_cte") or "").strip()
+                if "CTE" in normalize_text(row.get("tipo_documento"))
+                else normalized_nf(row.get("numero_nf"))
+            ),
+            axis=1,
+        )
+
+        f5, f6 = st.columns(2)
+        natures = sorted(
+            finalized_records.get(
+                "natureza",
+                pd.Series(dtype=str),
+            )
+            .fillna("")
+            .astype(str)
+            .loc[lambda x: x.ne("")]
+            .unique()
+            .tolist()
+        )
+        nature_filter = f5.multiselect(
+            "Natureza das NFs",
+            natures,
+            default=natures,
+        )
+        parties = sorted(
+            finalized_records["parte"]
+            .fillna("")
+            .astype(str)
+            .loc[lambda x: x.ne("")]
+            .unique()
+            .tolist()
+        )
+        party_filter = f6.multiselect(
+            "Fornecedor / Transportadora",
+            parties,
+        )
 
         view = finalized_records.copy()
         mask_date = (ref_date >= start_date) & (ref_date <= end_date)
         view = view[mask_date]
-        if nature_filter and "natureza" in view.columns:
-            view = view[view["natureza"].isin(nature_filter)]
-        if supplier_filter and "fornecedor_padrao" in view.columns:
-            view = view[view["fornecedor_padrao"].isin(supplier_filter)]
-        priority_only = st.checkbox("Exibir somente prioridade MRP")
-        if priority_only and "prioridade_mrp" in view.columns:
-            view = view[view["prioridade_mrp"].fillna(False).astype(bool)]
 
-        display_cols = [x for x in [
-            "id", "processado_em", "numero_nf", "fornecedor_padrao", "natureza",
-            "vencimento", "pre_nota_status", "pre_nota_em", "prioridade_mrp",
-            "status", "pdf_criado_em", "enviado_em", "operador", "arquivo_final"
-        ] if x in view.columns]
+        if type_filter:
+            view = view[
+                view["tipo_documento"]
+                .fillna("NF-e")
+                .astype(str)
+                .isin(type_filter)
+            ]
+        if company_filter and "empresa_sigla" in view.columns:
+            view = view[
+                view["empresa_sigla"]
+                .fillna("")
+                .astype(str)
+                .isin(company_filter)
+            ]
+        if nature_filter and "natureza" in view.columns:
+            cte_mask = (
+                view["tipo_documento"]
+                .fillna("NF-e")
+                .astype(str)
+                .map(normalize_text)
+                .str.contains("CTE", na=False)
+            )
+            view = view[
+                cte_mask
+                | view["natureza"].fillna("").astype(str).isin(nature_filter)
+            ]
+        if party_filter:
+            view = view[view["parte"].isin(party_filter)]
+
+        priority_only = st.checkbox("Exibir somente prioridade")
+        if priority_only and "prioridade_mrp" in view.columns:
+            view = view[
+                view["prioridade_mrp"]
+                .fillna(False)
+                .astype(bool)
+            ]
+
+        display_cols = [
+            x for x in [
+                "id",
+                "tipo_documento",
+                "documento",
+                "parte",
+                "nfs_vinculadas",
+                "empresa_sigla",
+                "natureza",
+                "vencimento",
+                "prioridade_mrp",
+                "status",
+                "pdf_criado_em",
+                "enviado_em",
+                "operador",
+                "arquivo_final",
+            ]
+            if x in view.columns
+        ]
         table = view[display_cols].copy().reset_index(drop=True)
 
-        # Dashboard sem ações: somente visualização do histórico finalizado.
         st.dataframe(
             table.drop(columns=["id"], errors="ignore"),
             use_container_width=True,
             hide_index=True,
+            column_config={
+                "tipo_documento": "Tipo",
+                "documento": "NF / CT-e",
+                "parte": st.column_config.TextColumn(
+                    "Fornecedor / Transportadora",
+                    width="large",
+                ),
+                "nfs_vinculadas": st.column_config.TextColumn(
+                    "NFs vinculadas",
+                    width="medium",
+                ),
+                "empresa_sigla": "Empresa",
+                "natureza": "Natureza",
+                "prioridade_mrp": st.column_config.CheckboxColumn(
+                    "Prioridade"
+                ),
+                "pdf_criado_em": st.column_config.DatetimeColumn(
+                    "PDF criado em",
+                    format="DD/MM/YYYY HH:mm",
+                ),
+                "enviado_em": st.column_config.DatetimeColumn(
+                    "Enviado em",
+                    format="DD/MM/YYYY HH:mm",
+                ),
+                "arquivo_final": st.column_config.TextColumn(
+                    "Arquivo",
+                    width="large",
+                ),
+            },
         )
 
         export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
