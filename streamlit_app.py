@@ -4081,7 +4081,7 @@ def render_nf_treatment_center() -> None:
             )
 
         with st.expander(
-            f"Documentos sem tratativa ({int((~pending_mask).sum())})",
+            f"Ver documentos prontos ({int((~pending_mask).sum())})",
             expanded=False,
         ):
             ready_cols = [
@@ -4112,10 +4112,10 @@ def render_nf_treatment_center() -> None:
                 },
             )
 
-        st.markdown("### Tratativas necessárias")
         if pending.empty:
-            st.success("Nenhum documento precisa de correção. O lote está pronto para geração dos arquivos.")
+            st.caption("Sem tratativas pendentes nesta carga.")
         else:
+            st.markdown("### Tratativas necessárias")
             st.warning(
                 f"{len(pending)} documento(s) precisam de tratativa. "
                 "Corrija somente os campos necessários abaixo e clique em **Aplicar correções**."
