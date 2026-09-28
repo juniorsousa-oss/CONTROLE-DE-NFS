@@ -2258,6 +2258,8 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
         mrp_summary = pd.DataFrame()
 
     priority_flags = []
+    priority_base_flags = []
+    priority_manual_flags = []
     pre_status = []
     pre_dates = []
     pre_link_status = []
@@ -2282,10 +2284,12 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
             }
 
         mrp_row = mrp_match.get("row") if mrp_match.get("matched") else None
-        priority = bool(
+        priority_base = bool(
             mrp_row
             and str(mrp_row.get("prioridade") or "").upper() == "ALTA"
         )
+        priority_manual = bool(row.get("prioridade_manual", False))
+        priority = bool(priority_base or priority_manual)
 
         current_nature = str(row.get("natureza") or "").strip().upper()
         nature_source = str(row.get("natureza_origem") or "").strip()
@@ -2305,6 +2309,8 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
             current_desc_cr = str(operational["desc_cr"]).strip()
 
         priority_flags.append(priority)
+        priority_base_flags.append(priority_base)
+        priority_manual_flags.append(priority_manual)
         pre_status.append(str(pre_row.get("status") or "") if pre_row else "")
         pre_dates.append(pre_row.get("data_pre_nota") if pre_row else None)
         pre_link_status.append(str(mrp_match.get("situacao") or ""))
@@ -2321,6 +2327,8 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
         resolved_desc_crs.append(current_desc_cr)
 
     out["prioridade_mrp"] = priority_flags
+    out["prioridade_mrp_base"] = priority_base_flags
+    out["prioridade_manual"] = priority_manual_flags
     out["pre_nota_status"] = pre_status
     out["pre_nota_em"] = pre_dates
     out["vinculo_mrp_status"] = pre_link_status
