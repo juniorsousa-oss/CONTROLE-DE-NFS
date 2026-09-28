@@ -522,7 +522,7 @@ def metrics(df: pd.DataFrame):
         ("Documentos", len(df), "XML/PDF analisados"),
         ("Prontos", ready, "Sem tratativa"),
         ("Tratativas", int(pending.sum()), "Corrigir antes do ZIP"),
-        ("Prioridade MRP", int(df.get("prioridade_mrp", pd.Series(False, index=df.index)).fillna(False).astype(bool).sum()), "ZIP separado"),
+        ("Prioridade", int(df.get("prioridade_mrp", pd.Series(False, index=df.index)).fillna(False).astype(bool).sum()), "ZIP separado"),
     ]
     for col, (title, number, desc) in zip(st.columns(4), values):
         col.markdown(
@@ -3747,7 +3747,7 @@ def render_nf_treatment_center() -> None:
                     "vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
                     "natureza": "Natureza",
                     "nome_sugerido": "Nome final",
-                    "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
+                    "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade"),
                 },
             )
 
@@ -3984,7 +3984,7 @@ def render_nf_treatment_center() -> None:
             priority = int(merged["prioridade_mrp"].fillna(False).astype(bool).sum())
             st.success(
                 f"Lote aprovado: {normal} documento(s) no fluxo normal e "
-                f"{priority} em prioridade MRP."
+                f"{priority} em prioridade."
             )
             with st.expander("Prévia final dos nomes", expanded=False):
                 st.dataframe(
