@@ -464,6 +464,10 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
         supplier = cell_text(row.get("fornecedor_padrao"))
         nature = cell_text(row.get("natureza")).upper()
         company = cell_text(row.get("empresa_sigla")).upper()
+        receiver = cell_text(
+            row.get("pre_nota_recebedor")
+            or row.get("recebedor")
+        )
 
         missing = []
         if due is None:
@@ -478,6 +482,8 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
             missing.append("natureza")
         if company not in {"SEN", "SEE", "STA"}:
             missing.append("empresa")
+        if not receiver:
+            missing.append("recebedor")
 
         names.append(build_final_name(due, num, supplier))
 
@@ -2634,6 +2640,12 @@ def make_zip_outputs(df: pd.DataFrame):
                 cr = str(row.get("cr") or "").strip()
                 desc_cr = str(row.get("desc_cr") or "").strip()
 
+                if not recebedor:
+                    raise ValueError(
+                        f"NF {row.numero_nf} sem Recebedor. "
+                        "Preencha a tratativa antes de gerar os arquivos."
+                    )
+
                 final_pdf_bytes = item["bytes"]
                 try:
                     final_pdf_bytes = apply_operational_stamp(
@@ -3267,6 +3279,7 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
         and str(row.get("fornecedor_padrao") or "").strip()
         and row.get("vencimento")
         and str(row.get("natureza") or "").strip()
+        and str(row.get("pre_nota_recebedor") or "").strip()
     )
     if required and xml_item and str(xml_item["data"].get("status_codigo") or "") == "100":
         row["status"] = "APROVADO"
