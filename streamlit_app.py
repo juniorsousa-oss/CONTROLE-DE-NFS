@@ -3743,6 +3743,10 @@ def render_nf_treatment_center() -> None:
                         "ZIPs criados em modo de testes. A conferência usa apenas esta carga atual; "
                         "nenhum histórico foi acumulado e nada foi gravado no Supabase."
                     )
+
+                # Recarrega a central para que a etapa de baixa/confirmação
+                # apareça imediatamente na mesma tela.
+                st.rerun()
             except Exception as exc:
                 st.error(f"Falha ao gerar ZIP: {exc}")
 
