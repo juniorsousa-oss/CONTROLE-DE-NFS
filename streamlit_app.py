@@ -2444,6 +2444,32 @@ def make_zip_outputs(df: pd.DataFrame):
                         "carimbo_aplicado": stamp_applied,
                     }
                 )
+
+            # Inclui os DACTEs vinculados a qualquer NF deste grupo no mesmo ZIP.
+            group_file_ids = {
+                str(value)
+                for value in group.get("file_id", pd.Series(dtype=str)).tolist()
+                if str(value).strip()
+            }
+            for cte in st.session_state.get("cte_links") or []:
+                linked_ids = {
+                    str(value)
+                    for value in (cte.get("linked_file_ids") or [])
+                    if str(value).strip()
+                }
+                if not (group_file_ids & linked_ids):
+                    continue
+
+                cte_name = str(cte.get("arquivo_final") or "").strip()
+                cte_bytes = cte.get("bytes")
+                if not cte_name or not cte_bytes:
+                    raise ValueError(
+                        f"CT-e {cte.get('numero_cte') or ''} vinculado sem DACTE disponível."
+                    )
+                if cte_name in used:
+                    continue
+                used.add(cte_name)
+                archive.writestr(cte_name, cte_bytes)
         suffix = " - PRIORIDADE" if priority else ""
         zip_name = f"{now_local():%d-%m-%Y} - NOTAS FISCAIS - {nature}{suffix}.zip"
         outputs[zip_name] = buffer.getvalue()
@@ -3980,7 +4006,18 @@ def render_nf_treatment_center() -> None:
                     },
                 )
 
-        if st.button("GERAR ARQUIVOS RENOMEADOS E COMPACTADOS", type="primary", use_container_width=True, disabled=(not invalid.empty or duplicate.any())):
+        cte_pending_errors = bool(st.session_state.get("cte_rejected") or [])
+        if cte_pending_errors:
+            st.info(
+                "A geração final fica bloqueada enquanto houver CT-e com erro de vínculo ou processamento."
+            )
+
+        if st.button(
+            "GERAR ARQUIVOS RENOMEADOS E COMPACTADOS",
+            type="primary",
+            use_container_width=True,
+            disabled=(not invalid.empty or duplicate.any() or cte_pending_errors),
+        ):
             try:
                 outputs, manifest = make_zip_outputs(merged)
                 st.session_state.zip_outputs = outputs
