@@ -5359,6 +5359,20 @@ def render_document_linking_stage() -> None:
     )
     documents_to_process = live_documents or cached_documents
 
+    if not uploaded and cached_documents:
+        class _CachedFiscalUpload:
+            def __init__(self, item):
+                self.name = str(item.get("name") or "documento")
+                self._content = item.get("raw") or b""
+
+            def getvalue(self):
+                return self._content
+
+        uploaded = [
+            _CachedFiscalUpload(item)
+            for item in cached_documents
+        ]
+
     process_documents = st.button(
         "ANALISAR E VINCULAR DOCUMENTOS",
         type="primary",
