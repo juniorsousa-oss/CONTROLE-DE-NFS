@@ -2667,6 +2667,9 @@ def make_zip_outputs(df: pd.DataFrame):
                             else None
                         ),
                         "carimbo_aplicado": stamp_applied,
+                        "empresa_sigla": str(
+                            row.get("empresa_sigla") or ""
+                        ).upper().strip() or None,
                     }
                 )
 
