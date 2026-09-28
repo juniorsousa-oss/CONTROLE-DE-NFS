@@ -3942,64 +3942,74 @@ def render_file_processing():
     tab_feed, tab_danfe, tab_cte = st.tabs(["Alimentação", "XML → DANFE", "CTEs"])
 
     with tab_feed:
-        st.markdown(
-            '<div class="intro">'
-            "<b>Alimentação única para análise e comparação.</b> Carregue nesta mesma aba os relatórios "
-            "de Pré-notas, Materiais, NFs/STSUP01 e, quando necessário, Fornecedores. "
-            "Na sequência, envie os XMLs e/ou PDFs disponíveis. O aplicativo mantém as regras já validadas "
-            "e cruza as bases antes de liberar o processamento dos documentos."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-
-        render_pre_notes_feed()
-        st.divider()
-        render_mrp_background_feed()
-        st.divider()
-        render_suppliers_feed()
-        st.divider()
-
-        st.markdown("### XMLs e PDFs para análise e comparação")
         st.caption(
-            "Depois de alimentar as bases acima, envie aqui os documentos disponíveis. "
-            "O pré-filtro confronta NF + fornecedor com as pré-notas e aplica o impacto MRP "
-            "pela regra Data + NF com validação do fornecedor."
+            "Carregue todos os arquivos primeiro. O aplicativo só valida, cruza e calcula "
+            "quando você clicar em PROCESSAR TODA A ALIMENTAÇÃO."
         )
 
-        pending_base = current_pending_pre_notes()
-        if pending_base.empty:
-            st.warning(
-                "Não há pré-notas pendentes disponíveis para o pré-filtro. "
-                "Carregue o relatório de Pré-notas na etapa de Alimentação acima "
-                "ou verifique se a lista já foi concluída."
+        with st.container(border=True):
+            st.markdown("#### 1. Relatórios obrigatórios")
+            st.caption("Selecione os três relatórios que formam a base da análise.")
+            r1, r2, r3 = st.columns(3)
+            pre_file = r1.file_uploader(
+                "Pré-notas",
+                type=["csv", "xlsx", "xls", "xlt", "xltx"],
+                key="unified_pre_file",
             )
-        else:
+            material_file = r2.file_uploader(
+                "Materiais",
+                type=["xlsx", "xltx", "xls", "csv"],
+                key="unified_material_file",
+            )
+            nf_file = r3.file_uploader(
+                "NFs / STSUP01",
+                type=["xlsx", "xltx", "xls", "csv"],
+                key="unified_nf_file",
+            )
+
+        with st.container(border=True):
+            st.markdown("#### 2. Base de fornecedores")
+            supplier_file = st.file_uploader(
+                "Fornecedores — opcional",
+                type=["csv", "xlsx", "xls", "xlt", "xltx"],
+                key="unified_supplier_file",
+                help=(
+                    "Se não selecionar um arquivo, o aplicativo usa a base de fornecedores "
+                    "já cadastrada."
+                ),
+            )
+
+        with st.container(border=True):
+            st.markdown("#### 3. XMLs e PDFs")
+            files = st.file_uploader(
+                "Documentos disponíveis para análise e comparação",
+                type=["xml", "pdf"],
+                accept_multiple_files=True,
+                key="unified_nf_documents",
+            )
+
+        required_ready = bool(pre_file and material_file and nf_file and files)
+        if not required_ready:
             st.caption(
-                f"Pré-filtro ativo com {len(pending_base)} pré-nota(s) atualmente pendente(s). "
-                "A identificação usa NF + fornecedor para localizar a pré-nota; depois a prioridade MRP "
-                "continua seguindo Data + NF com validação do fornecedor."
+                "Para processar, carregue Pré-notas, Materiais, NFs/STSUP01 "
+                "e pelo menos um XML ou PDF."
             )
 
-        files = st.file_uploader(
-            "Selecione ou arraste XMLs e/ou PDFs das notas fiscais",
-            type=["xml", "pdf"],
-            accept_multiple_files=True,
-            key="nf_hybrid_uploads",
-        )
-
-        a, b = st.columns([4, 1])
-        analyze = a.button(
-            "PRÉ-FILTRAR E ANALISAR DOCUMENTOS",
+        p1, p2 = st.columns([5, 1])
+        analyze = p1.button(
+            "PROCESSAR TODA A ALIMENTAÇÃO",
             type="primary",
             use_container_width=True,
-            disabled=(not files or pending_base.empty),
-            key="analyze_hybrid_nf",
+            disabled=not required_ready,
+            key="process_all_feed",
         )
-        if b.button(
-            "Limpar lote atual",
+        clear_feed = p2.button(
+            "Limpar",
             use_container_width=True,
-            key="clear_hybrid_nf",
-        ):
+            key="clear_unified_feed",
+        )
+
+        if clear_feed:
             st.session_state.analysis = pd.DataFrame()
             st.session_state.pdfs = {}
             st.session_state.zip_outputs = {}
@@ -4008,6 +4018,14 @@ def render_file_processing():
             st.session_state.prefilter_files = {}
             st.session_state.prefilter_stats = {}
             st.session_state.current_test_manifest = []
+            for _feed_key in (
+                "unified_pre_file",
+                "unified_material_file",
+                "unified_nf_file",
+                "unified_supplier_file",
+                "unified_nf_documents",
+            ):
+                st.session_state.pop(_feed_key, None)
             st.rerun()
 
         if analyze:
