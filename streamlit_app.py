@@ -3349,7 +3349,13 @@ def render_suppliers_feed() -> None:
 
 def render_nf_treatment_center() -> None:
     """Central única para todas as decisões operacionais de NF."""
-    rejected = list(st.session_state.get("prefilter_rejected") or [])
+    rejected = [
+        item
+        for item in (st.session_state.get("prefilter_rejected") or [])
+        if bool(item.get("vinculado_base"))
+    ]
+    # Remove também do estado qualquer sobra antiga sem vínculo com a base.
+    st.session_state.prefilter_rejected = rejected
     resolved = list(st.session_state.get("prefilter_resolved") or [])
     file_store = st.session_state.get("prefilter_files") or {}
 
@@ -4355,6 +4361,14 @@ def render_xml_linking_stage() -> None:
         f"{len(pending_base)} Pré-nota(s) estão aptas para receber XML. "
         "Somente XMLs correspondentes a esse universo serão vinculados."
     )
+
+    xml_stats = st.session_state.get("prefilter_stats") or {}
+    ignored_previous = int(xml_stats.get("ignorados") or 0)
+    if ignored_previous:
+        st.caption(
+            f"{ignored_previous} XML(s) sobressalente(s) da última carga foram "
+            "ignorados automaticamente."
+        )
 
     xml_files = st.file_uploader(
         "Selecione os XMLs das NFs pendentes",
