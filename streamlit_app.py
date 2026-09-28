@@ -4031,6 +4031,250 @@ def render_file_processing():
         if analyze:
             st.session_state.current_test_manifest = []
             st.session_state.zip_outputs = {}
+            st.session_state.analysis = pd.DataFrame()
+            st.session_state.pdfs = {}
+            st.session_state.prefilter_rejected = []
+            st.session_state.prefilter_resolved = []
+            st.session_state.prefilter_files = {}
+            st.session_state.prefilter_stats = {}
+
+            try:
+                with st.spinner("Validando relatórios, calculando MRP e preparando o cruzamento..."):
+                    # 1) Fornecedores: opcional. Quando enviado, substitui a base antes
+                    # dos demais cruzamentos para que todos usem a mesma referência.
+                    if supplier_file:
+                        raw_sup, _ = read_uploaded_table(
+                            supplier_file,
+                            header_row=None,
+                        )
+                        if raw_sup.shape[1] < 15:
+                            raise ValueError(
+                                "O relatório FORNECEDORES precisa conter pelo menos as colunas A até O."
+                            )
+
+                        incoming = pd.DataFrame({
+                            "codigo": raw_sup.iloc[:, 0].fillna("").astype(str).str.strip(),
+                            "loja": raw_sup.iloc[:, 1].fillna("").astype(str).str.strip(),
+                            "nome_padrao": raw_sup.iloc[:, 2].fillna("").astype(str).str.strip(),
+                            "nome_fantasia": raw_sup.iloc[:, 3].fillna("").astype(str).str.strip(),
+                            "tipo": raw_sup.iloc[:, 10].fillna("").astype(str).str.strip(),
+                            "cnpj": raw_sup.iloc[:, 14].map(digits_only),
+                        })
+                        incoming = incoming[
+                            ~incoming["cnpj"].map(normalize_text).str.contains("CNPJ", na=False)
+                        ].copy()
+                        incoming["aliases"] = incoming["nome_fantasia"]
+                        incoming["ativo"] = True
+                        valid_sup = incoming[
+                            incoming["cnpj"].map(valid_cnpj)
+                            & incoming["nome_padrao"].ne("")
+                        ].copy()
+
+                        preferred_rows = []
+                        conflict_cnpjs = []
+                        for cnpj, group in valid_sup.groupby("cnpj", sort=False):
+                            if len(group) == 1:
+                                preferred_rows.append(group.iloc[0])
+                                continue
+
+                            compact_names = [
+                                re.sub(r"[^A-Z0-9]", "", normalize_text(name))
+                                for name in group["nome_padrao"].tolist()
+                            ]
+                            base_name = min(compact_names, key=len)
+                            equivalent = all(
+                                name == base_name
+                                or name.startswith(base_name)
+                                or base_name.startswith(name)
+                                for name in compact_names
+                            )
+                            if equivalent:
+                                chosen_idx = group["nome_padrao"].map(
+                                    lambda value: len(normalize_text(value))
+                                ).idxmin()
+                                preferred_rows.append(group.loc[chosen_idx])
+                            else:
+                                conflict_cnpjs.append(cnpj)
+
+                        if conflict_cnpjs:
+                            raise ValueError(
+                                f"A base de fornecedores possui {len(conflict_cnpjs)} CNPJ(s) "
+                                "vinculado(s) a razões sociais conflitantes."
+                            )
+                        if not preferred_rows:
+                            raise ValueError(
+                                "Nenhum fornecedor válido foi encontrado no relatório."
+                            )
+
+                        clean_sup = pd.DataFrame(preferred_rows).copy()
+                        final_sup = supplier_dataframe(
+                            clean_sup[
+                                [
+                                    "cnpj",
+                                    "nome_padrao",
+                                    "aliases",
+                                    "ativo",
+                                    "codigo",
+                                    "loja",
+                                    "nome_fantasia",
+                                    "tipo",
+                                ]
+                            ]
+                        )
+                        if db.configured():
+                            db.replace_suppliers(
+                                final_sup.to_dict("records"),
+                                supplier_file.name,
+                                {
+                                    "total": len(incoming),
+                                    "validos": len(final_sup),
+                                    "invalidos": int(
+                                        (
+                                            ~incoming["cnpj"].map(valid_cnpj)
+                                            | incoming["nome_padrao"].eq("")
+                                        ).sum()
+                                    ),
+                                    "conflitos": 0,
+                                },
+                            )
+                        st.session_state.suppliers = final_sup
+
+                    # 2) Pré-notas.
+                    temp_pre, _ = read_uploaded_table(
+                        pre_file,
+                        header_row=None,
+                    )
+                    if temp_pre.shape[1] < 6:
+                        raise ValueError(
+                            "O relatório de Pré-notas precisa conter pelo menos as colunas A até F."
+                        )
+
+                    normalized_pre = pd.DataFrame({
+                        "data_pre_nota": pd.to_datetime(
+                            temp_pre.iloc[:, 0],
+                            errors="coerce",
+                            dayfirst=True,
+                        ).dt.date,
+                        "recebedor": temp_pre.iloc[:, 1].fillna("").astype(str).str.strip(),
+                        "numero_nf": temp_pre.iloc[:, 2].map(normalized_nf),
+                        "fornecedor": temp_pre.iloc[:, 3].fillna("").astype(str).str.strip(),
+                        "cnpj": temp_pre.iloc[:, 4].map(digits_only),
+                        "status": temp_pre.iloc[:, 5].fillna("").astype(str).str.strip(),
+                    })
+                    normalized_pre["status_normalizado"] = normalized_pre["status"].map(
+                        normalize_text
+                    )
+                    pre_valid = normalized_pre[
+                        normalized_pre["status_normalizado"].eq("PRE-NOTA LANCADA")
+                        & normalized_pre["numero_nf"].ne("")
+                        & normalized_pre["fornecedor"].ne("")
+                        & normalized_pre["data_pre_nota"].notna()
+                    ].copy()
+                    pre_valid = (
+                        pre_valid.sort_values(
+                            ["data_pre_nota", "numero_nf"],
+                            ascending=[False, True],
+                            na_position="last",
+                        )
+                        .drop_duplicates(
+                            ["data_pre_nota", "numero_nf", "fornecedor"],
+                            keep="last",
+                        )
+                        .drop(columns=["status_normalizado"], errors="ignore")
+                        .reset_index(drop=True)
+                    )
+                    if pre_valid.empty:
+                        raise ValueError(
+                            "Nenhuma Pré-nota lançada válida foi encontrada no relatório."
+                        )
+
+                    st.session_state.pre_notes = pre_valid
+                    if SAVE_NF_HISTORY and db.configured():
+                        pre_rows = []
+                        for _, row in pre_valid.iterrows():
+                            pre_rows.append({
+                                "numero_nf": row["numero_nf"],
+                                "cnpj": row["cnpj"],
+                                "fornecedor": str(row.get("fornecedor") or "").strip(),
+                                "recebedor": str(row.get("recebedor") or "").strip(),
+                                "status": row["status"],
+                                "data_pre_nota": (
+                                    row["data_pre_nota"].isoformat()
+                                    if isinstance(row["data_pre_nota"], date)
+                                    else None
+                                ),
+                                "natureza": "",
+                            })
+                        db.replace_pre_notes(pre_rows, pre_file.name)
+
+                    # 3) Impacto MRP: cálculo interno, sem abrir tabela técnica.
+                    materials, mat_stats = _clean_mrp_materials_cached(
+                        material_file.getvalue(),
+                        material_file.name,
+                    )
+                    entries, nf_stats = _clean_mrp_nf_cached(
+                        nf_file.getvalue(),
+                        nf_file.name,
+                        now_local().date().isoformat(),
+                    )
+                    detail, summary, impact_stats = _build_mrp_impact(
+                        materials,
+                        entries,
+                    )
+                    st.session_state.mrp_impact_detail = detail.copy()
+                    st.session_state.mrp_priority_summary = summary.copy()
+                    st.session_state.mrp_priority_stats = {
+                        **mat_stats,
+                        **nf_stats,
+                        **impact_stats,
+                    }
+                    st.session_state.mrp_priority_files = (
+                        material_file.name,
+                        nf_file.name,
+                    )
+                    st.session_state.mrp_ignored_records = []
+
+                    high = (
+                        summary[
+                            summary["prioridade"]
+                            .fillna("")
+                            .astype(str)
+                            .str.upper()
+                            .eq("ALTA")
+                        ].copy()
+                        if isinstance(summary, pd.DataFrame) and not summary.empty
+                        else pd.DataFrame()
+                    )
+                    st.session_state.priority_date_nf_keys = set(
+                        high.get("data_nf", pd.Series(dtype=str))
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+                    st.session_state.priority_nf_doc_keys = set()
+                    st.session_state.priority_nf_keys = set()
+                    st.session_state.priority_nf_numbers = set(
+                        high.get("numero_nf", pd.Series(dtype=str))
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+
+                    persisted_mrp = persist_mrp_current()
+                    if db.configured() and not bool(persisted_mrp.get("ok", False)):
+                        raise RuntimeError(
+                            "O Supabase não confirmou a gravação do cálculo MRP."
+                        )
+
+                    pending_base = current_pending_pre_notes()
+                    if pending_base.empty:
+                        raise ValueError(
+                            "A carga foi lida, mas não restou nenhuma Pré-nota pendente "
+                            "para confronto com os XMLs/PDFs."
+                        )
+            except Exception as exc:
+                st.error(f"Não foi possível processar a alimentação: {exc}")
+                return
 
             groups: dict[str, dict] = {}
             rejected: list[dict] = []
