@@ -7212,7 +7212,16 @@ elif page == "Pendências":
                 na_position="last",
             ).drop(columns="_priority_order")
 
+            editor_view = filtered.copy()
+            editor_view["_flow_key"] = editor_view.apply(
+                flow_nf_key,
+                axis=1,
+            )
+            editor_view.insert(0, "Selecionar", False)
+
             table_cols = [
+                "Selecionar",
+                "_flow_key",
                 "data_pre_nota",
                 "numero_nf",
                 "cnpj",
@@ -7226,52 +7235,221 @@ elif page == "Pendências":
                 "validacao_documento",
             ]
 
-            st.dataframe(
-                filtered[table_cols],
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "data_pre_nota": st.column_config.DateColumn(
-                        "Data da pré-nota",
-                        format="DD/MM/YYYY",
+            with st.form("pending_pre_notes_actions"):
+                pending_editor = st.data_editor(
+                    editor_view[table_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    key="pending_pre_notes_editor",
+                    disabled=[
+                        col
+                        for col in table_cols
+                        if col not in {"Selecionar", "recebedor"}
+                    ],
+                    column_config={
+                        "Selecionar": st.column_config.CheckboxColumn(
+                            "Selecionar"
+                        ),
+                        "_flow_key": None,
+                        "data_pre_nota": st.column_config.DateColumn(
+                            "Data da pré-nota",
+                            format="DD/MM/YYYY",
+                        ),
+                        "numero_nf": "NF",
+                        "cnpj": "CNPJ",
+                        "fornecedor": st.column_config.TextColumn(
+                            "Fornecedor",
+                            width="large",
+                        ),
+                        "recebedor": st.column_config.TextColumn(
+                            "Recebedor",
+                            width="medium",
+                            help=(
+                                "Obrigatório para seguir para geração. "
+                                "Pode ser preenchido diretamente nesta tabela."
+                            ),
+                        ),
+                        "prioridade": "Prioridade",
+                        "situacao_mrp": st.column_config.TextColumn(
+                            "Vínculo NF",
+                            width="medium",
+                        ),
+                        "aderencia_fornecedor": st.column_config.NumberColumn(
+                            "Aderência fornecedor",
+                            format="%d%%",
+                        ),
+                        "cte": st.column_config.TextColumn(
+                            "CT-e",
+                            width="medium",
+                        ),
+                        "tratativa": st.column_config.TextColumn(
+                            "Tratativa",
+                            width="medium",
+                        ),
+                        "validacao_documento": st.column_config.TextColumn(
+                            "Validação documento",
+                            width="medium",
+                        ),
+                    },
+                )
+
+                a1, a2 = st.columns([1, 1])
+                save_receivers = a1.form_submit_button(
+                    "SALVAR RECEBEDORES",
+                    use_container_width=True,
+                )
+                exclude_selected = a2.form_submit_button(
+                    "EXCLUIR SELECIONADAS DO FLUXO",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if save_receivers:
+                receiver_map = {
+                    str(row.get("_flow_key") or ""): str(
+                        row.get("recebedor") or ""
+                    ).strip()
+                    for _, row in pending_editor.iterrows()
+                    if str(row.get("_flow_key") or "").strip()
+                }
+
+                updated_pre = st.session_state.pre_notes.copy()
+                updated_pre["recebedor"] = updated_pre.apply(
+                    lambda row: receiver_map.get(
+                        flow_nf_key(row),
+                        str(row.get("recebedor") or "").strip(),
                     ),
-                    "numero_nf": "NF",
-                    "cnpj": "CNPJ",
-                    "fornecedor": st.column_config.TextColumn(
-                        "Fornecedor",
-                        width="large",
-                    ),
-                    "recebedor": st.column_config.TextColumn(
-                        "Recebedor",
-                        width="medium",
-                    ),
-                    "prioridade": "Prioridade",
-                    "data_cm": st.column_config.DateColumn(
-                        "Data CM",
-                        format="DD/MM/YYYY",
-                    ),
-                    "situacao_mrp": st.column_config.TextColumn(
-                        "Vínculo NF",
-                        width="medium",
-                    ),
-                    "aderencia_fornecedor": st.column_config.NumberColumn(
-                        "Aderência fornecedor",
-                        format="%d%%",
-                    ),
-                    "cte": st.column_config.TextColumn(
-                        "CT-e",
-                        width="medium",
-                    ),
-                    "tratativa": st.column_config.TextColumn(
-                        "Tratativa",
-                        width="medium",
-                    ),
-                    "validacao_documento": st.column_config.TextColumn(
-                        "Validação documento",
-                        width="medium",
-                    ),
-                },
-            )
+                    axis=1,
+                )
+                st.session_state.pre_notes = updated_pre
+                persist_pre_notes_current("Ajuste manual de recebedor")
+
+                analysis = st.session_state.analysis.copy()
+                if isinstance(analysis, pd.DataFrame) and not analysis.empty:
+                    if "pre_nota_recebedor" not in analysis.columns:
+                        analysis["pre_nota_recebedor"] = ""
+                    analysis["pre_nota_recebedor"] = analysis.apply(
+                        lambda row: receiver_map.get(
+                            flow_nf_key(row),
+                            str(
+                                row.get("pre_nota_recebedor")
+                                or row.get("recebedor")
+                                or ""
+                            ).strip(),
+                        ),
+                        axis=1,
+                    )
+                    st.session_state.analysis = recalc(
+                        apply_cross_checks(analysis)
+                    )
+
+                st.session_state.pop("pending_pre_notes_editor", None)
+                st.rerun()
+
+            if exclude_selected:
+                selected_keys = set(
+                    pending_editor.loc[
+                        pending_editor["Selecionar"]
+                        .fillna(False)
+                        .astype(bool),
+                        "_flow_key",
+                    ]
+                    .fillna("")
+                    .astype(str)
+                    .loc[lambda values: values.ne("")]
+                    .tolist()
+                )
+
+                if not selected_keys:
+                    st.warning(
+                        "Selecione pelo menos uma NF para excluir do fluxo."
+                    )
+                else:
+                    excluded = set(
+                        st.session_state.get("excluded_flow_keys")
+                        or set()
+                    )
+                    excluded.update(selected_keys)
+                    st.session_state.excluded_flow_keys = excluded
+
+                    current_pre = st.session_state.pre_notes.copy()
+                    keep_mask = ~current_pre.apply(
+                        flow_nf_key,
+                        axis=1,
+                    ).isin(selected_keys)
+                    st.session_state.pre_notes = (
+                        current_pre[keep_mask]
+                        .copy()
+                        .reset_index(drop=True)
+                    )
+                    persist_pre_notes_current(
+                        "Exclusão manual do fluxo"
+                    )
+
+                    analysis = st.session_state.analysis.copy()
+                    removed_file_ids = set()
+                    if (
+                        isinstance(analysis, pd.DataFrame)
+                        and not analysis.empty
+                    ):
+                        remove_mask = analysis.apply(
+                            flow_nf_key,
+                            axis=1,
+                        ).isin(selected_keys)
+                        if "file_id" in analysis.columns:
+                            removed_file_ids = set(
+                                analysis.loc[
+                                    remove_mask,
+                                    "file_id",
+                                ]
+                                .fillna("")
+                                .astype(str)
+                                .loc[lambda values: values.ne("")]
+                                .tolist()
+                            )
+                        st.session_state.analysis = (
+                            analysis.loc[~remove_mask]
+                            .copy()
+                            .reset_index(drop=True)
+                        )
+
+                    if removed_file_ids:
+                        for file_id in removed_file_ids:
+                            st.session_state.pdfs.pop(file_id, None)
+
+                        kept_ctes = []
+                        for cte_item in (
+                            st.session_state.get("cte_links") or []
+                        ):
+                            linked_ids = [
+                                str(value)
+                                for value in (
+                                    cte_item.get("linked_file_ids")
+                                    or []
+                                )
+                                if str(value).strip()
+                            ]
+                            remaining_ids = [
+                                value
+                                for value in linked_ids
+                                if value not in removed_file_ids
+                            ]
+                            if remaining_ids:
+                                cte_item = dict(cte_item)
+                                cte_item["linked_file_ids"] = (
+                                    remaining_ids
+                                )
+                                kept_ctes.append(cte_item)
+                        st.session_state.cte_links = kept_ctes
+
+                    _refresh_missing_mrp_analysis()
+                    st.session_state.pop(
+                        "pending_pre_notes_editor",
+                        None,
+                    )
+                    st.rerun()
+
             st.caption(
                 f"Exibindo {len(filtered)} de {len(pending_view)} pré-nota(s) pendente(s)."
             )
