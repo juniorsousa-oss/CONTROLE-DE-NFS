@@ -167,6 +167,7 @@ def init():
         "cte_outputs": {},
         "cte_ignored_count": 0,
         "document_link_stats": {},
+        "document_reprocess_needed": False,
         "base_analysis_ready": False,
         "base_analysis_at": None,
         "base_analysis_missing_mrp": pd.DataFrame(),
@@ -4562,6 +4563,7 @@ def render_mrp_missing_pre_treatments() -> None:
             st.session_state.pre_notes = updated
             persist_pre_notes_current("Impacto MRP / Protheus")
             _refresh_missing_mrp_analysis()
+            st.session_state.document_reprocess_needed = True
             st.session_state.pop("base_missing_mrp_editor", None)
             st.rerun()
 
@@ -5282,8 +5284,13 @@ def render_document_linking_stage() -> None:
         disabled=not bool(uploaded),
         key="process_fiscal_documents",
     )
+    auto_reprocess = bool(
+        uploaded
+        and st.session_state.get("document_reprocess_needed")
+    )
 
-    if process_documents:
+    if process_documents or auto_reprocess:
+        st.session_state.document_reprocess_needed = False
         nf_candidates = []
         cte_candidates = []
         ignored = 0
@@ -5751,7 +5758,6 @@ def render_document_linking_stage() -> None:
             st.session_state.prefilter_stats
         )
         progress.empty()
-        st.session_state.pop("pending_fiscal_documents", None)
         st.rerun()
 
     stats = st.session_state.get("document_link_stats") or {}
@@ -5894,6 +5900,8 @@ def render_file_processing():
         st.session_state.cte_outputs = {}
         st.session_state.cte_ignored_count = 0
         st.session_state.document_link_stats = {}
+        st.session_state.document_reprocess_needed = False
+        st.session_state.pop("pending_fiscal_documents", None)
         st.session_state.current_test_manifest = []
         st.session_state.base_analysis_ready = False
         st.session_state.base_analysis_missing_mrp = pd.DataFrame()
