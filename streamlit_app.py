@@ -4024,6 +4024,7 @@ def render_nf_treatment_center() -> None:
                 "origem_dados",
                 "numero_nf",
                 "fornecedor_padrao",
+                "empresa_sigla",
                 "vencimento",
                 "natureza",
                 "nome_sugerido",
@@ -4038,6 +4039,7 @@ def render_nf_treatment_center() -> None:
                     "origem_dados": "Origem",
                     "numero_nf": "NF",
                     "fornecedor_padrao": "Fornecedor",
+                    "empresa_sigla": st.column_config.TextColumn("Empresa"),
                     "vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
                     "natureza": "Natureza",
                     "nome_sugerido": "Nome final",
@@ -4203,6 +4205,7 @@ def render_nf_treatment_center() -> None:
                 "file_id",
                 "numero_nf",
                 "fornecedor_padrao",
+                "empresa_sigla",
                 "natureza",
                 "prioridade_mrp_base",
                 "prioridade_manual",
@@ -4232,6 +4235,10 @@ def render_nf_treatment_center() -> None:
                     "fornecedor_padrao": st.column_config.TextColumn(
                         "Fornecedor",
                         width="large",
+                    ),
+                    "empresa_sigla": st.column_config.TextColumn(
+                        "Empresa",
+                        help="SEN = Energy | SEE = Engenharia | STA = Astec",
                     ),
                     "natureza": st.column_config.TextColumn(
                         "Natureza",
