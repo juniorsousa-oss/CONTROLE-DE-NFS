@@ -3389,7 +3389,7 @@ def render_file_processing():
             "Geração do DANFE da NF-e modelo 55 baseada no MOC 7.0 / Anexo II: A4 retrato, "
             "margens regulamentares, fonte Times, CODE-128, paginação de produtos e repetição do "
             "cabeçalho fiscal. Primeiro é gerada a camada fiscal exclusivamente a partir do XML; "
-            "depois o controle interno SETTA é aplicado como segunda camada PDF, provisoriamente "
+            "depois o controle interno SETTA é aplicado como segunda camada PDF "
             "na área RESERVADO AO FISCO. Os XMLs e PDFs ficam somente nesta sessão."
         )
 
