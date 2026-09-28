@@ -4051,21 +4051,31 @@ def render_nf_treatment_center() -> None:
     else:
         frame = apply_cross_checks(frame)
         frame = recalc(frame)
-        st.markdown("### Conferência das correspondências")
-        metrics(frame)
-        st.caption(
-            "Vencimento, número da NF, fornecedor e status podem ser tratados antes da geração definitiva. "
-            "A Natureza é somente leitura e vem da carga de Nota Fiscal (STSUP01)."
-        )
-        st.info(
-            "Tratamento de exceções: quando uma linha ficar em REVISAR, corrija somente os campos permitidos "
-            "(por exemplo, Vencimento) e então altere o Status para APROVADO. "
-            "Se a Natureza estiver vazia, a correção deve ser feita na carga de Nota Fiscal, não manualmente nesta tela."
-        )
 
         merged = frame.copy()
         pending_mask = treatment_mask(merged)
         pending = merged.loc[pending_mask].copy()
+        ready_count = int((~pending_mask).sum())
+        priority_count = int(
+            merged.get(
+                "prioridade_mrp",
+                pd.Series(False, index=merged.index),
+            )
+            .fillna(False)
+            .astype(bool)
+            .sum()
+        )
+
+        st.markdown("### Conferência")
+        st.caption(
+            f"{len(merged)} NF(s) vinculada(s) • {ready_count} pronta(s) • "
+            f"{len(pending)} tratativa(s) • {priority_count} prioridade(s)"
+        )
+        with st.expander("Regras da conferência", expanded=False):
+            st.caption(
+                "Corrija apenas exceções. Vencimento, NF, fornecedor, empresa e status "
+                "podem ser ajustados. A Natureza vem exclusivamente da carga STSUP01."
+            )
 
         with st.expander(
             f"Documentos sem tratativa ({int((~pending_mask).sum())})",
