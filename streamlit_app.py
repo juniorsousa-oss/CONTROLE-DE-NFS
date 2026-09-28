@@ -7207,7 +7207,7 @@ elif page == "Pendências":
                         format="DD/MM/YYYY",
                     ),
                     "situacao_mrp": st.column_config.TextColumn(
-                        "Situação MRP",
+                        "Vínculo NF",
                         width="medium",
                     ),
                     "aderencia_fornecedor": st.column_config.NumberColumn(
