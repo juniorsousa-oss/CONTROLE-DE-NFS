@@ -2331,6 +2331,55 @@ def nature_from_nf_load(
 
 
 
+def company_sigla_from_document(
+    destinatario: object = "",
+    cnpj_destinatario: object = "",
+    text: object = "",
+) -> str:
+    """Retorna a sigla operacional SETTA a partir do destinatário do documento."""
+    source = normalize_text(
+        " ".join(
+            value
+            for value in [
+                str(destinatario or "").strip(),
+                str(text or "").strip(),
+            ]
+            if value
+        )
+    )
+
+    if any(token in source for token in [
+        "ASTEC",
+        "ASSISTENCIA TECNICA",
+        "ASSISTENCIA TECNICA SETTA",
+    ]):
+        return "STA"
+
+    if any(token in source for token in [
+        "ENGENHARIA",
+        "SETTA ENGENHARIA",
+    ]):
+        return "SEE"
+
+    if any(token in source for token in [
+        "ENERGY",
+        "SETTA ENERGY",
+        "ENERGIA",
+    ]):
+        return "SEN"
+
+    # Mantém o CNPJ disponível para futura tabela exata sem assumir uma
+    # empresa quando o nome do destinatário não estiver claro.
+    _ = digits_only(cnpj_destinatario)
+    return ""
+
+
+def nf_package_class(natureza: object) -> str:
+    """MP somente para matéria-prima; todas as demais naturezas seguem como UC."""
+    value = normalize_text(natureza)
+    return "MP" if "MATERIA PRIMA" in value else "UC"
+
+
 def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
@@ -2782,6 +2831,14 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
         row["cnpj_fornecedor"] = str(xml_data.get("cnpj_fornecedor") or "").strip()
         row["fornecedor_lido"] = supplier_read
         row["fornecedor_padrao"] = supplier_standard
+        row["destinatario"] = str(xml_data.get("destinatario") or "").strip()
+        row["cnpj_destinatario"] = digits_only(
+            xml_data.get("cnpj_destinatario")
+        )
+        row["empresa_sigla"] = company_sigla_from_document(
+            row["destinatario"],
+            row["cnpj_destinatario"],
+        )
         row["metodo_fornecedor"] = (
             f"XML + {supplier_match.get('metodo') or 'fornecedor validado'}"
         )
@@ -2816,6 +2873,18 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
             row["arquivo_original"] = f"{pdf_item['name']} + {xml_item['name']}"
         else:
             row["arquivo_original"] = xml_item["name"]
+
+    if not str(row.get("empresa_sigla") or "").strip() and pdf_item is not None:
+        try:
+            pdf_text, _ = extract_pdf_text(
+                pdf_item["raw"],
+                ocr_fallback=False,
+            )
+        except Exception:
+            pdf_text = ""
+        row["empresa_sigla"] = company_sigla_from_document(
+            text=pdf_text,
+        )
 
     row["origem_dados"] = source_mode
     row["pre_nota_data"] = normalized_business_date(pre_row.get("data_pre_nota"))
