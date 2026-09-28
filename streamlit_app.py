@@ -6519,6 +6519,50 @@ elif page == "Pendências":
             if "recebedor" not in pending_view.columns:
                 pending_view["recebedor"] = ""
             pending_view["validacao_documento"] = "PENDENTE DE DOCUMENTO"
+
+            # CT-e vinculado à NF no lote atual.
+            cte_by_pre_key = {}
+            analysis_now = st.session_state.get("analysis")
+            if isinstance(analysis_now, pd.DataFrame) and not analysis_now.empty:
+                analysis_by_file = {
+                    str(row.get("file_id") or ""): row.to_dict()
+                    for _, row in analysis_now.iterrows()
+                    if str(row.get("file_id") or "").strip()
+                }
+                for cte in st.session_state.get("cte_links") or []:
+                    cte_number = str(cte.get("numero_cte") or "").strip()
+                    if not cte_number:
+                        cte_number = "VINCULADO"
+                    for file_id in cte.get("linked_file_ids") or []:
+                        nf_row = analysis_by_file.get(str(file_id) or "")
+                        if not nf_row:
+                            continue
+                        key = pre_note_key(
+                            nf_row.get("numero_nf"),
+                            nf_row.get("cnpj_fornecedor"),
+                        )
+                        if not key:
+                            continue
+                        cte_by_pre_key.setdefault(key, [])
+                        if cte_number not in cte_by_pre_key[key]:
+                            cte_by_pre_key[key].append(cte_number)
+
+            def _cte_status(row):
+                key = pre_note_key(
+                    row.get("numero_nf"),
+                    row.get("cnpj"),
+                )
+                values = cte_by_pre_key.get(key, [])
+                if not values:
+                    return "SEM CT-e"
+                if len(values) == 1:
+                    return f"CT-e {values[0]}"
+                return f"{len(values)} CT-es"
+
+            pending_view["cte"] = pending_view.apply(
+                _cte_status,
+                axis=1,
+            )
             pending_view["data_nf"] = pending_view.apply(
                 lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
                 axis=1,
@@ -6718,6 +6762,7 @@ elif page == "Pendências":
                 "prioridade",
                 "situacao_mrp",
                 "aderencia_fornecedor",
+                "cte",
                 "tratativa",
                 "validacao_documento",
             ]
@@ -6753,6 +6798,10 @@ elif page == "Pendências":
                     "aderencia_fornecedor": st.column_config.NumberColumn(
                         "Aderência fornecedor",
                         format="%d%%",
+                    ),
+                    "cte": st.column_config.TextColumn(
+                        "CT-e",
+                        width="medium",
                     ),
                     "tratativa": st.column_config.TextColumn(
                         "Tratativa",
