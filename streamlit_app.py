@@ -4889,6 +4889,714 @@ def render_cte_linking_stage() -> None:
         )
 
 
+def _pdf_document_keys(text: str) -> list[str]:
+    """Extrai chaves fiscais de 44 dígitos preservando NF-e (55) e CT-e (57)."""
+    keys = []
+    seen = set()
+    patterns = [
+        r"(?<!\d)(?:\d[\s\.\-]*){44}(?!\d)",
+        r"\b\d{44}\b",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, str(text or "")):
+            key = digits_only(match.group(0))
+            if len(key) == 44 and key not in seen:
+                seen.add(key)
+                keys.append(key)
+    return keys
+
+
+def _analysis_rows_for_nfe_keys(
+    analysis: pd.DataFrame,
+    nfe_keys: list[str],
+) -> list[dict]:
+    if not isinstance(analysis, pd.DataFrame) or analysis.empty:
+        return []
+
+    linked = {}
+    key_series = (
+        analysis.get("chave_nfe", pd.Series("", index=analysis.index))
+        .fillna("")
+        .astype(str)
+        .map(digits_only)
+    )
+    number_series = (
+        analysis.get("numero_nf", pd.Series("", index=analysis.index))
+        .fillna("")
+        .astype(str)
+        .map(normalized_nf)
+    )
+    cnpj_series = (
+        analysis.get("cnpj_fornecedor", pd.Series("", index=analysis.index))
+        .fillna("")
+        .astype(str)
+        .map(digits_only)
+    )
+
+    for ref_key in nfe_keys:
+        ref = digits_only(ref_key)
+        if len(ref) != 44 or ref[20:22] != "55":
+            continue
+
+        hit = analysis[key_series.eq(ref)].copy()
+        if hit.empty:
+            raw_nf = ref[25:34]
+            nf = str(int(raw_nf)) if raw_nf.isdigit() else raw_nf
+            supplier_cnpj = ref[6:20]
+            candidates = analysis[number_series.eq(normalized_nf(nf))].copy()
+            if not candidates.empty and supplier_cnpj:
+                exact = candidates[
+                    cnpj_series.loc[candidates.index].eq(supplier_cnpj)
+                ].copy()
+                if not exact.empty:
+                    candidates = exact
+            if len(candidates) == 1:
+                hit = candidates
+
+        if len(hit) == 1:
+            row = hit.iloc[0].to_dict()
+            row_id = str(row.get("file_id") or "")
+            if row_id:
+                linked[row_id] = row
+
+    return list(linked.values())
+
+
+def _analysis_rows_for_cte_pdf(
+    analysis: pd.DataFrame,
+    text: str,
+) -> list[dict]:
+    keys = _pdf_document_keys(text)
+    nfe_keys = [key for key in keys if key[20:22] == "55"]
+    linked = _analysis_rows_for_nfe_keys(analysis, nfe_keys)
+    if linked:
+        return linked
+
+    # Fallback somente quando o DACTE não expõe a chave da NF-e como texto.
+    # Usa números explicitamente identificados como NF no documento.
+    normalized = normalize_text(text)
+    nf_numbers = {
+        normalized_nf(value)
+        for value in re.findall(
+            r"\bNF(?:-E)?\s*(?:N[Oº°\.]?\s*)?0*(\d{1,9})\b",
+            normalized,
+            flags=re.IGNORECASE,
+        )
+        if normalized_nf(value)
+    }
+    if not nf_numbers:
+        return []
+
+    rows = {}
+    series = (
+        analysis.get("numero_nf", pd.Series("", index=analysis.index))
+        .fillna("")
+        .astype(str)
+        .map(normalized_nf)
+    )
+    for nf in nf_numbers:
+        hit = analysis[series.eq(nf)].copy()
+        if len(hit) == 1:
+            row = hit.iloc[0].to_dict()
+            row_id = str(row.get("file_id") or "")
+            if row_id:
+                rows[row_id] = row
+    return list(rows.values())
+
+
+def render_document_linking_stage() -> None:
+    st.markdown("### Documentos fiscais")
+    st.caption(
+        "Envie em um único campo XMLs e PDFs de NF-e e CT-e. O aplicativo separa "
+        "automaticamente os tipos e mantém somente documentos vinculados às NFs "
+        "válidas da base principal."
+    )
+
+    if not st.session_state.get("base_analysis_ready"):
+        st.info(
+            "Primeiro execute a análise dos relatórios em Processamento de arquivos."
+        )
+        return
+
+    missing = _refresh_missing_mrp_analysis()
+    if not missing.empty:
+        st.info(
+            "Resolva primeiro as NFs do MRP sem correspondência segura nas Pré-notas. "
+            "Depois disso a vinculação documental será liberada."
+        )
+        return
+
+    pending_base = current_pending_pre_notes()
+    if pending_base.empty:
+        st.success("Não há NFs pendentes aguardando documentos.")
+        return
+
+    uploaded = st.file_uploader(
+        "XMLs e PDFs de NF-e / CT-e",
+        type=["xml", "pdf"],
+        accept_multiple_files=True,
+        key="pending_fiscal_documents",
+    )
+
+    process_documents = st.button(
+        "ANALISAR E VINCULAR DOCUMENTOS",
+        type="primary",
+        use_container_width=True,
+        disabled=not bool(uploaded),
+        key="process_fiscal_documents",
+    )
+
+    if process_documents:
+        nf_candidates = []
+        cte_candidates = []
+        ignored = 0
+        nf_rejected = []
+        cte_rejected = []
+        groups = {}
+        file_store = dict(st.session_state.get("prefilter_files") or {})
+
+        progress = st.progress(0, text="Classificando documentos...")
+
+        for idx, file in enumerate(uploaded, start=1):
+            raw = file.getvalue()
+            ext = Path(file.name).suffix.lower()
+            file_id = uuid.uuid4().hex[:16]
+
+            if ext == ".xml":
+                # CT-e primeiro: o parser valida explicitamente a raiz do modelo 57.
+                try:
+                    meta = extract_cte_metadata(raw)
+                    cte_candidates.append({
+                        "file_id": file_id,
+                        "name": file.name,
+                        "ext": ext,
+                        "raw": raw,
+                        "source": "XML",
+                        "meta": meta,
+                    })
+                    progress.progress(
+                        idx / max(1, len(uploaded)),
+                        text=f"Classificando {idx}/{len(uploaded)} — {file.name}",
+                    )
+                    continue
+                except Exception:
+                    pass
+
+                try:
+                    xml_data = extract_nfe_processing_data(raw)
+                    nf_candidates.append({
+                        "file_id": file_id,
+                        "name": file.name,
+                        "ext": ext,
+                        "raw": raw,
+                        "source": "XML",
+                        "data": xml_data,
+                    })
+                except Exception:
+                    ignored += 1
+
+            elif ext == ".pdf":
+                try:
+                    text, reading_method = extract_pdf_text(
+                        raw,
+                        ocr_fallback=False,
+                    )
+                except Exception:
+                    ignored += 1
+                    progress.progress(
+                        idx / max(1, len(uploaded)),
+                        text=f"Classificando {idx}/{len(uploaded)} — {file.name}",
+                    )
+                    continue
+
+                normalized = normalize_text(text)
+                is_cte = (
+                    "DACTE" in normalized
+                    or "CONHECIMENTO DE TRANSPORTE ELETRONICO" in normalized
+                )
+                if is_cte:
+                    cte_candidates.append({
+                        "file_id": file_id,
+                        "name": file.name,
+                        "ext": ext,
+                        "raw": raw,
+                        "source": "PDF",
+                        "text": text,
+                        "reading_method": reading_method,
+                    })
+                else:
+                    nf_candidates.append({
+                        "file_id": file_id,
+                        "name": file.name,
+                        "ext": ext,
+                        "raw": raw,
+                        "source": "PDF",
+                    })
+            else:
+                ignored += 1
+
+            progress.progress(
+                idx / max(1, len(uploaded)),
+                text=f"Classificando {idx}/{len(uploaded)} — {file.name}",
+            )
+
+        # 1) NF-e primeiro, pois os CT-es dependem das NF-e já vinculadas.
+        for item in nf_candidates:
+            file_id = item["file_id"]
+            file_store[file_id] = {
+                "name": item["name"],
+                "ext": item["ext"],
+                "raw": item["raw"],
+            }
+
+            if item["source"] == "XML":
+                xml_data = item["data"]
+                identity = _xml_prefilter_identity(xml_data)
+                match = match_document_to_pre_note(
+                    identity,
+                    pre_notes=pending_base,
+                )
+                nf_doc = normalized_nf(xml_data.get("numero_nf"))
+
+                if not match.get("matched"):
+                    nf_hits = pending_base[
+                        pending_base["numero_nf"].map(normalized_nf).eq(nf_doc)
+                    ].copy()
+                    if nf_hits.empty:
+                        ignored += 1
+                        file_store.pop(file_id, None)
+                    else:
+                        nf_rejected.append({
+                            "file_id": file_id,
+                            "arquivo": item["name"],
+                            "tipo": "NF-e XML",
+                            "vinculado_base": True,
+                            "nf": nf_doc,
+                            "fornecedor": str(
+                                xml_data.get("fornecedor_lido") or ""
+                            ),
+                            "motivo": str(
+                                match.get("situacao")
+                                or "XML NÃO VINCULADO À NF DA BASE"
+                            ),
+                            "aderencia_fornecedor": int(
+                                match.get("score_fornecedor") or 0
+                            ),
+                        })
+                    continue
+
+                pre_row = match["row"]
+                key = pending_document_group_key(pre_row)
+                group = groups.setdefault(
+                    key,
+                    {"pre": pre_row, "xmls": [], "pdfs": []},
+                )
+                group["xmls"].append({
+                    "file_id": file_id,
+                    "name": item["name"],
+                    "raw": item["raw"],
+                    "data": xml_data,
+                    "score": int(match.get("score_fornecedor") or 0),
+                })
+                continue
+
+            # NF-e em PDF.
+            identity = inspect_nf_pdf_identity(
+                item["name"],
+                item["raw"],
+                st.session_state.suppliers,
+            )
+            match = match_document_to_pre_note(
+                identity,
+                pre_notes=pending_base,
+            )
+            nf_doc = normalized_nf(identity.get("numero_nf"))
+
+            if not match.get("matched"):
+                nf_hits = pending_base[
+                    pending_base["numero_nf"].map(normalized_nf).eq(nf_doc)
+                ].copy() if nf_doc else pd.DataFrame()
+                if nf_hits.empty:
+                    ignored += 1
+                    file_store.pop(file_id, None)
+                else:
+                    nf_rejected.append({
+                        "file_id": file_id,
+                        "arquivo": item["name"],
+                        "tipo": "NF-e PDF",
+                        "vinculado_base": True,
+                        "nf": nf_doc,
+                        "fornecedor": str(
+                            identity.get("fornecedor_lido")
+                            or identity.get("fornecedor_padrao")
+                            or ""
+                        ),
+                        "motivo": str(
+                            match.get("situacao")
+                            or "PDF NÃO VINCULADO À NF DA BASE"
+                        ),
+                        "aderencia_fornecedor": int(
+                            match.get("score_fornecedor") or 0
+                        ),
+                    })
+                continue
+
+            pre_row = match["row"]
+            key = pending_document_group_key(pre_row)
+            group = groups.setdefault(
+                key,
+                {"pre": pre_row, "xmls": [], "pdfs": []},
+            )
+            group["pdfs"].append({
+                "file_id": file_id,
+                "name": item["name"],
+                "raw": item["raw"],
+                "identity": identity,
+                "score": int(match.get("score_fornecedor") or 0),
+            })
+
+        # Mantém somente uma versão por tipo para cada NF.
+        for group in groups.values():
+            for doc_type in ("xmls", "pdfs"):
+                docs = group[doc_type]
+                if len(docs) > 1:
+                    docs.sort(
+                        key=lambda value: value.get("score", 0),
+                        reverse=True,
+                    )
+                    extras = docs[1:]
+                    ignored += len(extras)
+                    for extra in extras:
+                        file_store.pop(
+                            str(extra.get("file_id") or ""),
+                            None,
+                        )
+                    group[doc_type] = docs[:1]
+
+        rows = []
+        stored_docs = {}
+        for group in groups.values():
+            try:
+                row, stored = _build_hybrid_nf_document(group)
+                rows.append(row)
+                stored_docs[row["file_id"]] = stored
+            except Exception as exc:
+                source = (
+                    (group.get("xmls") or group.get("pdfs") or [{}])[0]
+                )
+                nf_rejected.append({
+                    "file_id": str(source.get("file_id") or ""),
+                    "arquivo": str(source.get("name") or "Documento"),
+                    "tipo": "PROCESSAMENTO NF-e",
+                    "vinculado_base": True,
+                    "nf": normalized_nf(
+                        group["pre"].get("numero_nf")
+                    ),
+                    "fornecedor": pre_supplier_name(group["pre"]),
+                    "motivo": f"Falha ao preparar NF: {exc}",
+                    "aderencia_fornecedor": 0,
+                })
+
+        new_frame = pd.DataFrame(rows)
+        if not new_frame.empty:
+            new_frame["vencimento"] = pd.to_datetime(
+                new_frame["vencimento"],
+                errors="coerce",
+            ).dt.date
+            new_frame = apply_cross_checks(new_frame)
+            new_frame = recalc(new_frame)
+
+            current = st.session_state.analysis.copy()
+            combined = (
+                pd.concat(
+                    [current, new_frame],
+                    ignore_index=True,
+                    sort=False,
+                )
+                if isinstance(current, pd.DataFrame) and not current.empty
+                else new_frame
+            )
+            dedupe_cols = [
+                col
+                for col in [
+                    "pre_nota_data",
+                    "numero_nf",
+                    "pre_nota_fornecedor",
+                ]
+                if col in combined.columns
+            ]
+            if dedupe_cols:
+                combined = combined.drop_duplicates(
+                    dedupe_cols,
+                    keep="last",
+                ).reset_index(drop=True)
+            st.session_state.analysis = combined
+
+        st.session_state.pdfs.update(stored_docs)
+        st.session_state.prefilter_files = file_store
+
+        # 2) CT-e depois que o lote de NF-e já está atualizado.
+        analysis = st.session_state.analysis.copy()
+        links = list(st.session_state.get("cte_links") or [])
+        existing_cte_keys = {
+            str(item.get("chave_cte") or "")
+            for item in links
+            if str(item.get("chave_cte") or "")
+        }
+
+        for item in cte_candidates:
+            if not isinstance(analysis, pd.DataFrame) or analysis.empty:
+                ignored += 1
+                continue
+
+            linked_rows = []
+            meta = item.get("meta")
+
+            if item["source"] == "XML":
+                refs = [
+                    digits_only(value)
+                    for value in (meta.refs_nfe or [])
+                ]
+                refs = [
+                    value
+                    for value in refs
+                    if len(value) == 44 and value[20:22] == "55"
+                ]
+                linked_rows = _analysis_rows_for_nfe_keys(
+                    analysis,
+                    refs,
+                )
+                if not linked_rows:
+                    ignored += 1
+                    continue
+
+                try:
+                    if meta.status_codigo and meta.status_codigo != "100":
+                        raise ValueError(
+                            f"CT-e {meta.numero} não autorizado: "
+                            f"{meta.status_codigo} - {meta.status_motivo}"
+                        )
+
+                    if meta.chave and meta.chave in existing_cte_keys:
+                        ignored += 1
+                        continue
+
+                    payload = generate_dacte_pdf(item["raw"])
+                    nf_numbers = [
+                        normalized_nf(row.get("numero_nf"))
+                        for row in linked_rows
+                        if normalized_nf(row.get("numero_nf"))
+                    ]
+                    suppliers = {
+                        str(row.get("fornecedor_padrao") or "").strip()
+                        for row in linked_rows
+                        if str(row.get("fornecedor_padrao") or "").strip()
+                    }
+                    supplier_name = (
+                        next(iter(suppliers))
+                        if len(suppliers) == 1
+                        else "MULTIPLOS FORNECEDORES"
+                    )
+                    final_name = cte_output_name(
+                        meta,
+                        nf_numbers,
+                        supplier_name,
+                    )
+                    chave_cte = meta.chave
+                    numero_cte = meta.numero
+                    transportadora = meta.emitente
+                    cnpj_transportadora = meta.cnpj_emitente
+                    refs_nfe = refs
+                except Exception as exc:
+                    cte_rejected.append({
+                        "arquivo": item["name"],
+                        "tipo": "CT-e XML",
+                        "motivo": str(exc),
+                    })
+                    continue
+
+            else:
+                text = str(item.get("text") or "")
+                linked_rows = _analysis_rows_for_cte_pdf(
+                    analysis,
+                    text,
+                )
+                if not linked_rows:
+                    ignored += 1
+                    continue
+
+                keys = _pdf_document_keys(text)
+                cte_keys = [
+                    key for key in keys
+                    if len(key) == 44 and key[20:22] == "57"
+                ]
+                chave_cte = cte_keys[0] if cte_keys else ""
+                if chave_cte and chave_cte in existing_cte_keys:
+                    ignored += 1
+                    continue
+
+                numero_cte = ""
+                cnpj_transportadora = ""
+                if chave_cte:
+                    raw_num = chave_cte[25:34]
+                    numero_cte = (
+                        str(int(raw_num))
+                        if raw_num.isdigit()
+                        else raw_num
+                    )
+                    cnpj_transportadora = chave_cte[6:20]
+                if not numero_cte:
+                    match_number = re.search(
+                        r"CT-?E\s*(?:N[Oº°\.]?\s*)?0*(\d{1,9})",
+                        normalize_text(text),
+                        flags=re.IGNORECASE,
+                    )
+                    if match_number:
+                        numero_cte = normalized_nf(
+                            match_number.group(1)
+                        )
+
+                payload = item["raw"]
+                final_name = item["name"]
+                transportadora = ""
+                refs_nfe = [
+                    key for key in keys
+                    if len(key) == 44 and key[20:22] == "55"
+                ]
+
+            nf_numbers = [
+                normalized_nf(row.get("numero_nf"))
+                for row in linked_rows
+                if normalized_nf(row.get("numero_nf"))
+            ]
+            cte_id = uuid.uuid4().hex[:16]
+            link = {
+                "cte_id": cte_id,
+                "chave_cte": chave_cte,
+                "numero_cte": numero_cte,
+                "serie_cte": (
+                    meta.serie
+                    if item["source"] == "XML"
+                    else ""
+                ),
+                "transportadora": transportadora,
+                "cnpj_transportadora": cnpj_transportadora,
+                "arquivo_original": item["name"],
+                "arquivo_final": final_name,
+                "bytes": payload,
+                "linked_file_ids": [
+                    str(row.get("file_id") or "")
+                    for row in linked_rows
+                    if str(row.get("file_id") or "")
+                ],
+                "linked_nf_numbers": nf_numbers,
+                "refs_nfe": refs_nfe,
+                "origem": item["source"],
+            }
+            links.append(link)
+            if chave_cte:
+                existing_cte_keys.add(chave_cte)
+
+        st.session_state.cte_links = links
+        st.session_state.cte_rejected = cte_rejected
+        st.session_state.prefilter_rejected = nf_rejected
+        st.session_state.prefilter_stats = {
+            "enviados": len(uploaded),
+            "nf_classificados": len(nf_candidates),
+            "cte_classificados": len(cte_candidates),
+            "nf_vinculados": len(new_frame),
+            "cte_vinculados": len(links),
+            "ignorados": ignored,
+            "erros_nf_vinculados": len(nf_rejected),
+            "erros_cte_vinculados": len(cte_rejected),
+        }
+        st.session_state.document_link_stats = dict(
+            st.session_state.prefilter_stats
+        )
+        progress.empty()
+        st.session_state.pop("pending_fiscal_documents", None)
+        st.rerun()
+
+    stats = st.session_state.get("document_link_stats") or {}
+    analysis = st.session_state.get("analysis")
+    cte_links = list(st.session_state.get("cte_links") or [])
+
+    if isinstance(analysis, pd.DataFrame) and not analysis.empty:
+        st.markdown("#### NF-e vinculadas")
+        nf_cols = [
+            col for col in [
+                "numero_nf",
+                "fornecedor_padrao",
+                "origem_dados",
+                "arquivo_original",
+                "status",
+            ]
+            if col in analysis.columns
+        ]
+        st.dataframe(
+            analysis[nf_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "numero_nf": "NF",
+                "fornecedor_padrao": st.column_config.TextColumn(
+                    "Fornecedor",
+                    width="large",
+                ),
+                "origem_dados": "Origem",
+                "arquivo_original": st.column_config.TextColumn(
+                    "Arquivo",
+                    width="large",
+                ),
+                "status": "Status",
+            },
+        )
+
+    if cte_links:
+        st.markdown("#### CT-e vinculados")
+        cte_view = pd.DataFrame([
+            {
+                "CT-e": item.get("numero_cte") or "",
+                "Origem": item.get("origem") or "XML",
+                "NFs vinculadas": ", ".join(
+                    item.get("linked_nf_numbers") or []
+                ),
+                "Arquivo": item.get("arquivo_original") or "",
+            }
+            for item in cte_links
+        ])
+        st.dataframe(
+            cte_view,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "CT-e": "CT-e",
+                "Origem": "Origem",
+                "NFs vinculadas": st.column_config.TextColumn(
+                    "NFs vinculadas",
+                    width="large",
+                ),
+                "Arquivo": st.column_config.TextColumn(
+                    "Arquivo",
+                    width="large",
+                ),
+            },
+        )
+
+    ignored_count = int(stats.get("ignorados") or 0)
+    if ignored_count:
+        st.caption(
+            f"{ignored_count} arquivo(s) sem vínculo com a base principal "
+            "foram desconsiderados automaticamente."
+        )
+
+    if st.session_state.get("cte_rejected"):
+        st.error(
+            f"{len(st.session_state.cte_rejected)} CT-e(s) vinculados à base "
+            "precisam de correção."
+        )
+
+
 def render_file_processing():
     st.markdown(
         '<div class="section-title">Processamento de arquivos</div>',
