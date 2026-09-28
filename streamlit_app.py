@@ -6839,11 +6839,19 @@ elif page == "Pendências":
             def _pending_treatment_label(row):
                 situacao = str(row.get("situacao_mrp") or "").strip().upper()
                 prioridade = str(row.get("prioridade") or "").strip().upper()
+                documento = str(
+                    row.get("validacao_documento") or ""
+                ).strip().upper()
+
                 if situacao not in {"OK", "IMPACTO MRP NÃO CARREGADO"}:
                     return "REVISAR VÍNCULO MRP"
+                if documento == "NF-E VINCULADA":
+                    if prioridade == "ALTA":
+                        return "PRIORIDADE / PRONTO"
+                    return "PRONTO PARA GERAÇÃO"
                 if prioridade == "ALTA":
                     return "PRIORIDADE MRP"
-                return "AGUARDANDO XML"
+                return "AGUARDANDO DOCUMENTO"
 
             pending_view["tratativa"] = pending_view.apply(
                 _pending_treatment_label,
