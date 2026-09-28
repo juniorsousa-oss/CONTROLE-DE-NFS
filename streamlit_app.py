@@ -4806,6 +4806,27 @@ def render_cte_linking_stage() -> None:
             hide_index=True,
         )
 
+        dacte_buffer = io.BytesIO()
+        with zipfile.ZipFile(
+            dacte_buffer,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as dacte_zip:
+            for item in links:
+                name = str(item.get("arquivo_final") or "").strip()
+                payload = item.get("bytes")
+                if name and payload:
+                    dacte_zip.writestr(name, payload)
+
+        st.download_button(
+            "BAIXAR DACTEs PARA CONFERÊNCIA",
+            dacte_buffer.getvalue(),
+            file_name=f"DACTEs_{now_local():%Y%m%d_%H%M%S}.zip",
+            mime="application/zip",
+            use_container_width=True,
+            key="download_dactes_preview",
+        )
+
     if rejected:
         st.error(
             f"{len(rejected)} CT-e(s) precisam de atenção antes da geração final."
