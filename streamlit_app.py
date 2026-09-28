@@ -6853,9 +6853,13 @@ elif page == "Pendências":
         else:
             send_cols = [x for x in [
                 "id",
+                "tipo_documento",
                 "pre_nota_em",
                 "numero_nf",
+                "numero_cte",
                 "fornecedor_padrao",
+                "transportadora",
+                "nfs_vinculadas",
                 "natureza",
                 "vencimento",
                 "prioridade_mrp",
@@ -6864,6 +6868,45 @@ elif page == "Pendências":
             ] if x in awaiting_send.columns]
 
             send_view = awaiting_send[send_cols].copy().reset_index(drop=True)
+            if "tipo_documento" not in send_view.columns:
+                send_view["tipo_documento"] = "NF-e"
+
+            send_view["tipo_documento"] = (
+                send_view["tipo_documento"]
+                .fillna("NF-e")
+                .astype(str)
+            )
+            is_cte_row = (
+                send_view["tipo_documento"]
+                .map(normalize_text)
+                .str.contains("CTE", na=False)
+            )
+
+            send_view["documento"] = send_view.apply(
+                lambda row: (
+                    str(row.get("numero_cte") or "").strip()
+                    if "CTE" in normalize_text(row.get("tipo_documento"))
+                    else normalized_nf(row.get("numero_nf"))
+                ),
+                axis=1,
+            )
+            send_view["parte"] = send_view.apply(
+                lambda row: (
+                    str(row.get("transportadora") or "").strip()
+                    if "CTE" in normalize_text(row.get("tipo_documento"))
+                    else str(row.get("fornecedor_padrao") or "").strip()
+                ),
+                axis=1,
+            )
+            send_view["vinculo"] = send_view.apply(
+                lambda row: (
+                    str(row.get("nfs_vinculadas") or "").strip()
+                    if "CTE" in normalize_text(row.get("tipo_documento"))
+                    else ""
+                ),
+                axis=1,
+            )
+
             if "pdf_criado_em" in send_view.columns:
                 send_view["pdf_criado_em"] = (
                     pd.to_datetime(
@@ -6879,13 +6922,48 @@ elif page == "Pendências":
                     send_view["pre_nota_em"],
                     errors="coerce",
                 )
-            select_all_send = st.checkbox(
+
+            sel1, sel2 = st.columns(2)
+            select_all_nf_send = sel1.checkbox(
                 "Selecionar todas as NFs",
                 value=False,
-                key="select_all_send",
-                help="Marca ou desmarca todas de uma vez. A seleção individual continua disponível.",
+                key="select_all_nf_send",
             )
-            send_view.insert(0, "Confirmar", bool(select_all_send))
+            select_all_cte_send = sel2.checkbox(
+                "Selecionar todos os CT-es",
+                value=False,
+                key="select_all_cte_send",
+            )
+
+            send_view.insert(
+                0,
+                "Confirmar",
+                [
+                    bool(select_all_cte_send)
+                    if is_cte
+                    else bool(select_all_nf_send)
+                    for is_cte in is_cte_row.tolist()
+                ],
+            )
+
+            display_send_cols = [
+                col for col in [
+                    "id",
+                    "Confirmar",
+                    "tipo_documento",
+                    "pre_nota_em",
+                    "documento",
+                    "parte",
+                    "vinculo",
+                    "natureza",
+                    "vencimento",
+                    "prioridade_mrp",
+                    "pdf_criado_em",
+                    "arquivo_final",
+                ]
+                if col in send_view.columns
+            ]
+            send_view = send_view[display_send_cols]
 
             operator_ready = bool(str(st.session_state.operator or "").strip())
             if not operator_ready:
@@ -6894,8 +6972,10 @@ elif page == "Pendências":
                 )
 
             editor_key = (
-                f"pre_notes_send_confirmation_"
-                f"{'all' if select_all_send else 'individual'}_{len(send_view)}"
+                "document_send_confirmation_"
+                f"{'nf' if select_all_nf_send else 'n'}_"
+                f"{'cte' if select_all_cte_send else 'c'}_"
+                f"{len(send_view)}"
             )
             with st.form("send_confirmation_form"):
                 send_editor = st.data_editor(
@@ -6905,21 +6985,30 @@ elif page == "Pendências":
                     disabled=[x for x in send_view.columns if x != "Confirmar"],
                     key=editor_key,
                     column_config={
-                        # ID permanece no DataFrame para a atualização no banco,
-                        # mas não faz parte da interface do usuário.
                         "id": None,
                         "Confirmar": st.column_config.CheckboxColumn(
                             "Confirmar",
-                            help="Marque somente após o envio efetivo da NF.",
+                            help="Marque os documentos efetivamente enviados.",
+                        ),
+                        "tipo_documento": st.column_config.TextColumn(
+                            "Tipo",
+                            width="small",
                         ),
                         "pre_nota_em": st.column_config.DateColumn(
                             "Data pré-nota",
                             format="DD/MM/YYYY",
                         ),
-                        "numero_nf": "NF",
-                        "fornecedor_padrao": st.column_config.TextColumn(
-                            "Fornecedor",
+                        "documento": st.column_config.TextColumn(
+                            "NF / CT-e",
+                            width="small",
+                        ),
+                        "parte": st.column_config.TextColumn(
+                            "Fornecedor / Transportadora",
                             width="large",
+                        ),
+                        "vinculo": st.column_config.TextColumn(
+                            "NFs vinculadas",
+                            width="medium",
                         ),
                         "natureza": st.column_config.TextColumn(
                             "Natureza",
@@ -6943,7 +7032,7 @@ elif page == "Pendências":
                     },
                 )
                 confirm_send = st.form_submit_button(
-                    "CONFIRMAR ENVIO DAS NFs SELECIONADAS",
+                    "CONFIRMAR ENVIO DOS DOCUMENTOS SELECIONADOS",
                     type="primary",
                     use_container_width=True,
                     disabled=not operator_ready,
@@ -6963,7 +7052,7 @@ elif page == "Pendências":
                 )
 
                 if not selected_send_ids:
-                    st.warning("Selecione pelo menos uma NF para confirmar o envio.")
+                    st.warning("Selecione pelo menos um documento para confirmar o envio.")
                 else:
                     try:
                         if SAVE_NF_HISTORY and db.configured():
@@ -6989,8 +7078,8 @@ elif page == "Pendências":
                             st.session_state.current_test_manifest = manifest
 
                         st.success(
-                            f"{updated_count} NF(s) confirmada(s) como enviada(s). "
-                            "Elas já estão disponíveis no Dashboard de finalizados."
+                            f"{updated_count} documento(s) confirmado(s) como enviado(s). "
+                            "Eles já estão disponíveis no Dashboard de finalizados."
                         )
                         st.rerun()
                     except Exception as exc:
