@@ -92,10 +92,13 @@ def _fmt_tax_id(value: str) -> str:
 
 
 def _fmt_money(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
     try:
-        number = float(str(value or "0").replace(",", "."))
+        number = float(raw.replace(",", "."))
     except Exception:
-        number = 0.0
+        return raw
     return f"{number:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
@@ -157,6 +160,10 @@ def _parse_cte(raw_xml: bytes) -> dict:
     vprest = root.find(f".//{CTE_NS}vPrest")
     imp = root.find(f".//{CTE_NS}imp")
     icms = root.find(f".//{CTE_NS}ICMS")
+    icms_node = None
+    if icms is not None:
+        children = list(icms)
+        icms_node = children[0] if children else icms
 
     key = str(inf_cte.attrib.get("Id") or "").strip()
     if key.upper().startswith("CTE"):
@@ -211,7 +218,24 @@ def _parse_cte(raw_xml: bytes) -> dict:
         "06": "MULTIMODAL",
     }.get(modal_code, modal_code)
 
-    toma = root.find(f".//{CTE_NS}toma3") or root.find(f".//{CTE_NS}toma4")
+    rem = _party(root.find(f".//{CTE_NS}rem"))
+    dest = _party(root.find(f".//{CTE_NS}dest"))
+    exped = _party(root.find(f".//{CTE_NS}exped"))
+    receb = _party(root.find(f".//{CTE_NS}receb"))
+
+    toma3 = root.find(f".//{CTE_NS}toma3")
+    toma4 = root.find(f".//{CTE_NS}toma4")
+    tomador = {}
+    if toma4 is not None:
+        tomador = _party(toma4)
+    elif toma3 is not None:
+        toma_code = _text(toma3, "toma")
+        tomador = {
+            "0": rem,
+            "1": exped,
+            "2": receb,
+            "3": dest,
+        }.get(toma_code, {})
 
     return {
         "numero": _text(ide, "nCT"),
@@ -227,28 +251,21 @@ def _parse_cte(raw_xml: bytes) -> dict:
         "inicio": f"{_text(ide, 'xMunIni')}/{_text(ide, 'UFIni')}".strip("/"),
         "fim": f"{_text(ide, 'xMunFim')}/{_text(ide, 'UFFim')}".strip("/"),
         "emit": _party(emit),
-        "rem": _party(root.find(f".//{CTE_NS}rem")),
-        "dest": _party(root.find(f".//{CTE_NS}dest")),
-        "exped": _party(root.find(f".//{CTE_NS}exped")),
-        "receb": _party(root.find(f".//{CTE_NS}receb")),
-        "tomador": _party(toma),
+        "rem": rem,
+        "dest": dest,
+        "exped": exped,
+        "receb": receb,
+        "tomador": tomador,
         "vprest": {
             "total": _text(vprest, "vTPrest"),
             "receber": _text(vprest, "vRec"),
             "componentes": components,
         },
         "imposto": {
-            "vbc": _text(icms, "vBC"),
-            "picms": _text(icms, "pICMS"),
-            "vicms": _text(icms, "vICMS"),
-            "cst": next(
-                (
-                    _text(child, "CST")
-                    for child in list(icms or [])
-                    if _text(child, "CST")
-                ),
-                _text(icms, "CST"),
-            ),
+            "vbc": _text(icms_node, "vBC"),
+            "picms": _text(icms_node, "pICMS"),
+            "vicms": _text(icms_node, "vICMS"),
+            "cst": _text(icms_node, "CST"),
             "vtotaltrib": _text(imp, "vTotTrib"),
         },
         "carga": {
