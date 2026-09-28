@@ -81,6 +81,21 @@ def danfe_file_name(meta) -> str:
     return _impl(meta)
 
 
+def extract_cte_metadata(raw_xml: bytes):
+    from cte_generator import extract_cte_metadata as _impl
+    return _impl(raw_xml)
+
+
+def generate_dacte_pdf(raw_xml: bytes) -> bytes:
+    from cte_generator import generate_dacte_pdf as _impl
+    return _impl(raw_xml)
+
+
+def cte_output_name(meta, linked_nf_numbers, supplier_name: str = "") -> str:
+    from cte_generator import cte_output_name as _impl
+    return _impl(meta, linked_nf_numbers, supplier_name)
+
+
 st.set_page_config(
     page_title="Controle de NFs | Setta",
     page_icon="📄",
@@ -146,6 +161,9 @@ def init():
         "prefilter_resolved": [],
         "prefilter_files": {},
         "prefilter_stats": {},
+        "cte_links": [],
+        "cte_rejected": [],
+        "cte_outputs": {},
         "base_analysis_ready": False,
         "base_analysis_at": None,
         "base_analysis_missing_mrp": pd.DataFrame(),
