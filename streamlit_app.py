@@ -164,6 +164,7 @@ def init():
         "cte_links": [],
         "cte_rejected": [],
         "cte_outputs": {},
+        "cte_ignored_count": 0,
         "base_analysis_ready": False,
         "base_analysis_at": None,
         "base_analysis_missing_mrp": pd.DataFrame(),
@@ -3354,8 +3355,8 @@ def render_nf_treatment_center() -> None:
 
     st.markdown("### Central de tratativas de NF")
     st.caption(
-        "Tudo que exigir decisão humana aparece aqui: arquivo sem correspondência, "
-        "divergência de XML/PDF, correção de dados, aprovação, geração e baixa."
+        "Aqui aparecem somente problemas de documentos já reconhecidos como pertencentes "
+        "às NFs válidas da base. Arquivos sobressalentes são ignorados automaticamente."
     )
 
     if rejected:
@@ -4373,6 +4374,7 @@ def render_xml_linking_stage() -> None:
 
     groups = {}
     rejected = []
+    ignored_xmls = 0
     file_store = dict(st.session_state.get("prefilter_files") or {})
 
     progress = st.progress(0, text="Vinculando XMLs...")
@@ -4394,21 +4396,10 @@ def render_xml_linking_stage() -> None:
             )
 
             if not match.get("matched"):
-                rejected.append({
-                    "file_id": file_id,
-                    "arquivo": xml_file.name,
-                    "tipo": "XML",
-                    "nf": normalized_nf(xml_data.get("numero_nf")),
-                    "fornecedor": str(
-                        xml_data.get("fornecedor_lido") or ""
-                    ),
-                    "motivo": str(
-                        match.get("situacao") or "SEM CORRESPONDÊNCIA"
-                    ),
-                    "aderencia_fornecedor": int(
-                        match.get("score_fornecedor") or 0
-                    ),
-                })
+                # A base define o universo de trabalho. XML que não pertence a
+                # uma Pré-nota válida é apenas sobressalente e não gera tratativa.
+                ignored_xmls += 1
+                file_store.pop(file_id, None)
             else:
                 pre_row = match["row"]
                 group_key = pending_document_group_key(pre_row)
@@ -4429,16 +4420,11 @@ def render_xml_linking_stage() -> None:
                         match.get("score_fornecedor") or 0
                     ),
                 })
-        except Exception as exc:
-            rejected.append({
-                "file_id": file_id,
-                "arquivo": xml_file.name,
-                "tipo": "XML",
-                "nf": "",
-                "fornecedor": "",
-                "motivo": f"XML inválido/não processável: {exc}",
-                "aderencia_fornecedor": 0,
-            })
+        except Exception:
+            # Sem identificação segura não existe vínculo com a base; portanto
+            # o arquivo é desconsiderado e não ocupa a fila de tratativas.
+            ignored_xmls += 1
+            file_store.pop(file_id, None)
 
         progress.progress(
             idx / max(1, len(xml_files)),
@@ -4447,27 +4433,18 @@ def render_xml_linking_stage() -> None:
 
     progress.empty()
 
-    # Uma única versão de XML por Pré-nota. Repetições vão para tratativa.
+    # Uma única versão de XML por Pré-nota. Repetições são sobressalentes:
+    # usa a melhor correspondência e descarta as demais sem gerar pendência.
     for group in groups.values():
         if len(group["xmls"]) > 1:
             group["xmls"].sort(
                 key=lambda item: item.get("score", 0),
                 reverse=True,
             )
-            for duplicate in group["xmls"][1:]:
-                rejected.append({
-                    "file_id": duplicate.get("file_id", ""),
-                    "arquivo": duplicate["name"],
-                    "tipo": "XML",
-                    "nf": normalized_nf(
-                        group["pre"].get("numero_nf")
-                    ),
-                    "fornecedor": pre_supplier_name(group["pre"]),
-                    "motivo": "XML DUPLICADO PARA A MESMA PRÉ-NOTA",
-                    "aderencia_fornecedor": int(
-                        duplicate.get("score") or 0
-                    ),
-                })
+            duplicates = group["xmls"][1:]
+            ignored_xmls += len(duplicates)
+            for duplicate in duplicates:
+                file_store.pop(str(duplicate.get("file_id") or ""), None)
             group["xmls"] = group["xmls"][:1]
 
     rows = []
@@ -4483,6 +4460,7 @@ def render_xml_linking_stage() -> None:
                 "file_id": str(source.get("file_id") or ""),
                 "arquivo": str(source.get("name") or "XML"),
                 "tipo": "PROCESSAMENTO",
+                "vinculado_base": True,
                 "nf": normalized_nf(
                     group["pre"].get("numero_nf")
                 ),
@@ -4531,7 +4509,8 @@ def render_xml_linking_stage() -> None:
     st.session_state.prefilter_stats = {
         "xml_enviados": len(xml_files),
         "notas_correspondentes": len(new_frame),
-        "excluidos": len(rejected),
+        "ignorados": ignored_xmls,
+        "erros_vinculados": len(rejected),
     }
 
     st.session_state.pop("pending_xml_link_files", None)
@@ -4904,6 +4883,7 @@ def render_file_processing():
         st.session_state.cte_links = []
         st.session_state.cte_rejected = []
         st.session_state.cte_outputs = {}
+        st.session_state.cte_ignored_count = 0
         st.session_state.current_test_manifest = []
         st.session_state.base_analysis_ready = False
         st.session_state.base_analysis_missing_mrp = pd.DataFrame()
