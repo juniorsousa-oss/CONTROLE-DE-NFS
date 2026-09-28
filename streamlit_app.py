@@ -2811,6 +2811,95 @@ def save_config_or_session(new_cfg: dict) -> tuple[bool, str]:
     return True, "Configuração salva no Supabase."
 
 
+def enrich_cte_records_with_nf_data(frame: pd.DataFrame) -> pd.DataFrame:
+    """Preenche a linha do CT-e com os dados operacionais da NF relacionada."""
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return frame
+
+    out = frame.copy()
+    if "tipo_documento" not in out.columns:
+        return out
+
+    type_norm = (
+        out["tipo_documento"]
+        .fillna("NF-e")
+        .astype(str)
+        .map(normalize_text)
+    )
+    nf_rows = out[~type_norm.str.contains("CTE", na=False)].copy()
+    cte_indexes = out.index[type_norm.str.contains("CTE", na=False)].tolist()
+
+    if nf_rows.empty or not cte_indexes:
+        return out
+
+    nf_number_series = (
+        nf_rows.get("numero_nf", pd.Series("", index=nf_rows.index))
+        .fillna("")
+        .astype(str)
+        .map(normalized_nf)
+    )
+
+    inherit_cols = [
+        "pre_nota_em",
+        "cnpj_fornecedor",
+        "fornecedor_padrao",
+        "natureza",
+        "vencimento",
+        "pre_nota_status",
+        "metodo_fornecedor",
+        "confianca",
+        "empresa_sigla",
+        "recebedor",
+        "cr",
+        "desc_cr",
+        "data_chegada",
+    ]
+
+    for idx in cte_indexes:
+        refs = [
+            normalized_nf(value)
+            for value in re.split(
+                r"[,;|]+",
+                str(out.at[idx, "nfs_vinculadas"] if "nfs_vinculadas" in out.columns else ""),
+            )
+            if normalized_nf(value)
+        ]
+        if not refs:
+            continue
+
+        candidates = nf_rows[nf_number_series.isin(refs)].copy()
+        if candidates.empty:
+            continue
+
+        if "lote_id" in out.columns and "lote_id" in candidates.columns:
+            lote = str(out.at[idx, "lote_id"] or "").strip()
+            same_lote = candidates[
+                candidates["lote_id"].fillna("").astype(str).eq(lote)
+            ]
+            if not same_lote.empty:
+                candidates = same_lote
+
+        ref = candidates.iloc[0]
+        out.at[idx, "numero_nf"] = ", ".join(dict.fromkeys(refs))
+
+        for col in inherit_cols:
+            if col in out.columns and col in ref.index:
+                out.at[idx, col] = ref.get(col)
+
+        if "prioridade_mrp" in out.columns:
+            out.at[idx, "prioridade_mrp"] = bool(
+                candidates.get(
+                    "prioridade_mrp",
+                    pd.Series(False, index=candidates.index),
+                )
+                .fillna(False)
+                .astype(bool)
+                .any()
+            )
+
+    return out
+
+
 def current_process_records_for_tests() -> pd.DataFrame:
     """Retorna somente processamentos que concluíram o fluxo operacional."""
     if not SAVE_NF_HISTORY:
