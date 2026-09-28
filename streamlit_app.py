@@ -2478,25 +2478,82 @@ def make_zip_outputs(df: pd.DataFrame):
     batch = f"NF-{now_local():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:5].upper()}"
     operator = str(st.session_state.operator or "").strip()
     processed_at = now_local().isoformat(timespec="seconds")
-    grouped = df.groupby([df["natureza"].fillna("").astype(str).str.upper().str.strip(), df["prioridade_mrp"].fillna(False).astype(bool)], dropna=False)
-    for (nature, priority), group in grouped:
-        if not nature:
-            raise ValueError("Existe documento sem natureza interna.")
+    date_label = now_local().strftime("%d.%m")
+
+    work = df.copy()
+    work["empresa_sigla"] = (
+        work.get("empresa_sigla", pd.Series("", index=work.index))
+        .fillna("")
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
+    work["pacote"] = work["natureza"].map(nf_package_class)
+
+    invalid_company = work[
+        ~work["empresa_sigla"].isin({"SEN", "SEE", "STA"})
+    ].copy()
+    if not invalid_company.empty:
+        nfs = ", ".join(
+            invalid_company["numero_nf"]
+            .fillna("")
+            .astype(str)
+            .tolist()
+        )
+        raise ValueError(
+            "Não foi possível identificar a empresa destinatária "
+            f"(SEN/SEE/STA) para: {nfs}."
+        )
+
+    # NF-e: um ZIP por empresa e classe MP/UC.
+    for (company, package), group in work.groupby(
+        ["empresa_sigla", "pacote"],
+        dropna=False,
+        sort=True,
+    ):
         buffer = io.BytesIO()
-        used = set()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        used_paths = set()
+
+        with zipfile.ZipFile(
+            buffer,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as archive:
+            if package == "MP":
+                # Mantém a estrutura fixa solicitada, mesmo que uma pasta fique vazia.
+                archive.writestr("URGENTES/", b"")
+                archive.writestr("NORMAIS/", b"")
+
             for _, row in group.iterrows():
                 item = st.session_state.pdfs.get(str(row.file_id))
                 final_name = str(row.nome_sugerido or "").strip()
-                if not item:
-                    raise ValueError(f"PDF original indisponível: {row.arquivo_original}")
-                if not final_name or final_name in used:
-                    raise ValueError(f"Nome final vazio ou duplicado: {final_name}")
-                used.add(final_name)
+                nature = str(row.get("natureza") or "").strip().upper()
 
-                # Controle interno SETTA: o carimbo é aplicado no quadro
-                # RESERVADO AO FISCO. Se o PDF já estiver carimbado, a função
-                # detecta o texto do componente e não cria uma segunda cópia.
+                if not item:
+                    raise ValueError(
+                        f"PDF original indisponível: {row.arquivo_original}"
+                    )
+                if not final_name:
+                    raise ValueError(
+                        f"Nome final vazio para a NF {row.numero_nf}."
+                    )
+
+                if package == "MP":
+                    folder = (
+                        "URGENTES"
+                        if bool(row.get("prioridade_mrp"))
+                        else "NORMAIS"
+                    )
+                    archive_path = f"{folder}/{final_name}"
+                else:
+                    archive_path = final_name
+
+                if archive_path in used_paths:
+                    raise ValueError(
+                        f"Nome final duplicado no pacote: {archive_path}"
+                    )
+                used_paths.add(archive_path)
+
                 data_chegada = (
                     normalized_business_date(row.get("pre_nota_em"))
                     or normalized_business_date(row.get("pre_nota_data"))
@@ -2522,10 +2579,14 @@ def make_zip_outputs(df: pd.DataFrame):
                     stamp_applied = True
                 except Exception as exc:
                     raise ValueError(
-                        f"Falha ao aplicar o controle interno na NF {row.numero_nf}: {exc}"
+                        f"Falha ao aplicar o controle interno na NF "
+                        f"{row.numero_nf}: {exc}"
                     ) from exc
 
-                archive.writestr(final_name, final_pdf_bytes)
+                archive.writestr(
+                    archive_path,
+                    final_pdf_bytes,
+                )
 
                 manifest.append(
                     {
@@ -2538,12 +2599,24 @@ def make_zip_outputs(df: pd.DataFrame):
                         "chave_nfe": str(row.chave_nfe),
                         "cnpj_fornecedor": str(row.cnpj_fornecedor),
                         "fornecedor_padrao": str(row.fornecedor_padrao),
-                        "vencimento": row.vencimento.isoformat() if isinstance(row.vencimento, date) else None,
+                        "vencimento": (
+                            row.vencimento.isoformat()
+                            if isinstance(row.vencimento, date)
+                            else None
+                        ),
                         "natureza": nature,
-                        "prioridade_mrp": bool(priority),
-                        "pre_nota_status": str(row.get("pre_nota_status") or ""),
-                        "pre_nota_em": str(row.get("pre_nota_em") or "") or None,
-                        "metodo_fornecedor": str(row.metodo_fornecedor),
+                        "prioridade_mrp": bool(
+                            row.get("prioridade_mrp")
+                        ),
+                        "pre_nota_status": str(
+                            row.get("pre_nota_status") or ""
+                        ),
+                        "pre_nota_em": (
+                            str(row.get("pre_nota_em") or "") or None
+                        ),
+                        "metodo_fornecedor": str(
+                            row.metodo_fornecedor
+                        ),
                         "confianca": int(row.confianca),
                         "status": "REALIZADO",
                         "operador": operator or None,
@@ -2553,40 +2626,91 @@ def make_zip_outputs(df: pd.DataFrame):
                         "cr": cr or None,
                         "desc_cr": desc_cr or None,
                         "recebedor": recebedor or None,
-                        "origem_dados": str(row.get("origem_dados") or "").strip() or None,
-                        "data_chegada": data_chegada.isoformat() if data_chegada else None,
+                        "origem_dados": (
+                            str(row.get("origem_dados") or "").strip()
+                            or None
+                        ),
+                        "data_chegada": (
+                            data_chegada.isoformat()
+                            if data_chegada
+                            else None
+                        ),
                         "carimbo_aplicado": stamp_applied,
                     }
                 )
 
-            # Inclui os DACTEs vinculados a qualquer NF deste grupo no mesmo ZIP.
-            group_file_ids = {
-                str(value)
-                for value in group.get("file_id", pd.Series(dtype=str)).tolist()
-                if str(value).strip()
-            }
-            for cte in st.session_state.get("cte_links") or []:
-                linked_ids = {
-                    str(value)
-                    for value in (cte.get("linked_file_ids") or [])
-                    if str(value).strip()
-                }
-                if not (group_file_ids & linked_ids):
-                    continue
+        zip_name = (
+            f"NF´s - {date_label} - {package} - {company}.zip"
+        )
+        outputs[zip_name] = buffer.getvalue()
 
-                cte_name = str(cte.get("arquivo_final") or "").strip()
+    # CT-e: um único ZIP por empresa, independentemente de MP/UC/prioridade.
+    file_company = {
+        str(row.get("file_id") or ""): str(
+            row.get("empresa_sigla") or ""
+        ).upper().strip()
+        for _, row in work.iterrows()
+        if str(row.get("file_id") or "").strip()
+    }
+
+    ctes_by_company: dict[str, list[dict]] = {
+        "SEN": [],
+        "SEE": [],
+        "STA": [],
+    }
+
+    for cte in st.session_state.get("cte_links") or []:
+        linked_ids = {
+            str(value)
+            for value in (cte.get("linked_file_ids") or [])
+            if str(value).strip()
+        }
+        companies = {
+            file_company.get(file_id, "")
+            for file_id in linked_ids
+        }
+        companies = {
+            company
+            for company in companies
+            if company in {"SEN", "SEE", "STA"}
+        }
+
+        for company in companies:
+            ctes_by_company[company].append(cte)
+
+    for company, ctes in ctes_by_company.items():
+        if not ctes:
+            continue
+
+        buffer = io.BytesIO()
+        used = set()
+        with zipfile.ZipFile(
+            buffer,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as archive:
+            for cte in ctes:
+                cte_name = str(
+                    cte.get("arquivo_final")
+                    or cte.get("arquivo_original")
+                    or ""
+                ).strip()
                 cte_bytes = cte.get("bytes")
+
                 if not cte_name or not cte_bytes:
                     raise ValueError(
-                        f"CT-e {cte.get('numero_cte') or ''} vinculado sem DACTE disponível."
+                        f"CT-e {cte.get('numero_cte') or ''} "
+                        "vinculado sem arquivo disponível."
                     )
+
                 if cte_name in used:
                     continue
                 used.add(cte_name)
                 archive.writestr(cte_name, cte_bytes)
-        suffix = " - PRIORIDADE" if priority else ""
-        zip_name = f"{now_local():%d-%m-%Y} - NOTAS FISCAIS - {nature}{suffix}.zip"
+
+        zip_name = f"CTE´s - {date_label} - {company}.zip"
         outputs[zip_name] = buffer.getvalue()
+
     return outputs, manifest
 
 
