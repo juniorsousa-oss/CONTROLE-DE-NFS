@@ -4881,6 +4881,9 @@ def render_file_processing():
         st.session_state.prefilter_resolved = []
         st.session_state.prefilter_files = {}
         st.session_state.prefilter_stats = {}
+        st.session_state.cte_links = []
+        st.session_state.cte_rejected = []
+        st.session_state.cte_outputs = {}
         st.session_state.current_test_manifest = []
         st.session_state.base_analysis_ready = False
         st.session_state.base_analysis_missing_mrp = pd.DataFrame()
