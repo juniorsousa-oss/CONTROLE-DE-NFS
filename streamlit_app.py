@@ -4521,8 +4521,8 @@ def render_cte_linking_stage() -> None:
     st.markdown("### CT-e")
     st.caption(
         "Adicione os XMLs de CT-e depois que as NF-e já estiverem vinculadas. "
-        "O sistema usa as chaves de NF-e referenciadas no CT-e para fazer o vínculo "
-        "e gera o DACTE automaticamente."
+        "Somente CT-es que referenciem NFs do lote válido entram no fluxo; "
+        "arquivos sobressalentes são ignorados automaticamente."
     )
 
     analysis = st.session_state.get("analysis")
@@ -4552,92 +4552,47 @@ def render_cte_linking_stage() -> None:
         }
         rejected = []
         generated = {}
-        pending_pre = current_pending_pre_notes()
+        ignored_ctes = 0
 
         for cte_file in cte_files:
+            raw = cte_file.getvalue()
+
+            # Se o XML nem sequer puder ser identificado como CT-e, ele não faz
+            # parte do universo definido pela base e é descartado silenciosamente.
             try:
-                raw = cte_file.getvalue()
                 meta = extract_cte_metadata(raw)
+            except Exception:
+                ignored_ctes += 1
+                continue
 
-                if meta.status_codigo and meta.status_codigo != "100":
-                    raise ValueError(
-                        f"CT-e {meta.numero} não autorizado: "
-                        f"{meta.status_codigo} - {meta.status_motivo}"
+            if meta.chave and meta.chave in existing_keys:
+                ignored_ctes += 1
+                continue
+
+            refs = [digits_only(value) for value in (meta.refs_nfe or [])]
+            refs = [value for value in refs if len(value) == 44]
+            if not refs:
+                ignored_ctes += 1
+                continue
+
+            linked_rows = []
+
+            for ref_key in refs:
+                row_match = pd.DataFrame()
+
+                # Primeiro tenta a chave exata da NF-e.
+                if "chave_nfe" in analysis.columns:
+                    key_series = (
+                        analysis["chave_nfe"]
+                        .fillna("")
+                        .astype(str)
+                        .map(digits_only)
                     )
+                    row_match = analysis[key_series.eq(ref_key)].copy()
 
-                if meta.chave and meta.chave in existing_keys:
-                    # Reenvio do mesmo CT-e não cria uma pendência falsa.
-                    continue
-
-                refs = [digits_only(value) for value in (meta.refs_nfe or [])]
-                refs = [value for value in refs if len(value) == 44]
-                if not refs:
-                    raise ValueError(
-                        "O CT-e não possui chave de NF-e referenciada compatível com este fluxo."
-                    )
-
-                linked_rows = []
-                missing_refs = []
-
-                for ref_key in refs:
-                    row_match = pd.DataFrame()
-
-                    if "chave_nfe" in analysis.columns:
-                        key_series = (
-                            analysis["chave_nfe"]
-                            .fillna("")
-                            .astype(str)
-                            .map(digits_only)
-                        )
-                        row_match = analysis[key_series.eq(ref_key)].copy()
-
-                    if row_match.empty:
-                        nf_number = ""
-                        supplier_cnpj = ""
-                        if len(ref_key) == 44:
-                            raw_nf = ref_key[25:34]
-                            nf_number = (
-                                str(int(raw_nf))
-                                if raw_nf.isdigit()
-                                else raw_nf
-                            )
-                            supplier_cnpj = ref_key[6:20]
-
-                        candidates = analysis[
-                            analysis.get(
-                                "numero_nf",
-                                pd.Series("", index=analysis.index),
-                            )
-                            .fillna("")
-                            .astype(str)
-                            .map(normalized_nf)
-                            .eq(normalized_nf(nf_number))
-                        ].copy()
-
-                        if (
-                            not candidates.empty
-                            and supplier_cnpj
-                            and "cnpj_fornecedor" in candidates.columns
-                        ):
-                            cnpj_series = (
-                                candidates["cnpj_fornecedor"]
-                                .fillna("")
-                                .astype(str)
-                                .map(digits_only)
-                            )
-                            exact_supplier = candidates[
-                                cnpj_series.eq(supplier_cnpj)
-                            ].copy()
-                            if not exact_supplier.empty:
-                                candidates = exact_supplier
-
-                        if len(candidates) == 1:
-                            row_match = candidates
-
-                    if len(row_match) == 1:
-                        linked_rows.append(row_match.iloc[0].to_dict())
-                        continue
-
+                # Compatibilidade para documentos em que a chave completa não
+                # esteja disponível no DataFrame: NF + CNPJ do emitente.
+                if row_match.empty:
                     nf_number = ""
                     supplier_cnpj = ""
                     if len(ref_key) == 44:
@@ -4649,61 +4604,60 @@ def render_cte_linking_stage() -> None:
                         )
                         supplier_cnpj = ref_key[6:20]
 
-                    pending_match = pd.DataFrame()
+                    candidates = analysis[
+                        analysis.get(
+                            "numero_nf",
+                            pd.Series("", index=analysis.index),
+                        )
+                        .fillna("")
+                        .astype(str)
+                        .map(normalized_nf)
+                        .eq(normalized_nf(nf_number))
+                    ].copy()
+
                     if (
-                        isinstance(pending_pre, pd.DataFrame)
-                        and not pending_pre.empty
+                        not candidates.empty
+                        and supplier_cnpj
+                        and "cnpj_fornecedor" in candidates.columns
                     ):
-                        pending_match = pending_pre[
-                            pending_pre.get(
-                                "numero_nf",
-                                pd.Series("", index=pending_pre.index),
-                            )
+                        cnpj_series = (
+                            candidates["cnpj_fornecedor"]
                             .fillna("")
                             .astype(str)
-                            .map(normalized_nf)
-                            .eq(normalized_nf(nf_number))
+                            .map(digits_only)
+                        )
+                        exact_supplier = candidates[
+                            cnpj_series.eq(supplier_cnpj)
                         ].copy()
-                        if (
-                            not pending_match.empty
-                            and supplier_cnpj
-                            and "cnpj" in pending_match.columns
-                        ):
-                            pending_cnpj = (
-                                pending_match["cnpj"]
-                                .fillna("")
-                                .astype(str)
-                                .map(digits_only)
-                            )
-                            pending_match = pending_match[
-                                pending_cnpj.eq(supplier_cnpj)
-                            ].copy()
+                        if not exact_supplier.empty:
+                            candidates = exact_supplier
 
-                    if not pending_match.empty:
-                        reason = (
-                            f"NF {nf_number} consta nas Pré-notas pendentes, "
-                            "mas ainda não possui XML de NF-e vinculado."
-                        )
-                    else:
-                        reason = (
-                            f"NF {nf_number or ref_key} referenciada pelo CT-e "
-                            "não foi localizada no lote atual."
-                        )
-                    missing_refs.append(reason)
+                    if len(candidates) == 1:
+                        row_match = candidates
 
-                if missing_refs:
-                    raise ValueError(" | ".join(missing_refs))
+                if len(row_match) == 1:
+                    linked_rows.append(row_match.iloc[0].to_dict())
+                # Referências a NFs fora do lote são simplesmente ignoradas.
 
-                unique_rows = {}
-                for row in linked_rows:
-                    row_id = str(row.get("file_id") or "")
-                    if row_id:
-                        unique_rows[row_id] = row
-                linked_rows = list(unique_rows.values())
+            unique_rows = {}
+            for row in linked_rows:
+                row_id = str(row.get("file_id") or "")
+                if row_id:
+                    unique_rows[row_id] = row
+            linked_rows = list(unique_rows.values())
 
-                if not linked_rows:
+            # CT-e totalmente fora do universo da carga: sobressalente.
+            if not linked_rows:
+                ignored_ctes += 1
+                continue
+
+            # A partir daqui o CT-e pertence ao lote. Qualquer erro real passa
+            # a ser tratado porque afeta uma NF válida da base.
+            try:
+                if meta.status_codigo and meta.status_codigo != "100":
                     raise ValueError(
-                        "Nenhuma NF-e do CT-e pôde ser vinculada ao lote."
+                        f"CT-e {meta.numero} não autorizado: "
+                        f"{meta.status_codigo} - {meta.status_motivo}"
                     )
 
                 dacte_bytes = generate_dacte_pdf(raw)
@@ -4761,11 +4715,13 @@ def render_cte_linking_stage() -> None:
         st.session_state.cte_links = links
         st.session_state.cte_outputs.update(generated)
         st.session_state.cte_rejected = rejected
+        st.session_state.cte_ignored_count = ignored_ctes
         st.session_state.pop("pending_cte_xml_files", None)
         st.rerun()
 
     links = list(st.session_state.get("cte_links") or [])
     rejected = list(st.session_state.get("cte_rejected") or [])
+    ignored_ctes = int(st.session_state.get("cte_ignored_count") or 0)
 
     if links:
         view = pd.DataFrame([
@@ -4805,9 +4761,14 @@ def render_cte_linking_stage() -> None:
             key="download_dactes_preview",
         )
 
+    if ignored_ctes:
+        st.caption(
+            f"{ignored_ctes} CT-e(s) sobressalente(s) foram ignorados automaticamente."
+        )
+
     if rejected:
         st.error(
-            f"{len(rejected)} CT-e(s) precisam de atenção antes da geração final."
+            f"{len(rejected)} CT-e(s) vinculados ao lote precisam de atenção antes da geração final."
         )
         st.dataframe(
             pd.DataFrame(rejected),
@@ -4822,7 +4783,6 @@ def render_cte_linking_stage() -> None:
                 ),
             },
         )
-
 
 
 def render_file_processing():
