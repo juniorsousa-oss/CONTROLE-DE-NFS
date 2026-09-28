@@ -5654,6 +5654,8 @@ elif page == "Pendências":
         st.divider()
         render_xml_linking_stage()
         st.divider()
+        render_cte_linking_stage()
+        st.divider()
         render_nf_treatment_center()
         st.divider()
 
