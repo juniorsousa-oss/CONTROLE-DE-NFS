@@ -3995,38 +3995,13 @@ def render_file_processing():
                 "e pelo menos um XML ou PDF."
             )
 
-        p1, p2 = st.columns([5, 1])
-        analyze = p1.button(
+        analyze = st.button(
             "PROCESSAR TODA A ALIMENTAÇÃO",
             type="primary",
             use_container_width=True,
             disabled=not required_ready,
             key="process_all_feed",
         )
-        clear_feed = p2.button(
-            "Limpar",
-            use_container_width=True,
-            key="clear_unified_feed",
-        )
-
-        if clear_feed:
-            st.session_state.analysis = pd.DataFrame()
-            st.session_state.pdfs = {}
-            st.session_state.zip_outputs = {}
-            st.session_state.prefilter_rejected = []
-            st.session_state.prefilter_resolved = []
-            st.session_state.prefilter_files = {}
-            st.session_state.prefilter_stats = {}
-            st.session_state.current_test_manifest = []
-            for _feed_key in (
-                "unified_pre_file",
-                "unified_material_file",
-                "unified_nf_file",
-                "unified_supplier_file",
-                "unified_nf_documents",
-            ):
-                st.session_state.pop(_feed_key, None)
-            st.rerun()
 
         if analyze:
             st.session_state.current_test_manifest = []
@@ -4542,12 +4517,6 @@ def render_file_processing():
                 "Continue em Pré-notas pendentes."
             )
 
-        prefilter_stats = st.session_state.get("prefilter_stats") or {}
-        if prefilter_stats:
-            st.info(
-                "Carga concluída. As validações, correções, decisões de incluir/não incluir "
-                "e a baixa ficam concentradas em Pré-notas pendentes."
-            )
 
 
     with tab_danfe:
