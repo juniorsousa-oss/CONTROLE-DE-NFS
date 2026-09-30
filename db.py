@@ -260,6 +260,39 @@ def mark_sent(ids: Iterable[str], operator: str = "") -> dict:
     return rpc("nf_marcar_enviados", {"p_ids": ids, "p_operador": operator or None}, timeout=45) or {}
 
 
+def reconcile_launches(
+    launched_ids: Iterable[str],
+    checked_ids: Iterable[str],
+) -> dict:
+    launched_ids = [str(x) for x in launched_ids if str(x).strip()]
+    checked_ids = [str(x) for x in checked_ids if str(x).strip()]
+    if not checked_ids and not launched_ids:
+        return {"lancados": 0, "verificados": 0}
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    return rpc(
+        "nf_conciliar_lancamentos",
+        {
+            "p_lancados": launched_ids,
+            "p_verificados": checked_ids,
+        },
+        timeout=60,
+    ) or {}
+
+
+def delete_process_records(ids: Iterable[str]) -> dict:
+    ids = [str(x) for x in ids if str(x).strip()]
+    if not ids:
+        return {"excluidos": 0}
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    return rpc(
+        "nf_excluir_processamentos",
+        {"p_ids": ids},
+        timeout=60,
+    ) or {}
+
+
 def replace_pre_notes(rows: Iterable[dict], file_name: str) -> dict:
     rows = list(rows)
     if not configured():
