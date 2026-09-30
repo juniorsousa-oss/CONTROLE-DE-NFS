@@ -2447,12 +2447,23 @@ def match_document_to_pre_note(
     best = candidates.iloc[0]
     best_score = int(best["_score_supplier"])
 
-    # Se existe uma única NF com esse número no universo válido e a base não
-    # dispõe de CNPJ para confrontar (situação comum de inclusão via MRP),
-    # o número da NF é suficiente para o vínculo. A base é a autoridade do fluxo.
+    # Para NF única, o número continua sendo a chave principal. Quando o
+    # CNPJ lido do PDF divergir, um fornecedor fortemente aderente pode validar
+    # o vínculo e evita perder a NF por uma leitura incorreta do documento.
     if len(candidates) == 1:
         candidate_cnpj = digits_only(best.get("cnpj"))
         if doc_cnpj and candidate_cnpj and doc_cnpj != candidate_cnpj:
+            if best_score >= 88:
+                result.update(
+                    matched=True,
+                    situacao=(
+                        "OK - NF ÚNICA / FORNECEDOR CONFIRMADO "
+                        "(CNPJ LIDO DIVERGENTE)"
+                    ),
+                    score_fornecedor=best_score,
+                    row=best.to_dict(),
+                )
+                return result
             result["situacao"] = "CNPJ DIVERGENTE"
             result["score_fornecedor"] = best_score
             return result
