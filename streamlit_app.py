@@ -1522,7 +1522,7 @@ def _clean_mrp_materials_api_snapshot(
     return cleaned, stats
 
 
-@st.cache_data(ttl=20, show_spinner=False, max_entries=4)
+@st.cache_data(ttl=5, show_spinner=False, max_entries=4)
 def _load_materials_api_current_cached() -> dict:
     if not db.configured():
         return {}
