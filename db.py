@@ -261,6 +261,21 @@ def load_materials_api_current() -> dict:
     ) or {}
 
 
+def force_materials_api_sync() -> dict:
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    response = requests.post(
+        f"{supabase_url()}/functions/v1/nf-materiais-api/sync",
+        headers=_headers(),
+        json={},
+        timeout=60,
+    )
+    _raise(response)
+    if not response.text.strip():
+        return {}
+    return response.json() or {}
+
+
 def list_mrp_imports(limit: int = 100) -> list[dict]:
     if not configured():
         return []
