@@ -292,11 +292,6 @@ def _cached_materials_api_status() -> dict:
     return db.load_materials_api_status() if db.configured() else {}
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _cached_active_users() -> list[dict]:
-    return db.list_users(active_only=True) if db.configured() else []
-
-
 @st.cache_data(ttl=30, show_spinner=False)
 def _cached_db_excluded_documents() -> list[dict]:
     return db.list_excluded_documents() if db.configured() else []
@@ -333,13 +328,6 @@ def _invalidate_mrp_cache() -> None:
 def _invalidate_materials_status_cache() -> None:
     try:
         _cached_materials_api_status.clear()
-    except Exception:
-        pass
-
-
-def _invalidate_users_cache() -> None:
-    try:
-        _cached_active_users.clear()
     except Exception:
         pass
 
@@ -3699,7 +3687,7 @@ def make_zip_outputs(df: pd.DataFrame):
                             ),
                             "empresa_sigla": company,
                             "status": "REALIZADO",
-                            "operador": operator or None,
+                            "operador": None,
                             "recebido_em": processed_at,
                             "pdf_criado_em": processed_at,
                             "processado_em": processed_at,
@@ -8453,7 +8441,6 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
                 "CONFIRMAR ENVIO DOS SELECIONADOS",
                 type="primary",
                 use_container_width=True,
-                disabled=not operator_ready,
             )
             save_receipt_dates = sb2.form_submit_button(
                 "SALVAR DATAS DE RECEBIMENTO",
@@ -8605,7 +8592,7 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
                     if SAVE_NF_HISTORY and db.configured():
                         result = db.mark_sent(
                             selected_send_ids,
-                            st.session_state.operator,
+                            "",
                         )
                         _invalidate_process_cache()
                         updated_count = int(
