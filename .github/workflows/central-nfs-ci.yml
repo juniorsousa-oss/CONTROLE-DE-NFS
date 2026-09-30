@@ -31,7 +31,7 @@ jobs:
           assert '"mes_pre_notas"' in app
           assert '"nf"' in app
           assert 'CONTINGÊNCIA MANUAL' in app
-          assert '04 · FONTES' in app
+          assert '01 · FONTES' in app
           assert 'consumer_sync_status' in central
           assert 'visual_get' in central
           print("CENTRAL_NFS_OK")
