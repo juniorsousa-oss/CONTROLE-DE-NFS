@@ -4732,7 +4732,7 @@ def render_nf_treatment_center() -> None:
     if rejected:
         st.markdown("#### ARQUIVOS QUE EXIGEM DECISÃO")
         st.warning(
-            f"{len(rejected)} arquivo(s) precisam ser avaliados antes de encerrar a carga."
+            f"{len(rejected)} ARQUIVO(S) EXIGEM DECISÃO."
         )
 
         pending_pre = current_pending_pre_notes()
@@ -5138,8 +5138,7 @@ def render_nf_treatment_center() -> None:
         else:
             st.markdown("### TRATATIVAS NECESSÁRIAS")
             st.warning(
-                f"{len(pending)} documento(s) precisam de tratativa. "
-                "Corrija somente os campos necessários abaixo e clique em **Aplicar correções**."
+                f"{len(pending)} DOCUMENTO(S) EXIGEM TRATATIVA."
             )
 
             treatment_cols = [
@@ -5518,15 +5517,16 @@ def _refresh_missing_mrp_analysis() -> pd.DataFrame:
 
 
 def render_mrp_missing_pre_treatments() -> None:
-    if not st.session_state.get("base_analysis_ready"):
-        return
-
-    missing = _refresh_missing_mrp_analysis()
-
     section_band(
         "02 · CONFERÊNCIA",
         "MRP × PRÉ-NOTAS",
     )
+
+    if not st.session_state.get("base_analysis_ready"):
+        empty_state("AGUARDANDO ANÁLISE DOS RELATÓRIOS")
+        return
+
+    missing = _refresh_missing_mrp_analysis()
     if missing.empty:
         empty_state("SEM DIVERGÊNCIAS ENTRE MRP E PRÉ-NOTAS")
         return
@@ -5554,7 +5554,7 @@ def render_mrp_missing_pre_treatments() -> None:
     if "recebedor" not in view.columns:
         view["recebedor"] = ""
     base_missing_select_all = st.checkbox(
-        "Marcar / desmarcar todas as NFs pendentes desta conferência",
+        "MARCAR / DESMARCAR TODAS AS NFs",
         value=True,
         key="base_missing_mrp_select_all",
     )
@@ -5575,9 +5575,9 @@ def render_mrp_missing_pre_treatments() -> None:
         key="base_missing_mrp_editor",
         column_config={
             "_mrp_key": None,
-            "Selecionar": st.column_config.CheckboxColumn("Selecionar"),
+            "Selecionar": st.column_config.CheckboxColumn("SELECIONAR"),
             "data_pre_nota": st.column_config.DateColumn(
-                "Data",
+                "DATA",
                 format="DD/MM/YYYY",
             ),
             "numero_nf": "NF",
@@ -5591,13 +5591,13 @@ def render_mrp_missing_pre_treatments() -> None:
                 width="medium",
                 help="Obrigatório para adicionar a NF ao fluxo.",
             ),
-            "prioridade": "Prioridade",
+            "prioridade": "PRIORIDADE",
             "data_cm": st.column_config.DateColumn(
                 "DATA CM",
                 format="DD/MM/YYYY",
             ),
             "situacao_vinculo": st.column_config.TextColumn(
-                "Situação",
+                "SITUAÇÃO",
                 width="large",
             ),
             "score_fornecedor": st.column_config.NumberColumn(
@@ -5612,7 +5612,7 @@ def render_mrp_missing_pre_treatments() -> None:
     ].copy()
 
     action = st.selectbox(
-        "Tratativa para as NFs selecionadas",
+        "TRATATIVA",
         [
             "Escolha uma ação",
             "Adicionar às Pré-notas pendentes",
