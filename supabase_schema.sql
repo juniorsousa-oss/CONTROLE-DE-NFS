@@ -1385,3 +1385,165 @@ $$;
 
 revoke all on function public.nf_fornecedores_snapshot() from public;
 grant execute on function public.nf_fornecedores_snapshot() to anon, authenticated;
+
+
+-- EVOLUCAO V10 - DESCONSIDERACAO PERSISTENTE E REINICIO SEGURO DE FLUXO
+create table if not exists public.nf_documentos_desconsiderados (
+  numero_nf text primary key,
+  ativo boolean not null default true,
+  motivo text,
+  origem text,
+  operador text,
+  criado_em timestamptz not null default now(),
+  atualizado_em timestamptz not null default now()
+);
+
+create index if not exists nf_documentos_desconsiderados_ativo_idx
+  on public.nf_documentos_desconsiderados(ativo);
+
+alter table public.nf_documentos_desconsiderados enable row level security;
+
+create or replace function public.nf_listar_desconsiderados()
+returns jsonb
+language sql
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    jsonb_agg(to_jsonb(t) order by t.atualizado_em desc),
+    '[]'::jsonb
+  )
+  from public.nf_documentos_desconsiderados t
+  where t.ativo = true;
+$$;
+
+create or replace function public.nf_desconsiderar_documentos(
+  p_numeros text[],
+  p_motivo text default null,
+  p_origem text default null,
+  p_operador text default null
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  insert into public.nf_documentos_desconsiderados(
+    numero_nf, ativo, motivo, origem, operador, criado_em, atualizado_em
+  )
+  select
+    regexp_replace(n, '[^0-9]', '', 'g'),
+    true,
+    nullif(trim(coalesce(p_motivo,'')), ''),
+    nullif(trim(coalesce(p_origem,'')), ''),
+    nullif(trim(coalesce(p_operador,'')), ''),
+    now(),
+    now()
+  from unnest(coalesce(p_numeros, array[]::text[])) n
+  where regexp_replace(coalesce(n,''), '[^0-9]', '', 'g') <> ''
+  on conflict (numero_nf) do update set
+    ativo = true,
+    motivo = excluded.motivo,
+    origem = excluded.origem,
+    operador = excluded.operador,
+    atualizado_em = now();
+
+  get diagnostics v_count = row_count;
+  return jsonb_build_object('ok', true, 'marcados', v_count);
+end;
+$$;
+
+create or replace function public.nf_restaurar_documentos(p_numeros text[])
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  update public.nf_documentos_desconsiderados
+     set ativo = false,
+         atualizado_em = now()
+   where numero_nf = any(
+     array(
+       select regexp_replace(n, '[^0-9]', '', 'g')
+       from unnest(coalesce(p_numeros, array[]::text[])) n
+     )
+   );
+  get diagnostics v_count = row_count;
+  return jsonb_build_object('ok', true, 'restaurados', v_count);
+end;
+$$;
+
+create or replace function public.nf_reiniciar_processamentos(p_ids text[])
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  delete from public.nf_processamentos
+   where id::text = any(coalesce(p_ids, array[]::text[]))
+     and upper(coalesce(status,'')) in ('REALIZADO','PDF CRIADO')
+     and enviado_em is null;
+  get diagnostics v_count = row_count;
+  return jsonb_build_object('ok', true, 'reiniciados', v_count);
+end;
+$$;
+
+-- A exclusão oficial do relatório principal também registra o número da NF
+-- para que futuras atualizações continuem desconsiderando o documento.
+create or replace function public.nf_excluir_processamentos(p_ids text[])
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_count integer := 0;
+begin
+  insert into public.nf_documentos_desconsiderados(
+    numero_nf, ativo, motivo, origem, operador, criado_em, atualizado_em
+  )
+  select distinct
+    regexp_replace(coalesce(numero_nf,''), '[^0-9]', '', 'g'),
+    true,
+    'Exclusão do relatório principal',
+    'PROCESSAMENTOS',
+    operador,
+    now(),
+    now()
+  from public.nf_processamentos
+  where id::text = any(coalesce(p_ids, array[]::text[]))
+    and upper(coalesce(tipo_documento,'NF-E')) = 'NF-E'
+    and regexp_replace(coalesce(numero_nf,''), '[^0-9]', '', 'g') <> ''
+  on conflict (numero_nf) do update set
+    ativo = true,
+    motivo = excluded.motivo,
+    origem = excluded.origem,
+    operador = excluded.operador,
+    atualizado_em = now();
+
+  delete from public.nf_processamentos
+   where id::text = any(coalesce(p_ids, array[]::text[]));
+  get diagnostics v_count = row_count;
+
+  return jsonb_build_object('ok', true, 'excluidos', v_count);
+end;
+$$;
+
+revoke all on function public.nf_listar_desconsiderados() from public;
+revoke all on function public.nf_desconsiderar_documentos(text[],text,text,text) from public;
+revoke all on function public.nf_restaurar_documentos(text[]) from public;
+revoke all on function public.nf_reiniciar_processamentos(text[]) from public;
+
+grant execute on function public.nf_listar_desconsiderados() to anon, authenticated;
+grant execute on function public.nf_desconsiderar_documentos(text[],text,text,text) to anon, authenticated;
+grant execute on function public.nf_restaurar_documentos(text[]) to anon, authenticated;
+grant execute on function public.nf_reiniciar_processamentos(text[]) to anon, authenticated;
