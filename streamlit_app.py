@@ -9900,22 +9900,18 @@ elif page == "Pendências":
                 bool(pending_select_all),
             )
 
+            # Tabela principal enxuta: somente o que o operador precisa
+            # para decidir e executar a etapa. Diagnósticos ficam recolhidos.
             table_cols = [
                 "Selecionar",
                 "_flow_key",
                 "data_pre_nota",
                 "numero_nf",
-                "cnpj",
                 "fornecedor",
                 "recebedor",
                 "prioridade",
-                "data_cm",
-                "ops_mrp",
-                "situacao_mrp",
-                "aderencia_fornecedor",
                 "cte",
                 "tratativa",
-                "validacao_documento",
             ]
 
             with st.form("pending_pre_notes_actions"):
@@ -9999,6 +9995,61 @@ elif page == "Pendências":
                 st.caption(
                     f"SELECIONADAS: {_selected_count} X {len(editor_view)}"
                 )
+
+                with st.expander(
+                    "DETALHES TÉCNICOS DA CARGA",
+                    expanded=False,
+                ):
+                    _technical_cols = [
+                        col for col in [
+                            "numero_nf",
+                            "cnpj",
+                            "data_cm",
+                            "ops_mrp",
+                            "situacao_mrp",
+                            "aderencia_fornecedor",
+                            "validacao_documento",
+                        ]
+                        if col in filtered.columns
+                    ]
+                    if _technical_cols:
+                        _technical_view = filtered[_technical_cols].copy()
+                        for _col in _technical_view.columns:
+                            if _col != "aderencia_fornecedor":
+                                _technical_view[_col] = (
+                                    _technical_view[_col]
+                                    .astype(object)
+                                    .where(pd.notna(_technical_view[_col]), "NÃO INFORMADO")
+                                )
+                        st.dataframe(
+                            _technical_view,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "numero_nf": "NF",
+                                "cnpj": "CNPJ",
+                                "data_cm": st.column_config.DateColumn(
+                                    "DATA CM",
+                                    format="DD/MM/YYYY",
+                                ),
+                                "ops_mrp": st.column_config.TextColumn(
+                                    "OPs IMPACTADAS",
+                                    width="medium",
+                                ),
+                                "situacao_mrp": st.column_config.TextColumn(
+                                    "SITUAÇÃO MRP",
+                                    width="large",
+                                ),
+                                "aderencia_fornecedor": st.column_config.NumberColumn(
+                                    "ADERÊNCIA",
+                                    format="%d%%",
+                                ),
+                                "validacao_documento": st.column_config.TextColumn(
+                                    "DOCUMENTO",
+                                    width="medium",
+                                ),
+                            },
+                        )
 
                 a1, a2 = st.columns([1, 1])
                 save_receivers = a1.form_submit_button(
