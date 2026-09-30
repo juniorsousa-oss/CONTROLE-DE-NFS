@@ -7573,6 +7573,101 @@ if page == "Dashboard":
                 use_container_width=True,
             )
 
+        finalized_delete_options = {}
+        for _, row in view.iterrows():
+            record_id = str(
+                row.get("id")
+                or row.get("file_id")
+                or ""
+            ).strip()
+            if not record_id:
+                continue
+            doc_type = str(
+                row.get("tipo_documento") or "NF-e"
+            ).strip()
+            doc_number = (
+                str(row.get("numero_cte") or "").strip()
+                if is_cte_document_type(doc_type)
+                else normalized_nf(row.get("numero_nf"))
+            )
+            party = (
+                str(row.get("transportadora") or "").strip()
+                if is_cte_document_type(doc_type)
+                else str(row.get("fornecedor_padrao") or "").strip()
+            )
+            label = (
+                f"{doc_type} {doc_number} — {party} "
+                f"[{record_id[-6:]}]"
+            )
+            finalized_delete_options[label] = record_id
+
+        if finalized_delete_options:
+            with st.expander(
+                "Excluir registros finalizados",
+                expanded=False,
+            ):
+                st.warning(
+                    "A exclusão remove o registro do histórico do aplicativo. "
+                    "Use somente quando o documento realmente não deve permanecer no controle."
+                )
+                finalized_delete_labels = st.multiselect(
+                    "Registros para excluir",
+                    options=list(finalized_delete_options.keys()),
+                    key="finalized_records_to_delete",
+                )
+                if st.button(
+                    "EXCLUIR REGISTROS FINALIZADOS SELECIONADOS",
+                    use_container_width=True,
+                    disabled=not bool(finalized_delete_labels),
+                    key="delete_finalized_records",
+                ):
+                    selected_ids = [
+                        finalized_delete_options[label]
+                        for label in finalized_delete_labels
+                        if label in finalized_delete_options
+                    ]
+                    try:
+                        if SAVE_NF_HISTORY and db.configured():
+                            result = db.delete_process_records(
+                                selected_ids
+                            )
+                            deleted_count = int(
+                                result.get("excluidos", 0)
+                            )
+                        else:
+                            selected_set = set(selected_ids)
+                            manifest = list(
+                                st.session_state.get(
+                                    "current_test_manifest"
+                                )
+                                or []
+                            )
+                            before = len(manifest)
+                            manifest = [
+                                row
+                                for row in manifest
+                                if str(
+                                    row.get("id")
+                                    or row.get("file_id")
+                                    or ""
+                                )
+                                not in selected_set
+                            ]
+                            st.session_state.current_test_manifest = (
+                                manifest
+                            )
+                            deleted_count = before - len(manifest)
+
+                        st.success(
+                            f"{deleted_count} registro(s) finalizado(s) "
+                            "excluído(s)."
+                        )
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(
+                            f"Falha ao excluir os registros: {exc}"
+                        )
+
 
 
 elif page == "Pendências":
