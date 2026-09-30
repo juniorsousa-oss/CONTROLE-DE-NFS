@@ -7212,12 +7212,20 @@ if page == "Dashboard":
             "fornecedor_padrao", "transportadora", "nfs_vinculadas", "empresa_sigla",
             "natureza", "vencimento", "pre_nota_status", "pre_nota_em",
             "prioridade_mrp", "status", "recebido_em", "pdf_criado_em",
-            "enviado_em", "operador", "arquivo_final"
+            "enviado_em", "lancado_em", "lancamento_verificado_em",
+            "operador", "arquivo_final"
         ])
 
     # Timestamps do banco são gravados em UTC. Converte os eventos operacionais
     # para o horário local de Patos de Minas/São Paulo antes de exibir.
-    for col in ["recebido_em", "pdf_criado_em", "enviado_em", "processado_em"]:
+    for col in [
+        "recebido_em",
+        "pdf_criado_em",
+        "enviado_em",
+        "processado_em",
+        "lancado_em",
+        "lancamento_verificado_em",
+    ]:
         if col in records.columns:
             records[col] = (
                 pd.to_datetime(records[col], errors="coerce", utc=True)
@@ -7330,6 +7338,11 @@ if page == "Dashboard":
             f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>',
             unsafe_allow_html=True,
         )
+
+    st.markdown("<div style='height:.55rem'></div>", unsafe_allow_html=True)
+    render_launch_tracking_panel(
+        title="Acompanhamento de lançamentos — prazo de 24 horas"
+    )
 
     if not db.configured():
         st.caption("Persistência ainda não conectada neste deployment. Configure a chave do Supabase em Configurações.")
@@ -7491,6 +7504,8 @@ if page == "Dashboard":
                 "status",
                 "pdf_criado_em",
                 "enviado_em",
+                "lancado_em",
+                "lancamento_verificado_em",
                 "operador",
                 "arquivo_final",
             ]
@@ -7524,6 +7539,14 @@ if page == "Dashboard":
                 ),
                 "enviado_em": st.column_config.DatetimeColumn(
                     "Enviado em",
+                    format="DD/MM/YYYY HH:mm",
+                ),
+                "lancado_em": st.column_config.DatetimeColumn(
+                    "Lançamento confirmado",
+                    format="DD/MM/YYYY HH:mm",
+                ),
+                "lancamento_verificado_em": st.column_config.DatetimeColumn(
+                    "Última conferência STSUP01",
                     format="DD/MM/YYYY HH:mm",
                 ),
                 "arquivo_final": st.column_config.TextColumn(
@@ -8388,7 +8411,7 @@ elif page == "Pendências":
                             width="small",
                         ),
                         "pre_nota_em": st.column_config.DateColumn(
-                            "Data pré-nota",
+                            "Data de recebimento",
                             format="DD/MM/YYYY",
                         ),
                         "documento": st.column_config.TextColumn(
@@ -8542,6 +8565,12 @@ elif page == "Pendências":
                         st.error(
                             f"Falha ao confirmar envio: {exc}"
                         )
+
+        st.divider()
+        render_launch_tracking_panel(
+            pending_records,
+            title="Acompanhamento de lançamentos",
+        )
 
     with pend_process_tab:
         render_file_processing()
