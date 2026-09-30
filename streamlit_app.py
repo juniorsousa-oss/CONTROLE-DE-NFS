@@ -3779,6 +3779,10 @@ def render_mrp_background_feed() -> None:
                     nf_file.name,
                     now_local().date().isoformat(),
                 )
+                launch_report = _extract_launch_report_cached(
+                    nf_file.getvalue(),
+                    nf_file.name,
+                )
                 detail, summary, impact_stats = _build_mrp_impact(materials, entries)
 
                 st.session_state.mrp_impact_detail = detail.copy()
@@ -3816,6 +3820,9 @@ def render_mrp_background_feed() -> None:
                 persisted = persist_mrp_current()
                 if db.configured() and not bool(persisted.get("ok", False)):
                     raise RuntimeError("O Supabase não confirmou a gravação da carga MRP.")
+                st.session_state["last_launch_reconciliation"] = (
+                    reconcile_launch_report(launch_report)
+                )
 
             set_flash(
                 "_flash_mrp",
@@ -6867,6 +6874,10 @@ def render_file_processing():
                     nf_file.name,
                     now_local().date().isoformat(),
                 )
+                launch_report = _extract_launch_report_cached(
+                    nf_file.getvalue(),
+                    nf_file.name,
+                )
                 detail, summary, impact_stats = _build_mrp_impact(
                     materials,
                     entries,
@@ -6911,6 +6922,9 @@ def render_file_processing():
                     raise RuntimeError(
                         "O Supabase não confirmou a gravação do cálculo MRP."
                     )
+
+                launch_result = reconcile_launch_report(launch_report)
+                st.session_state["last_launch_reconciliation"] = launch_result
 
                 # NFs existentes no MRP mas ausentes/divergentes nas Pré-notas.
                 missing_rows = []
