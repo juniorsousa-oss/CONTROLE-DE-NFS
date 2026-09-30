@@ -89,3 +89,17 @@ Para OCR local, instale também o Tesseract. No Streamlit Community Cloud, packa
 O módulo CT-e está reservado e será ativado após validação com documentos reais.
 
 A geração de DANFE diretamente de XML/chave de acesso permanece como etapa avançada, dependente da confirmação do formato disponível no relatório do Protheus.
+
+
+## API de Materiais — Gestão de Entregas
+
+O relatório de **Materiais** pode ser alimentado automaticamente pelo app Gestão de Entregas.
+
+A origem corresponde ao mesmo conjunto que antes era exportado manualmente:
+- menu **Materiais** do Gestão de Entregas;
+- filtro **PENDÊNCIA SEM ESTOQUE**;
+- campos usados pelo motor MRP: **Projeto**, **Produto** e **Data CM**.
+
+A API mantém uma carga ativa e o histórico de cargas no Supabase. O Controle de NFs usa a carga ativa como fonte principal e mantém o upload manual do relatório de Materiais apenas como contingência.
+
+A nova carga é gerada automaticamente quando o Gestão de Entregas atualiza o Cronograma/MRP ou uma alteração operacional modifica o conjunto de OPs elegíveis.
