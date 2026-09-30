@@ -9540,6 +9540,7 @@ elif page == "Configurações":
                 else:
                     try:
                         db.create_user(novo_nome, novo_email)
+                        _invalidate_users_cache()
                         st.success("Usuário criado com sucesso.")
                         st.rerun()
                     except Exception as exc:
@@ -9585,6 +9586,7 @@ elif page == "Configurações":
                 else:
                     try:
                         db.update_user(str(usuario.get("id")), nome_editado, email_editado, ativo_editado)
+                        _invalidate_users_cache()
                         st.success("Usuário atualizado.")
                         if st.session_state.operator == str(usuario.get("nome") or "") and not ativo_editado:
                             st.session_state.operator = ""
@@ -9598,6 +9600,7 @@ elif page == "Configurações":
                 if st.button("EXCLUIR USUÁRIO", disabled=not confirmar_exclusao, use_container_width=True):
                     try:
                         db.delete_user(str(usuario.get("id")))
+                        _invalidate_users_cache()
                         if st.session_state.operator == str(usuario.get("nome") or ""):
                             st.session_state.operator = ""
                         st.success("Usuário excluído.")
