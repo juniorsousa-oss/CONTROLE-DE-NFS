@@ -4221,7 +4221,7 @@ def _reset_nf_session_flow() -> None:
 
 
 def _set_nf_flow_stage(stage: int) -> None:
-    st.session_state.nf_flow_stage = max(1, min(4, int(stage)))
+    st.session_state.nf_flow_stage = max(1, min(3, int(stage)))
 
 
 def _render_nf_flow_header(stage: int) -> None:
@@ -5844,7 +5844,7 @@ def render_nf_treatment_center() -> None:
                                     f"registro(s) esperados e {_inserted} gravado(s)."
                                 )
                             _invalidate_process_cache()
-                            st.session_state.nf_flow_stage = 4
+                            st.session_state.nf_flow_stage = 3
                             st.success(
                                 f"ZIPs criados e {_inserted} registro(s) confirmados no Supabase. "
                                 "Nenhum PDF foi salvo no banco."
@@ -7880,6 +7880,172 @@ def render_document_linking_stage() -> None:
 
 
 
+def render_ready_file_stage() -> None:
+    section_band(
+        "03 · ARQUIVOS",
+        "ARQUIVOS PRONTOS",
+        "GERAÇÃO, DOWNLOAD E CONFIRMAÇÃO FINAL",
+    )
+
+    frame = st.session_state.get("analysis")
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        st.warning(
+            "Nenhuma NF validada está disponível. Volte à etapa de documentos."
+        )
+        return
+
+    merged = recalc(apply_cross_checks(frame.copy()))
+    st.session_state.analysis = merged
+
+    invalid_mask = treatment_mask(merged)
+    duplicate = (
+        merged["nome_sugerido"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .duplicated(keep=False)
+        & merged["nome_sugerido"].fillna("").astype(str).str.strip().ne("")
+    )
+
+    if invalid_mask.any() or duplicate.any():
+        st.warning(
+            "Existem documentos que ainda precisam de atenção. "
+            "Volte à etapa 2 antes de gerar o arquivo final."
+        )
+        return
+
+    summary_cols = [
+        col for col in [
+            "numero_nf",
+            "fornecedor_padrao",
+            "empresa_sigla",
+            "natureza",
+            "prioridade_mrp",
+            "nome_sugerido",
+        ]
+        if col in merged.columns
+    ]
+    st.dataframe(
+        merged[summary_cols],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "numero_nf": "NF",
+            "fornecedor_padrao": st.column_config.TextColumn(
+                "FORNECEDOR",
+                width="large",
+            ),
+            "empresa_sigla": "EMPRESA",
+            "natureza": st.column_config.TextColumn(
+                "NATUREZA",
+                width="medium",
+            ),
+            "prioridade_mrp": st.column_config.CheckboxColumn(
+                "PRIORIDADE MRP",
+            ),
+            "nome_sugerido": st.column_config.TextColumn(
+                "ARQUIVO FINAL",
+                width="large",
+            ),
+        },
+    )
+
+    if not st.session_state.get("zip_outputs"):
+        if st.button(
+            "GERAR ARQUIVOS PRONTOS",
+            type="primary",
+            use_container_width=True,
+            key="stage3_generate_ready_files",
+        ):
+            try:
+                outputs, manifest = make_zip_outputs(merged)
+                st.session_state.zip_outputs = outputs
+
+                if SAVE_NF_HISTORY:
+                    st.session_state.history.extend(manifest)
+                    if db.configured():
+                        result = db.save_process_records(manifest)
+                        inserted = int((result or {}).get("inseridos", 0))
+                        if inserted != len(manifest):
+                            raise RuntimeError(
+                                f"Conferência do banco falhou: "
+                                f"{len(manifest)} esperado(s) e {inserted} gravado(s)."
+                            )
+                        _invalidate_process_cache()
+                    else:
+                        st.session_state.current_test_manifest = manifest
+                else:
+                    st.session_state.current_test_manifest = manifest
+
+                st.session_state.nf_flow_stage = 3
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Falha ao gerar os arquivos: {exc}")
+        return
+
+    audit = st.session_state.get("last_generation_audit") or {}
+    if audit:
+        st.success(
+            "ARQUIVOS GERADOS · "
+            f"NF {audit.get('nf_geradas', 0)} · "
+            f"CT-e {audit.get('cte_gerados', 0)}"
+        )
+
+    all_zips_buffer = io.BytesIO()
+    with zipfile.ZipFile(
+        all_zips_buffer,
+        "w",
+        compression=zipfile.ZIP_STORED,
+    ) as master_zip:
+        for zip_name, zip_bytes in st.session_state.zip_outputs.items():
+            master_zip.writestr(zip_name, zip_bytes)
+
+    all_zips_name = (
+        f"{now_local():%d-%m-%Y} - ARQUIVOS PRONTOS - NOTAS FISCAIS.zip"
+    )
+    st.download_button(
+        "BAIXAR ARQUIVO PRONTO",
+        all_zips_buffer.getvalue(),
+        file_name=all_zips_name,
+        mime="application/zip",
+        type="primary",
+        use_container_width=True,
+        key="stage3_download_ready_files",
+    )
+
+    with st.expander(
+        "DOWNLOADS POR PACOTE",
+        expanded=False,
+    ):
+        for zip_name, zip_bytes in st.session_state.zip_outputs.items():
+            st.download_button(
+                zip_name,
+                zip_bytes,
+                file_name=zip_name,
+                mime="application/zip",
+                use_container_width=True,
+                key=f"stage3_download_{zip_name}",
+            )
+
+    current_records = current_process_records_for_tests()
+    awaiting = _awaiting_send_records(current_records)
+    if not awaiting.empty:
+        with st.expander(
+            "CONFIRMAR ENVIO / ACOMPANHAMENTO",
+            expanded=False,
+        ):
+            render_send_and_tracking_stage(current_records)
+    else:
+        if st.button(
+            "INICIAR NOVO FLUXO",
+            use_container_width=True,
+            key="stage3_start_new_flow",
+        ):
+            _reset_nf_session_flow()
+            st.rerun()
+
+
+
 def render_file_processing():
     _render_nfs_sources_status()
     st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
@@ -9503,20 +9669,20 @@ elif page == "Pendências":
     # como enviado, o fluxo abre diretamente na etapa de envio.
     _awaiting_remote = _awaiting_send_records(pending_records)
     if not _awaiting_remote.empty:
-        st.session_state.nf_flow_stage = 4
+        st.session_state.nf_flow_stage = 3
 
     try:
         _flow_stage = int(st.session_state.get("nf_flow_stage", 1))
     except Exception:
         _flow_stage = 1
-    if _flow_stage not in {1, 2, 3, 4}:
+    if _flow_stage not in {1, 2, 3}:
         _flow_stage = 1
         st.session_state.nf_flow_stage = 1
 
     if _flow_stage == 2:
         _nav1, _nav2 = st.columns([1, 3])
         if _nav1.button(
-            "VOLTAR ÀS PRÉ-NOTAS",
+            "VOLTAR À BASE",
             use_container_width=True,
             key="flow_back_to_pre",
         ):
@@ -9526,17 +9692,25 @@ elif page == "Pendências":
         render_document_linking_stage()
 
         _analysis_stage2 = st.session_state.get("analysis")
-        _can_continue_stage2 = (
+        _can_continue_stage2 = False
+        if (
             isinstance(_analysis_stage2, pd.DataFrame)
             and not _analysis_stage2.empty
-            and not bool(st.session_state.get("cte_rejected") or [])
-        )
+        ):
+            _analysis_stage2 = recalc(
+                apply_cross_checks(_analysis_stage2.copy())
+            )
+            st.session_state.analysis = _analysis_stage2
+            _can_continue_stage2 = not bool(
+                treatment_mask(_analysis_stage2).any()
+            )
+
         if st.button(
-            "CONTINUAR PARA CONFERÊNCIA",
+            "VALIDAR E CONTINUAR PARA ARQUIVO PRONTO",
             type="primary",
             use_container_width=True,
             disabled=not _can_continue_stage2,
-            key="flow_to_review",
+            key="flow_to_ready_file",
         ):
             _set_nf_flow_stage(3)
             st.rerun()
@@ -9552,68 +9726,7 @@ elif page == "Pendências":
             _set_nf_flow_stage(2)
             st.rerun()
 
-        render_nf_treatment_center()
-        st.stop()
-
-    if _flow_stage == 4:
-        render_send_and_tracking_stage(pending_records)
-        _awaiting_after = _awaiting_send_records(
-            current_process_records_for_tests()
-        )
-
-        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-        if _awaiting_after.empty:
-            st.success(
-                "FLUXO CONCLUÍDO. NÃO HÁ DOCUMENTOS AGUARDANDO CONFIRMAÇÃO DE ENVIO."
-            )
-            if st.button(
-                "INICIAR NOVO FLUXO",
-                type="primary",
-                use_container_width=True,
-                key="start_new_nf_flow",
-            ):
-                _reset_nf_session_flow()
-                st.rerun()
-        else:
-            with st.expander(
-                "PRECISA RECOMEÇAR ESTE LOTE?",
-                expanded=False,
-            ):
-                st.caption(
-                    "Use somente se o processamento anterior foi interrompido e você "
-                    "quer reenviar os arquivos desde o início. Isso não marca as NFs "
-                    "como desconsideradas."
-                )
-                confirm_restart = st.checkbox(
-                    "Confirmo que desejo reiniciar o lote pendente",
-                    key="confirm_restart_pending_batch",
-                )
-                if st.button(
-                    "REINICIAR LOTE PENDENTE",
-                    use_container_width=True,
-                    disabled=not confirm_restart,
-                    key="restart_pending_batch",
-                ):
-                    ids = (
-                        _awaiting_after.get(
-                            "id",
-                            pd.Series(dtype=str),
-                        )
-                        .dropna()
-                        .astype(str)
-                        .tolist()
-                    )
-                    if db.configured() and ids:
-                        db.restart_pending_process_records(ids)
-                        _invalidate_process_cache()
-                    _reset_nf_session_flow()
-                    st.session_state["_force_central_nfs_sync"] = True
-                    set_flash(
-                        "_flash_nf",
-                        "success",
-                        "Lote anterior liberado. Recarregue os documentos para iniciar novamente.",
-                    )
-                    st.rerun()
+        render_ready_file_stage()
         st.stop()
 
     pre_base = st.session_state.pre_notes.copy()
