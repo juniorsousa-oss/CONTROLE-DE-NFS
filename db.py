@@ -372,6 +372,19 @@ def restore_excluded_documents(numbers: Iterable[str]) -> dict:
     ) or {}
 
 
+def restart_pending_process_records(ids: Iterable[str]) -> dict:
+    ids = [str(x) for x in ids if str(x).strip()]
+    if not ids:
+        return {"reiniciados": 0}
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    return rpc(
+        "nf_reiniciar_processamentos",
+        {"p_ids": ids},
+        timeout=60,
+    ) or {}
+
+
 def update_receipt_dates(updates: Iterable[dict]) -> dict:
     updates = [
         dict(item)
