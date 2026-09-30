@@ -159,13 +159,8 @@ def save_config(config: dict) -> None:
 def load_suppliers() -> list[dict]:
     if not configured():
         return []
-    return _select_all(
-        "nf_fornecedores",
-        select="cnpj,nome_padrao,aliases,ativo,codigo,loja,nome_fantasia,tipo,atualizado_em",
-        order="nome_padrao.asc",
-        page_size=10000,
-        max_rows=30000,
-    )
+    data = rpc("nf_fornecedores_snapshot", {}, timeout=60)
+    return data if isinstance(data, list) else []
 
 
 def replace_suppliers(rows: Iterable[dict], file_name: str, stats: dict) -> dict:
@@ -211,7 +206,7 @@ def list_process_records(limit: int = 10000) -> list[dict]:
     return _select_all(
         "nf_processamentos",
         order="processado_em.desc",
-        page_size=min(max(int(limit), 1000), 10000),
+        page_size=1000,
         max_rows=limit,
     )[:limit]
 
@@ -369,7 +364,7 @@ def load_pre_notes() -> list[dict]:
     return _select_all(
         "nf_pre_notas_atual",
         order="data_pre_nota.desc.nullslast",
-        page_size=10000,
+        page_size=1000,
         max_rows=30000,
     )
 
