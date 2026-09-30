@@ -163,6 +163,7 @@ def load_suppliers() -> list[dict]:
         "nf_fornecedores",
         select="cnpj,nome_padrao,aliases,ativo,codigo,loja,nome_fantasia,tipo,atualizado_em",
         order="nome_padrao.asc",
+        page_size=10000,
         max_rows=30000,
     )
 
@@ -207,7 +208,12 @@ def save_process_records(rows: Iterable[dict]) -> dict:
 def list_process_records(limit: int = 10000) -> list[dict]:
     if not configured():
         return []
-    return _select_all("nf_processamentos", order="processado_em.desc", max_rows=limit)[:limit]
+    return _select_all(
+        "nf_processamentos",
+        order="processado_em.desc",
+        page_size=min(max(int(limit), 1000), 10000),
+        max_rows=limit,
+    )[:limit]
 
 
 def save_mrp_load(
@@ -360,7 +366,12 @@ def replace_pre_notes(rows: Iterable[dict], file_name: str) -> dict:
 def load_pre_notes() -> list[dict]:
     if not configured():
         return []
-    return _select_all("nf_pre_notas_atual", order="data_pre_nota.desc.nullslast", max_rows=30000)
+    return _select_all(
+        "nf_pre_notas_atual",
+        order="data_pre_nota.desc.nullslast",
+        page_size=10000,
+        max_rows=30000,
+    )
 
 
 def list_pre_note_imports(limit: int = 20) -> list[dict]:
