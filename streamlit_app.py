@@ -7970,8 +7970,8 @@ if page == "Dashboard":
         max_d = max([d for d in ref_date.dropna().tolist()] or [date.today()])
 
         f1, f2, f3, f4 = st.columns(4)
-        start_date = f1.date_input("De", value=min_d)
-        end_date = f2.date_input("Até", value=max_d)
+        start_date = f1.date_input("DE", value=min_d)
+        end_date = f2.date_input("ATÉ", value=max_d)
 
         types = sorted(
             finalized_records.get(
@@ -7984,7 +7984,7 @@ if page == "Dashboard":
             .tolist()
         )
         type_filter = f3.multiselect(
-            "Tipo",
+            "TIPO",
             types,
             default=types,
         )
@@ -8000,7 +8000,7 @@ if page == "Dashboard":
             .tolist()
         )
         company_filter = f4.multiselect(
-            "Empresa",
+            "EMPRESA",
             companies,
             default=companies,
         )
@@ -8035,7 +8035,7 @@ if page == "Dashboard":
             .tolist()
         )
         nature_filter = f5.multiselect(
-            "Natureza das NFs",
+            "NATUREZA",
             natures,
             default=natures,
         )
@@ -8048,7 +8048,7 @@ if page == "Dashboard":
             .tolist()
         )
         party_filter = f6.multiselect(
-            "Fornecedor / Transportadora",
+            "FORNECEDOR / TRANSPORTADORA",
             parties,
         )
 
@@ -8083,7 +8083,7 @@ if page == "Dashboard":
         if party_filter:
             view = view[view["parte"].isin(party_filter)]
 
-        priority_only = st.checkbox("Exibir somente prioridade")
+        priority_only = st.checkbox("EXIBIR SOMENTE PRIORIDADE")
         if priority_only and "prioridade_mrp" in view.columns:
             view = view[
                 view["prioridade_mrp"]
@@ -8481,7 +8481,7 @@ elif page == "Pendências":
                 )
             else:
                 api_live = bool(
-                    (_load_materials_api_current_cached() or {}).get("disponivel")
+                    (_cached_materials_api_status() or {}).get("disponivel")
                 )
                 pending_view["prioridade"] = (
                     "AGUARDANDO NF/STSUP01"
