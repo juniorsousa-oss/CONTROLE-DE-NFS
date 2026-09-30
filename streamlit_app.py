@@ -426,7 +426,8 @@ def init():
                             ).dropna().astype(str).tolist()
                         )
 
-                st.session_state.history = _cached_db_process_records()
+                # Histórico de processamentos é carregado sob demanda nas telas
+                # que realmente o utilizam. Evita bloquear o startup do aplicativo.
             st.session_state.db_synced = True
         except Exception as exc:
             st.session_state.db_sync_error = str(exc)
