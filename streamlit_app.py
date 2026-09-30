@@ -3078,6 +3078,12 @@ def make_zip_outputs(df: pd.DataFrame):
                             "cnpj_transportadora": str(
                                 cte.get("cnpj_transportadora") or ""
                             ),
+                            "tomador_servico": str(
+                                cte.get("tomador_servico") or ""
+                            ),
+                            "cnpj_tomador": str(
+                                cte.get("cnpj_tomador") or ""
+                            ),
                             "empresa_sigla": company,
                             "status": "REALIZADO",
                             "operador": operator or None,
@@ -5576,6 +5582,13 @@ def render_cte_linking_stage() -> None:
                 ignored_ctes += 1
                 continue
 
+            if not is_setta_party(
+                meta.tomador_nome,
+                meta.cnpj_tomador,
+            ):
+                ignored_ctes += 1
+                continue
+
             if meta.chave and meta.chave in existing_keys:
                 ignored_ctes += 1
                 continue
@@ -5701,6 +5714,8 @@ def render_cte_linking_stage() -> None:
                     "serie_cte": meta.serie,
                     "transportadora": meta.emitente,
                     "cnpj_transportadora": meta.cnpj_emitente,
+                    "tomador_servico": meta.tomador_nome,
+                    "cnpj_tomador": meta.cnpj_tomador,
                     "arquivo_original": cte_file.name,
                     "arquivo_final": final_name,
                     "bytes": dacte_bytes,
@@ -5995,6 +6010,7 @@ def render_document_linking_stage() -> None:
         ignored = 0
         nf_rejected = []
         cte_rejected = []
+        cte_non_setta = []
         groups = {}
         file_store = dict(st.session_state.get("prefilter_files") or {})
 
@@ -6009,6 +6025,21 @@ def render_document_linking_stage() -> None:
                 # CT-e primeiro: o parser valida explicitamente a raiz do modelo 57.
                 try:
                     meta = extract_cte_metadata(raw)
+                    if not is_setta_party(
+                        meta.tomador_nome,
+                        meta.cnpj_tomador,
+                    ):
+                        cte_non_setta.append({
+                            "arquivo": file.name,
+                            "cte": meta.numero,
+                            "tomador": meta.tomador_nome or "NÃO IDENTIFICADO",
+                            "cnpj_tomador": meta.cnpj_tomador,
+                        })
+                        progress.progress(
+                            idx / max(1, len(uploaded)),
+                            text=f"Classificando {idx}/{len(uploaded)} — {file.name}",
+                        )
+                        continue
                     cte_candidates.append({
                         "file_id": file_id,
                         "name": file.name,
@@ -6016,6 +6047,8 @@ def render_document_linking_stage() -> None:
                         "raw": raw,
                         "source": "XML",
                         "meta": meta,
+                        "tomador_servico": meta.tomador_nome,
+                        "cnpj_tomador": meta.cnpj_tomador,
                     })
                     progress.progress(
                         idx / max(1, len(uploaded)),
@@ -6058,15 +6091,26 @@ def render_document_linking_stage() -> None:
                     or "CONHECIMENTO DE TRANSPORTE ELETRONICO" in normalized
                 )
                 if is_cte:
-                    cte_candidates.append({
-                        "file_id": file_id,
-                        "name": file.name,
-                        "ext": ext,
-                        "raw": raw,
-                        "source": "PDF",
-                        "text": text,
-                        "reading_method": reading_method,
-                    })
+                    tomador_scope = cte_pdf_tomador_scope(text)
+                    if not cte_pdf_tomador_is_setta(text):
+                        cte_non_setta.append({
+                            "arquivo": file.name,
+                            "cte": "",
+                            "tomador": tomador_scope[:220] or "NÃO IDENTIFICADO",
+                            "cnpj_tomador": "",
+                        })
+                    else:
+                        cte_candidates.append({
+                            "file_id": file_id,
+                            "name": file.name,
+                            "ext": ext,
+                            "raw": raw,
+                            "source": "PDF",
+                            "text": text,
+                            "reading_method": reading_method,
+                            "tomador_servico": "SETTA (identificado no DACTE)",
+                            "cnpj_tomador": "",
+                        })
                 else:
                     nf_candidates.append({
                         "file_id": file_id,
@@ -6104,28 +6148,27 @@ def render_document_linking_stage() -> None:
                 if not match.get("matched"):
                     nf_hits = pending_base[
                         pending_base["numero_nf"].map(normalized_nf).eq(nf_doc)
-                    ].copy()
-                    if nf_hits.empty:
-                        ignored += 1
-                        file_store.pop(file_id, None)
-                    else:
-                        nf_rejected.append({
-                            "file_id": file_id,
-                            "arquivo": item["name"],
-                            "tipo": "NF-e XML",
-                            "vinculado_base": True,
-                            "nf": nf_doc,
-                            "fornecedor": str(
-                                xml_data.get("fornecedor_lido") or ""
-                            ),
-                            "motivo": str(
-                                match.get("situacao")
-                                or "XML NÃO VINCULADO À NF DA BASE"
-                            ),
-                            "aderencia_fornecedor": int(
-                                match.get("score_fornecedor") or 0
-                            ),
-                        })
+                    ].copy() if nf_doc else pd.DataFrame()
+                    nf_rejected.append({
+                        "file_id": file_id,
+                        "arquivo": item["name"],
+                        "tipo": "NF-e XML",
+                        "vinculado_base": not nf_hits.empty,
+                        "nf": nf_doc,
+                        "fornecedor": str(
+                            xml_data.get("fornecedor_lido") or ""
+                        ),
+                        "motivo": str(
+                            match.get("situacao")
+                            or (
+                                "NF NÃO LOCALIZADA AUTOMATICAMENTE NA BASE. "
+                                "SELECIONE A PRÉ-NOTA PARA VINCULAR MANUALMENTE."
+                            )
+                        ),
+                        "aderencia_fornecedor": int(
+                            match.get("score_fornecedor") or 0
+                        ),
+                    })
                     continue
 
                 pre_row = match["row"]
@@ -6159,29 +6202,28 @@ def render_document_linking_stage() -> None:
                 nf_hits = pending_base[
                     pending_base["numero_nf"].map(normalized_nf).eq(nf_doc)
                 ].copy() if nf_doc else pd.DataFrame()
-                if nf_hits.empty:
-                    ignored += 1
-                    file_store.pop(file_id, None)
-                else:
-                    nf_rejected.append({
-                        "file_id": file_id,
-                        "arquivo": item["name"],
-                        "tipo": "NF-e PDF",
-                        "vinculado_base": True,
-                        "nf": nf_doc,
-                        "fornecedor": str(
-                            identity.get("fornecedor_lido")
-                            or identity.get("fornecedor_padrao")
-                            or ""
-                        ),
-                        "motivo": str(
-                            match.get("situacao")
-                            or "PDF NÃO VINCULADO À NF DA BASE"
-                        ),
-                        "aderencia_fornecedor": int(
-                            match.get("score_fornecedor") or 0
-                        ),
-                    })
+                nf_rejected.append({
+                    "file_id": file_id,
+                    "arquivo": item["name"],
+                    "tipo": "NF-e PDF",
+                    "vinculado_base": not nf_hits.empty,
+                    "nf": nf_doc,
+                    "fornecedor": str(
+                        identity.get("fornecedor_lido")
+                        or identity.get("fornecedor_padrao")
+                        or ""
+                    ),
+                    "motivo": str(
+                        match.get("situacao")
+                        or (
+                            "NF NÃO LOCALIZADA AUTOMATICAMENTE NA BASE. "
+                            "SELECIONE A PRÉ-NOTA PARA VINCULAR MANUALMENTE."
+                        )
+                    ),
+                    "aderencia_fornecedor": int(
+                        match.get("score_fornecedor") or 0
+                    ),
+                })
                 continue
 
             pre_row = match["row"]
@@ -6310,7 +6352,14 @@ def render_document_linking_stage() -> None:
                     refs,
                 )
                 if not linked_rows:
-                    ignored += 1
+                    cte_rejected.append({
+                        "arquivo": item["name"],
+                        "tipo": "CT-e XML",
+                        "motivo": (
+                            f"CT-e {meta.numero or ''} não encontrou nenhuma das "
+                            "NF-e referenciadas entre as NFs vinculadas desta carga."
+                        ),
+                    })
                     continue
 
                 try:
@@ -6365,7 +6414,14 @@ def render_document_linking_stage() -> None:
                     text,
                 )
                 if not linked_rows:
-                    ignored += 1
+                    cte_rejected.append({
+                        "arquivo": item["name"],
+                        "tipo": "CT-e PDF",
+                        "motivo": (
+                            "DACTE identificado, mas nenhuma NF-e referenciada "
+                            "foi localizada entre as NFs vinculadas desta carga."
+                        ),
+                    })
                     continue
 
                 keys = _pdf_document_keys(text)
@@ -6435,6 +6491,24 @@ def render_document_linking_stage() -> None:
                 "linked_nf_numbers": nf_numbers,
                 "refs_nfe": refs_nfe,
                 "origem": item["source"],
+                "tomador_servico": str(
+                    item.get("tomador_servico")
+                    or (
+                        meta.tomador_nome
+                        if item["source"] == "XML" and meta is not None
+                        else ""
+                    )
+                    or ""
+                ).strip(),
+                "cnpj_tomador": str(
+                    item.get("cnpj_tomador")
+                    or (
+                        meta.cnpj_tomador
+                        if item["source"] == "XML" and meta is not None
+                        else ""
+                    )
+                    or ""
+                ).strip(),
             }
             links.append(link)
             if chave_cte:
@@ -6442,6 +6516,7 @@ def render_document_linking_stage() -> None:
 
         st.session_state.cte_links = links
         st.session_state.cte_rejected = cte_rejected
+        st.session_state.cte_ignored_non_setta = cte_non_setta
         st.session_state.prefilter_rejected = nf_rejected
         st.session_state.prefilter_stats = {
             "enviados": len(uploaded),
@@ -6449,6 +6524,7 @@ def render_document_linking_stage() -> None:
             "cte_classificados": len(cte_candidates),
             "nf_vinculados": len(new_frame),
             "cte_vinculados": len(links),
+            "cte_desconsiderados_tomador": len(cte_non_setta),
             "ignorados": ignored,
             "erros_nf_vinculados": len(nf_rejected),
             "erros_cte_vinculados": len(cte_rejected),
@@ -6500,6 +6576,7 @@ def render_document_linking_stage() -> None:
             {
                 "CT-e": item.get("numero_cte") or "",
                 "Origem": item.get("origem") or "XML",
+                "Tomador": item.get("tomador_servico") or "",
                 "NFs vinculadas": ", ".join(
                     item.get("linked_nf_numbers") or []
                 ),
@@ -6514,6 +6591,10 @@ def render_document_linking_stage() -> None:
             column_config={
                 "CT-e": "CT-e",
                 "Origem": "Origem",
+                "Tomador": st.column_config.TextColumn(
+                    "Tomador do serviço",
+                    width="large",
+                ),
                 "NFs vinculadas": st.column_config.TextColumn(
                     "NFs vinculadas",
                     width="large",
@@ -6524,6 +6605,21 @@ def render_document_linking_stage() -> None:
                 ),
             },
         )
+
+    non_setta_ctes = list(
+        st.session_state.get("cte_ignored_non_setta") or []
+    )
+    if non_setta_ctes:
+        st.info(
+            f"{len(non_setta_ctes)} CT-e(s) foram desconsiderados porque o "
+            "tomador do serviço não é SETTA."
+        )
+        with st.expander("Ver CT-es desconsiderados por tomador", expanded=False):
+            st.dataframe(
+                pd.DataFrame(non_setta_ctes),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     ignored_count = int(stats.get("ignorados") or 0)
     if ignored_count:
@@ -6598,6 +6694,7 @@ def render_file_processing():
         st.session_state.cte_rejected = []
         st.session_state.cte_outputs = {}
         st.session_state.cte_ignored_count = 0
+        st.session_state.cte_ignored_non_setta = []
         st.session_state.document_link_stats = {}
         st.session_state.document_upload_cache = []
         st.session_state.document_reprocess_needed = False
