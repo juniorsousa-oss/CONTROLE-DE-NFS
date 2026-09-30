@@ -466,6 +466,8 @@ def init():
         "excluded_nf_records": [],
         "excluded_nf_db_loaded": False,
         "last_generation_audit": {},
+        "nf_flow_stage": 1,
+        "document_ignored_items": [],
         "danfe_outputs": {},
         "danfe_results": [],
         "danfe_errors": [],
@@ -4167,6 +4169,76 @@ def render_excluded_nf_manager() -> None:
                 f"{int(restored.get('restaurados', len(selected)))} NF(s) liberada(s) para retornar ao fluxo.",
             )
             st.rerun()
+
+
+def _awaiting_send_records(records: pd.DataFrame | None = None) -> pd.DataFrame:
+    if not isinstance(records, pd.DataFrame):
+        records = current_process_records_for_tests()
+    if not isinstance(records, pd.DataFrame) or records.empty:
+        return pd.DataFrame()
+
+    frame = records.copy()
+    status_series = (
+        frame.get("status", pd.Series("", index=frame.index))
+        .fillna("")
+        .astype(str)
+        .str.upper()
+    )
+    sent_series = pd.to_datetime(
+        frame.get("enviado_em", pd.Series(pd.NaT, index=frame.index)),
+        errors="coerce",
+    )
+    return frame[
+        status_series.isin({"REALIZADO", "PDF CRIADO"})
+        & sent_series.isna()
+    ].copy()
+
+
+def _reset_nf_session_flow() -> None:
+    st.session_state.analysis = pd.DataFrame()
+    st.session_state.pdfs = {}
+    st.session_state.zip_outputs = {}
+    st.session_state.prefilter_rejected = []
+    st.session_state.prefilter_resolved = []
+    st.session_state.prefilter_files = {}
+    st.session_state.prefilter_stats = {}
+    st.session_state.cte_links = []
+    st.session_state.cte_rejected = []
+    st.session_state.cte_outputs = {}
+    st.session_state.cte_ignored_count = 0
+    st.session_state.cte_ignored_non_setta = []
+    st.session_state.document_ignored_items = []
+    st.session_state.document_link_stats = {}
+    st.session_state.document_upload_cache = []
+    st.session_state.document_reprocess_needed = False
+    st.session_state.last_generation_audit = {}
+    st.session_state.pop("pending_fiscal_documents", None)
+    st.session_state.pop("pending_pre_notes_editor", None)
+    st.session_state.pop("linked_documents_to_delete", None)
+    st.session_state.nf_flow_stage = 1
+
+
+def _set_nf_flow_stage(stage: int) -> None:
+    st.session_state.nf_flow_stage = max(1, min(4, int(stage)))
+
+
+def _render_nf_flow_header(stage: int) -> None:
+    labels = {
+        1: "PRÉ-NOTAS E BASE",
+        2: "DOCUMENTOS FISCAIS",
+        3: "CONFERÊNCIA E GERAÇÃO",
+        4: "ENVIO E ACOMPANHAMENTO",
+    }
+    st.markdown(
+        f"""<div style="display:flex;align-items:center;justify-content:space-between;
+        gap:1rem;padding:.72rem .9rem;margin:0 0 1rem;background:#fff;
+        border:1px solid #e5e8ee;border-radius:12px;box-shadow:0 3px 12px rgba(15,23,42,.035)">
+        <div><div style="font-size:.64rem;font-weight:900;letter-spacing:.07em;color:#ef4444">
+        ETAPA {stage} DE 4</div><div style="font-size:.96rem;font-weight:900;color:#111827">
+        {labels.get(stage, "")}</div></div>
+        <div style="font-size:.72rem;color:#64748b;font-weight:700">FLUXO GUIADO</div></div>""",
+        unsafe_allow_html=True,
+    )
 
 
 def current_pending_pre_notes() -> pd.DataFrame:
@@ -7950,6 +8022,456 @@ def render_file_processing():
 
 
 
+def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
+    # Etapa final do fluxo: depois de baixar/enviar os ZIPs, a confirmação
+    # acontece ainda nesta aba de Pré-notas. Só após esta ação a NF entra
+    # na consulta de finalizados do Dashboard.
+    awaiting_send = pd.DataFrame()
+    if isinstance(pending_records, pd.DataFrame) and not pending_records.empty:
+        awaiting_send = pending_records.copy()
+        status_series = (
+            awaiting_send.get("status", pd.Series("", index=awaiting_send.index))
+            .fillna("")
+            .astype(str)
+            .str.upper()
+        )
+        sent_series = awaiting_send.get(
+            "enviado_em",
+            pd.Series(pd.NaT, index=awaiting_send.index),
+        )
+        sent_series = pd.to_datetime(sent_series, errors="coerce")
+        awaiting_send = awaiting_send[
+            status_series.isin({"REALIZADO", "PDF CRIADO"})
+            & sent_series.isna()
+        ].copy()
+
+    section_band(
+        "05 · ENVIO",
+        "CONFIRMAÇÃO DE ENVIO",
+    )
+    if awaiting_send.empty:
+        empty_state("NENHUM DOCUMENTO AGUARDANDO CONFIRMAÇÃO DE ENVIO")
+    else:
+        send_cols = [x for x in [
+            "id",
+            "tipo_documento",
+            "pre_nota_em",
+            "numero_nf",
+            "numero_cte",
+            "fornecedor_padrao",
+            "transportadora",
+            "nfs_vinculadas",
+            "natureza",
+            "vencimento",
+            "prioridade_mrp",
+            "pdf_criado_em",
+            "arquivo_final",
+        ] if x in awaiting_send.columns]
+
+        send_view = awaiting_send[send_cols].copy().reset_index(drop=True)
+        if "tipo_documento" not in send_view.columns:
+            send_view["tipo_documento"] = "NF-e"
+
+        send_view["tipo_documento"] = (
+            send_view["tipo_documento"]
+            .fillna("NF-e")
+            .astype(str)
+        )
+        is_cte_row = (
+            send_view["tipo_documento"]
+            .map(is_cte_document_type)
+        )
+
+        send_view["documento"] = send_view.apply(
+            lambda row: (
+                str(row.get("numero_cte") or "").strip()
+                if is_cte_document_type(row.get("tipo_documento"))
+                else normalized_nf(row.get("numero_nf"))
+            ),
+            axis=1,
+        )
+        send_view["parte"] = send_view.apply(
+            lambda row: (
+                str(row.get("transportadora") or "").strip()
+                if is_cte_document_type(row.get("tipo_documento"))
+                else str(row.get("fornecedor_padrao") or "").strip()
+            ),
+            axis=1,
+        )
+        send_view["vinculo"] = send_view.apply(
+            lambda row: (
+                str(row.get("nfs_vinculadas") or "").strip()
+                if is_cte_document_type(row.get("tipo_documento"))
+                else ""
+            ),
+            axis=1,
+        )
+
+        if "pdf_criado_em" in send_view.columns:
+            send_view["pdf_criado_em"] = (
+                pd.to_datetime(
+                    send_view["pdf_criado_em"],
+                    errors="coerce",
+                    utc=True,
+                )
+                .dt.tz_convert(TZ)
+                .dt.tz_localize(None)
+            )
+        if "pre_nota_em" in send_view.columns:
+            send_view["pre_nota_em"] = pd.to_datetime(
+                send_view["pre_nota_em"],
+                errors="coerce",
+            )
+
+        sel0, sel1, sel2 = st.columns(3)
+        select_all_send = sel0.checkbox(
+            "MARCAR / DESMARCAR TUDO",
+            value=True,
+            key="select_all_send",
+        )
+        select_all_nf_send = sel1.checkbox(
+            "SELECIONAR TODAS AS NFs",
+            value=bool(select_all_send),
+            key=(
+                "select_all_nf_send_"
+                f"{int(bool(select_all_send))}"
+            ),
+        )
+        select_all_cte_send = sel2.checkbox(
+            "SELECIONAR TODOS OS CT-es",
+            value=bool(select_all_send),
+            key=(
+                "select_all_cte_send_"
+                f"{int(bool(select_all_send))}"
+            ),
+        )
+
+        send_view.insert(
+            0,
+            "CONFIRMAR",
+            [
+                bool(select_all_cte_send)
+                if is_cte
+                else bool(select_all_nf_send)
+                for is_cte in is_cte_row.tolist()
+            ],
+        )
+
+        display_send_cols = [
+            col for col in [
+                "id",
+                "CONFIRMAR",
+                "tipo_documento",
+                "pre_nota_em",
+                "documento",
+                "parte",
+                "vinculo",
+                "natureza",
+                "vencimento",
+                "prioridade_mrp",
+                "pdf_criado_em",
+                "arquivo_final",
+            ]
+            if col in send_view.columns
+        ]
+        send_view = send_view[display_send_cols]
+
+        operator_ready = bool(str(st.session_state.operator or "").strip())
+        if not operator_ready:
+            st.info(
+                "Selecione o operador no menu lateral para confirmar o envio."
+            )
+
+        send_id_signature = "-".join(
+            send_view.get(
+                "id",
+                pd.Series("", index=send_view.index),
+            )
+            .fillna("")
+            .astype(str)
+            .str[-8:]
+            .tolist()
+        )
+        editor_key = (
+            "document_send_confirmation_"
+            f"{int(bool(select_all_send))}_"
+            f"{'nf' if select_all_nf_send else 'n'}_"
+            f"{'cte' if select_all_cte_send else 'c'}_"
+            f"{len(send_view)}_{send_id_signature}"
+        )
+        with st.form("send_confirmation_form"):
+            send_editor = st.data_editor(
+                send_view,
+                use_container_width=True,
+                hide_index=True,
+                disabled=[
+                    x for x in send_view.columns
+                    if x not in {"CONFIRMAR", "pre_nota_em"}
+                ],
+                key=editor_key,
+                column_config={
+                    "id": None,
+                    "CONFIRMAR": st.column_config.CheckboxColumn(
+                        "CONFIRMAR",
+                        help="Marque os documentos efetivamente enviados.",
+                    ),
+                    "tipo_documento": st.column_config.TextColumn(
+                        "TIPO",
+                        width="small",
+                    ),
+                    "pre_nota_em": st.column_config.DateColumn(
+                        "DATA DE RECEBIMENTO",
+                        format="DD/MM/YYYY",
+                    ),
+                    "documento": st.column_config.TextColumn(
+                        "NF / CT-e",
+                        width="small",
+                    ),
+                    "parte": st.column_config.TextColumn(
+                        "FORNECEDOR / TRANSPORTADORA",
+                        width="large",
+                    ),
+                    "vinculo": st.column_config.TextColumn(
+                        "NFs VINCULADAS",
+                        width="medium",
+                    ),
+                    "natureza": st.column_config.TextColumn(
+                        "NATUREZA",
+                        width="medium",
+                    ),
+                    "vencimento": st.column_config.DateColumn(
+                        "VENCIMENTO",
+                        format="DD/MM/YYYY",
+                    ),
+                    "prioridade_mrp": st.column_config.CheckboxColumn(
+                        "PRIORIDADE"
+                    ),
+                    "pdf_criado_em": st.column_config.DatetimeColumn(
+                        "PDF CRIADO EM",
+                        format="DD/MM/YYYY HH:mm",
+                    ),
+                    "arquivo_final": st.column_config.TextColumn(
+                        "ARQUIVO",
+                        width="large",
+                    ),
+                },
+            )
+            sb1, sb2, sb3 = st.columns(3)
+            confirm_send = sb1.form_submit_button(
+                "CONFIRMAR ENVIO DOS SELECIONADOS",
+                type="primary",
+                use_container_width=True,
+                disabled=not operator_ready,
+            )
+            save_receipt_dates = sb2.form_submit_button(
+                "SALVAR DATAS DE RECEBIMENTO",
+                use_container_width=True,
+            )
+            delete_send = sb3.form_submit_button(
+                "EXCLUIR REGISTROS SELECIONADOS",
+                use_container_width=True,
+            )
+
+        if confirm_send or delete_send or save_receipt_dates:
+            selected_send_ids = (
+                send_editor.loc[
+                    send_editor["CONFIRMAR"].fillna(False).astype(bool),
+                    "id",
+                ]
+                .dropna()
+                .astype(str)
+                .tolist()
+                if "id" in send_editor.columns
+                else []
+            )
+
+            if not selected_send_ids:
+                st.warning(
+                    "Selecione pelo menos um documento para executar a ação."
+                )
+            elif delete_send:
+                try:
+                    if SAVE_NF_HISTORY and db.configured():
+                        result = db.delete_process_records(
+                            selected_send_ids
+                        )
+                        _invalidate_process_cache()
+                        deleted_count = int(
+                            result.get("excluidos", 0)
+                        )
+                    else:
+                        selected_set = set(selected_send_ids)
+                        manifest = list(
+                            st.session_state.get(
+                                "current_test_manifest"
+                            )
+                            or []
+                        )
+                        before = len(manifest)
+                        manifest = [
+                            row
+                            for row in manifest
+                            if str(
+                                row.get("id")
+                                or row.get("file_id")
+                                or ""
+                            )
+                            not in selected_set
+                        ]
+                        st.session_state.current_test_manifest = (
+                            manifest
+                        )
+                        deleted_count = before - len(manifest)
+
+                    st.success(
+                        f"{deleted_count} registro(s) excluído(s) "
+                        "do fluxo."
+                    )
+                    st.rerun()
+                except Exception as exc:
+                    st.error(
+                        f"Falha ao excluir os registros: {exc}"
+                    )
+            else:
+                try:
+                    selected_rows = send_editor[
+                        send_editor["CONFIRMAR"]
+                        .fillna(False)
+                        .astype(bool)
+                    ].copy()
+
+                    receipt_updates = []
+                    for _, selected_row in selected_rows.iterrows():
+                        if is_cte_document_type(
+                            selected_row.get("tipo_documento")
+                        ):
+                            continue
+                        business_date = normalized_business_date(
+                            selected_row.get("pre_nota_em")
+                        )
+                        record_id = str(
+                            selected_row.get("id") or ""
+                        ).strip()
+                        if record_id and business_date:
+                            receipt_updates.append({
+                                "id": record_id,
+                                "data_recebimento": (
+                                    business_date.isoformat()
+                                ),
+                            })
+
+                    date_updated_count = 0
+                    if SAVE_NF_HISTORY and db.configured():
+                        if receipt_updates:
+                            date_result = db.update_receipt_dates(
+                                receipt_updates
+                            )
+                            _invalidate_process_cache()
+                            _invalidate_pre_notes_cache()
+                            date_updated_count = int(
+                                date_result.get(
+                                    "atualizados",
+                                    0,
+                                )
+                            )
+                    else:
+                        update_by_id = {
+                            item["id"]: item["data_recebimento"]
+                            for item in receipt_updates
+                        }
+                        manifest = list(
+                            st.session_state.get(
+                                "current_test_manifest"
+                            )
+                            or []
+                        )
+                        for row in manifest:
+                            row_id = str(
+                                row.get("id")
+                                or row.get("file_id")
+                                or ""
+                            )
+                            if row_id in update_by_id:
+                                row["pre_nota_em"] = (
+                                    update_by_id[row_id]
+                                )
+                                row["data_chegada"] = (
+                                    update_by_id[row_id]
+                                )
+                                date_updated_count += 1
+                        st.session_state.current_test_manifest = (
+                            manifest
+                        )
+
+                    if save_receipt_dates:
+                        st.success(
+                            f"{date_updated_count} data(s) de "
+                            "recebimento salva(s)."
+                        )
+                        st.rerun()
+
+                    if SAVE_NF_HISTORY and db.configured():
+                        result = db.mark_sent(
+                            selected_send_ids,
+                            st.session_state.operator,
+                        )
+                        _invalidate_process_cache()
+                        updated_count = int(
+                            result.get("atualizados", 0)
+                        )
+                    else:
+                        now_sent = now_local().isoformat()
+                        updated_count = 0
+                        manifest = list(
+                            st.session_state.get(
+                                "current_test_manifest"
+                            )
+                            or []
+                        )
+                        selected_set = set(selected_send_ids)
+                        for row in manifest:
+                            row_id = str(
+                                row.get("id")
+                                or row.get("file_id")
+                                or ""
+                            )
+                            if row_id in selected_set:
+                                row["status"] = "ENVIADO"
+                                row["enviado_em"] = now_sent
+                                row["operador"] = (
+                                    st.session_state.operator
+                                )
+                                updated_count += 1
+                        st.session_state.current_test_manifest = (
+                            manifest
+                        )
+
+                    st.success(
+                        f"{updated_count} documento(s) confirmado(s) "
+                        "como enviado(s). O prazo de 24 horas para "
+                        "lançamento começa nesta confirmação."
+                    )
+                    st.rerun()
+                except Exception as exc:
+                    action_name = (
+                        "salvar as datas de recebimento"
+                        if save_receipt_dates
+                        else "confirmar o envio"
+                    )
+                    st.error(
+                        f"Falha ao {action_name}: {exc}"
+                    )
+
+    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+    section_band(
+        "06 · PRAZO",
+        "ACOMPANHAMENTO DE LANÇAMENTOS",
+    )
+    render_launch_tracking_panel(pending_records)
+
+
+
+
 def _central_pre_notes_from_bytes(raw: bytes, name: str) -> pd.DataFrame:
     temp, _ = _read_uploaded_table_cached(raw, name, None, None)
     if temp.shape[1] < 6:
@@ -8781,6 +9303,125 @@ elif page == "Pendências":
 
     pending_records = current_process_records_for_tests()
 
+    # Se um lote foi gerado em outro computador e ainda não foi confirmado
+    # como enviado, o fluxo abre diretamente na etapa de envio.
+    _awaiting_remote = _awaiting_send_records(pending_records)
+    if not _awaiting_remote.empty:
+        st.session_state.nf_flow_stage = 4
+
+    try:
+        _flow_stage = int(st.session_state.get("nf_flow_stage", 1))
+    except Exception:
+        _flow_stage = 1
+    if _flow_stage not in {1, 2, 3, 4}:
+        _flow_stage = 1
+        st.session_state.nf_flow_stage = 1
+
+    _render_nf_flow_header(_flow_stage)
+
+    if _flow_stage == 2:
+        _nav1, _nav2 = st.columns([1, 3])
+        if _nav1.button(
+            "VOLTAR ÀS PRÉ-NOTAS",
+            use_container_width=True,
+            key="flow_back_to_pre",
+        ):
+            _set_nf_flow_stage(1)
+            st.rerun()
+
+        render_document_linking_stage()
+
+        _analysis_stage2 = st.session_state.get("analysis")
+        _can_continue_stage2 = (
+            isinstance(_analysis_stage2, pd.DataFrame)
+            and not _analysis_stage2.empty
+            and not bool(st.session_state.get("cte_rejected") or [])
+        )
+        if st.button(
+            "CONTINUAR PARA CONFERÊNCIA",
+            type="primary",
+            use_container_width=True,
+            disabled=not _can_continue_stage2,
+            key="flow_to_review",
+        ):
+            _set_nf_flow_stage(3)
+            st.rerun()
+        st.stop()
+
+    if _flow_stage == 3:
+        _nav1, _nav2 = st.columns([1, 3])
+        if _nav1.button(
+            "VOLTAR AOS DOCUMENTOS",
+            use_container_width=True,
+            key="flow_back_to_documents",
+        ):
+            _set_nf_flow_stage(2)
+            st.rerun()
+
+        render_nf_treatment_center()
+        st.stop()
+
+    if _flow_stage == 4:
+        render_send_and_tracking_stage(pending_records)
+        _awaiting_after = _awaiting_send_records(
+            current_process_records_for_tests()
+        )
+
+        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+        if _awaiting_after.empty:
+            st.success(
+                "FLUXO CONCLUÍDO. NÃO HÁ DOCUMENTOS AGUARDANDO CONFIRMAÇÃO DE ENVIO."
+            )
+            if st.button(
+                "INICIAR NOVO FLUXO",
+                type="primary",
+                use_container_width=True,
+                key="start_new_nf_flow",
+            ):
+                _reset_nf_session_flow()
+                st.rerun()
+        else:
+            with st.expander(
+                "PRECISA RECOMEÇAR ESTE LOTE?",
+                expanded=False,
+            ):
+                st.caption(
+                    "Use somente se o processamento anterior foi interrompido e você "
+                    "quer reenviar os arquivos desde o início. Isso não marca as NFs "
+                    "como desconsideradas."
+                )
+                confirm_restart = st.checkbox(
+                    "Confirmo que desejo reiniciar o lote pendente",
+                    key="confirm_restart_pending_batch",
+                )
+                if st.button(
+                    "REINICIAR LOTE PENDENTE",
+                    use_container_width=True,
+                    disabled=not confirm_restart,
+                    key="restart_pending_batch",
+                ):
+                    ids = (
+                        _awaiting_after.get(
+                            "id",
+                            pd.Series(dtype=str),
+                        )
+                        .dropna()
+                        .astype(str)
+                        .tolist()
+                    )
+                    if db.configured() and ids:
+                        db.restart_pending_process_records(ids)
+                        _invalidate_process_cache()
+                    _reset_nf_session_flow()
+                    st.session_state["_force_central_nfs_sync"] = True
+                    set_flash(
+                        "_flash_nf",
+                        "success",
+                        "Lote anterior liberado. Recarregue os documentos para iniciar novamente.",
+                    )
+                    st.rerun()
+        st.stop()
+
     pre_base = st.session_state.pre_notes.copy()
     pending_pre = current_pending_pre_notes()
 
@@ -9462,457 +10103,24 @@ elif page == "Pendências":
 
         st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         render_mrp_missing_pre_treatments()
-        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-        render_document_linking_stage()
-        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-        render_nf_treatment_center()
-        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
 
-        # Etapa final do fluxo: depois de baixar/enviar os ZIPs, a confirmação
-        # acontece ainda nesta aba de Pré-notas. Só após esta ação a NF entra
-        # na consulta de finalizados do Dashboard.
-        awaiting_send = pd.DataFrame()
-        if isinstance(pending_records, pd.DataFrame) and not pending_records.empty:
-            awaiting_send = pending_records.copy()
-            status_series = (
-                awaiting_send.get("status", pd.Series("", index=awaiting_send.index))
-                .fillna("")
-                .astype(str)
-                .str.upper()
-            )
-            sent_series = awaiting_send.get(
-                "enviado_em",
-                pd.Series(pd.NaT, index=awaiting_send.index),
-            )
-            sent_series = pd.to_datetime(sent_series, errors="coerce")
-            awaiting_send = awaiting_send[
-                status_series.isin({"REALIZADO", "PDF CRIADO"})
-                & sent_series.isna()
-            ].copy()
-
-        section_band(
-            "05 · ENVIO",
-            "CONFIRMAÇÃO DE ENVIO",
+        _missing_stage1 = st.session_state.get("base_analysis_missing_mrp")
+        _has_missing_stage1 = (
+            isinstance(_missing_stage1, pd.DataFrame)
+            and not _missing_stage1.empty
         )
-        if awaiting_send.empty:
-            empty_state("NENHUM DOCUMENTO AGUARDANDO CONFIRMAÇÃO DE ENVIO")
-        else:
-            send_cols = [x for x in [
-                "id",
-                "tipo_documento",
-                "pre_nota_em",
-                "numero_nf",
-                "numero_cte",
-                "fornecedor_padrao",
-                "transportadora",
-                "nfs_vinculadas",
-                "natureza",
-                "vencimento",
-                "prioridade_mrp",
-                "pdf_criado_em",
-                "arquivo_final",
-            ] if x in awaiting_send.columns]
-
-            send_view = awaiting_send[send_cols].copy().reset_index(drop=True)
-            if "tipo_documento" not in send_view.columns:
-                send_view["tipo_documento"] = "NF-e"
-
-            send_view["tipo_documento"] = (
-                send_view["tipo_documento"]
-                .fillna("NF-e")
-                .astype(str)
-            )
-            is_cte_row = (
-                send_view["tipo_documento"]
-                .map(is_cte_document_type)
-            )
-
-            send_view["documento"] = send_view.apply(
-                lambda row: (
-                    str(row.get("numero_cte") or "").strip()
-                    if is_cte_document_type(row.get("tipo_documento"))
-                    else normalized_nf(row.get("numero_nf"))
-                ),
-                axis=1,
-            )
-            send_view["parte"] = send_view.apply(
-                lambda row: (
-                    str(row.get("transportadora") or "").strip()
-                    if is_cte_document_type(row.get("tipo_documento"))
-                    else str(row.get("fornecedor_padrao") or "").strip()
-                ),
-                axis=1,
-            )
-            send_view["vinculo"] = send_view.apply(
-                lambda row: (
-                    str(row.get("nfs_vinculadas") or "").strip()
-                    if is_cte_document_type(row.get("tipo_documento"))
-                    else ""
-                ),
-                axis=1,
-            )
-
-            if "pdf_criado_em" in send_view.columns:
-                send_view["pdf_criado_em"] = (
-                    pd.to_datetime(
-                        send_view["pdf_criado_em"],
-                        errors="coerce",
-                        utc=True,
-                    )
-                    .dt.tz_convert(TZ)
-                    .dt.tz_localize(None)
-                )
-            if "pre_nota_em" in send_view.columns:
-                send_view["pre_nota_em"] = pd.to_datetime(
-                    send_view["pre_nota_em"],
-                    errors="coerce",
-                )
-
-            sel0, sel1, sel2 = st.columns(3)
-            select_all_send = sel0.checkbox(
-                "MARCAR / DESMARCAR TUDO",
-                value=True,
-                key="select_all_send",
-            )
-            select_all_nf_send = sel1.checkbox(
-                "SELECIONAR TODAS AS NFs",
-                value=bool(select_all_send),
-                key=(
-                    "select_all_nf_send_"
-                    f"{int(bool(select_all_send))}"
-                ),
-            )
-            select_all_cte_send = sel2.checkbox(
-                "SELECIONAR TODOS OS CT-es",
-                value=bool(select_all_send),
-                key=(
-                    "select_all_cte_send_"
-                    f"{int(bool(select_all_send))}"
-                ),
-            )
-
-            send_view.insert(
-                0,
-                "CONFIRMAR",
-                [
-                    bool(select_all_cte_send)
-                    if is_cte
-                    else bool(select_all_nf_send)
-                    for is_cte in is_cte_row.tolist()
-                ],
-            )
-
-            display_send_cols = [
-                col for col in [
-                    "id",
-                    "CONFIRMAR",
-                    "tipo_documento",
-                    "pre_nota_em",
-                    "documento",
-                    "parte",
-                    "vinculo",
-                    "natureza",
-                    "vencimento",
-                    "prioridade_mrp",
-                    "pdf_criado_em",
-                    "arquivo_final",
-                ]
-                if col in send_view.columns
-            ]
-            send_view = send_view[display_send_cols]
-
-            operator_ready = bool(str(st.session_state.operator or "").strip())
-            if not operator_ready:
-                st.info(
-                    "Selecione o operador no menu lateral para confirmar o envio."
-                )
-
-            send_id_signature = "-".join(
-                send_view.get(
-                    "id",
-                    pd.Series("", index=send_view.index),
-                )
-                .fillna("")
-                .astype(str)
-                .str[-8:]
-                .tolist()
-            )
-            editor_key = (
-                "document_send_confirmation_"
-                f"{int(bool(select_all_send))}_"
-                f"{'nf' if select_all_nf_send else 'n'}_"
-                f"{'cte' if select_all_cte_send else 'c'}_"
-                f"{len(send_view)}_{send_id_signature}"
-            )
-            with st.form("send_confirmation_form"):
-                send_editor = st.data_editor(
-                    send_view,
-                    use_container_width=True,
-                    hide_index=True,
-                    disabled=[
-                        x for x in send_view.columns
-                        if x not in {"CONFIRMAR", "pre_nota_em"}
-                    ],
-                    key=editor_key,
-                    column_config={
-                        "id": None,
-                        "CONFIRMAR": st.column_config.CheckboxColumn(
-                            "CONFIRMAR",
-                            help="Marque os documentos efetivamente enviados.",
-                        ),
-                        "tipo_documento": st.column_config.TextColumn(
-                            "TIPO",
-                            width="small",
-                        ),
-                        "pre_nota_em": st.column_config.DateColumn(
-                            "DATA DE RECEBIMENTO",
-                            format="DD/MM/YYYY",
-                        ),
-                        "documento": st.column_config.TextColumn(
-                            "NF / CT-e",
-                            width="small",
-                        ),
-                        "parte": st.column_config.TextColumn(
-                            "FORNECEDOR / TRANSPORTADORA",
-                            width="large",
-                        ),
-                        "vinculo": st.column_config.TextColumn(
-                            "NFs VINCULADAS",
-                            width="medium",
-                        ),
-                        "natureza": st.column_config.TextColumn(
-                            "NATUREZA",
-                            width="medium",
-                        ),
-                        "vencimento": st.column_config.DateColumn(
-                            "VENCIMENTO",
-                            format="DD/MM/YYYY",
-                        ),
-                        "prioridade_mrp": st.column_config.CheckboxColumn(
-                            "PRIORIDADE"
-                        ),
-                        "pdf_criado_em": st.column_config.DatetimeColumn(
-                            "PDF CRIADO EM",
-                            format="DD/MM/YYYY HH:mm",
-                        ),
-                        "arquivo_final": st.column_config.TextColumn(
-                            "ARQUIVO",
-                            width="large",
-                        ),
-                    },
-                )
-                sb1, sb2, sb3 = st.columns(3)
-                confirm_send = sb1.form_submit_button(
-                    "CONFIRMAR ENVIO DOS SELECIONADOS",
-                    type="primary",
-                    use_container_width=True,
-                    disabled=not operator_ready,
-                )
-                save_receipt_dates = sb2.form_submit_button(
-                    "SALVAR DATAS DE RECEBIMENTO",
-                    use_container_width=True,
-                )
-                delete_send = sb3.form_submit_button(
-                    "EXCLUIR REGISTROS SELECIONADOS",
-                    use_container_width=True,
-                )
-
-            if confirm_send or delete_send or save_receipt_dates:
-                selected_send_ids = (
-                    send_editor.loc[
-                        send_editor["CONFIRMAR"].fillna(False).astype(bool),
-                        "id",
-                    ]
-                    .dropna()
-                    .astype(str)
-                    .tolist()
-                    if "id" in send_editor.columns
-                    else []
-                )
-
-                if not selected_send_ids:
-                    st.warning(
-                        "Selecione pelo menos um documento para executar a ação."
-                    )
-                elif delete_send:
-                    try:
-                        if SAVE_NF_HISTORY and db.configured():
-                            result = db.delete_process_records(
-                                selected_send_ids
-                            )
-                            _invalidate_process_cache()
-                            deleted_count = int(
-                                result.get("excluidos", 0)
-                            )
-                        else:
-                            selected_set = set(selected_send_ids)
-                            manifest = list(
-                                st.session_state.get(
-                                    "current_test_manifest"
-                                )
-                                or []
-                            )
-                            before = len(manifest)
-                            manifest = [
-                                row
-                                for row in manifest
-                                if str(
-                                    row.get("id")
-                                    or row.get("file_id")
-                                    or ""
-                                )
-                                not in selected_set
-                            ]
-                            st.session_state.current_test_manifest = (
-                                manifest
-                            )
-                            deleted_count = before - len(manifest)
-
-                        st.success(
-                            f"{deleted_count} registro(s) excluído(s) "
-                            "do fluxo."
-                        )
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(
-                            f"Falha ao excluir os registros: {exc}"
-                        )
-                else:
-                    try:
-                        selected_rows = send_editor[
-                            send_editor["CONFIRMAR"]
-                            .fillna(False)
-                            .astype(bool)
-                        ].copy()
-
-                        receipt_updates = []
-                        for _, selected_row in selected_rows.iterrows():
-                            if is_cte_document_type(
-                                selected_row.get("tipo_documento")
-                            ):
-                                continue
-                            business_date = normalized_business_date(
-                                selected_row.get("pre_nota_em")
-                            )
-                            record_id = str(
-                                selected_row.get("id") or ""
-                            ).strip()
-                            if record_id and business_date:
-                                receipt_updates.append({
-                                    "id": record_id,
-                                    "data_recebimento": (
-                                        business_date.isoformat()
-                                    ),
-                                })
-
-                        date_updated_count = 0
-                        if SAVE_NF_HISTORY and db.configured():
-                            if receipt_updates:
-                                date_result = db.update_receipt_dates(
-                                    receipt_updates
-                                )
-                                _invalidate_process_cache()
-                                _invalidate_pre_notes_cache()
-                                date_updated_count = int(
-                                    date_result.get(
-                                        "atualizados",
-                                        0,
-                                    )
-                                )
-                        else:
-                            update_by_id = {
-                                item["id"]: item["data_recebimento"]
-                                for item in receipt_updates
-                            }
-                            manifest = list(
-                                st.session_state.get(
-                                    "current_test_manifest"
-                                )
-                                or []
-                            )
-                            for row in manifest:
-                                row_id = str(
-                                    row.get("id")
-                                    or row.get("file_id")
-                                    or ""
-                                )
-                                if row_id in update_by_id:
-                                    row["pre_nota_em"] = (
-                                        update_by_id[row_id]
-                                    )
-                                    row["data_chegada"] = (
-                                        update_by_id[row_id]
-                                    )
-                                    date_updated_count += 1
-                            st.session_state.current_test_manifest = (
-                                manifest
-                            )
-
-                        if save_receipt_dates:
-                            st.success(
-                                f"{date_updated_count} data(s) de "
-                                "recebimento salva(s)."
-                            )
-                            st.rerun()
-
-                        if SAVE_NF_HISTORY and db.configured():
-                            result = db.mark_sent(
-                                selected_send_ids,
-                                st.session_state.operator,
-                            )
-                            _invalidate_process_cache()
-                            updated_count = int(
-                                result.get("atualizados", 0)
-                            )
-                        else:
-                            now_sent = now_local().isoformat()
-                            updated_count = 0
-                            manifest = list(
-                                st.session_state.get(
-                                    "current_test_manifest"
-                                )
-                                or []
-                            )
-                            selected_set = set(selected_send_ids)
-                            for row in manifest:
-                                row_id = str(
-                                    row.get("id")
-                                    or row.get("file_id")
-                                    or ""
-                                )
-                                if row_id in selected_set:
-                                    row["status"] = "ENVIADO"
-                                    row["enviado_em"] = now_sent
-                                    row["operador"] = (
-                                        st.session_state.operator
-                                    )
-                                    updated_count += 1
-                            st.session_state.current_test_manifest = (
-                                manifest
-                            )
-
-                        st.success(
-                            f"{updated_count} documento(s) confirmado(s) "
-                            "como enviado(s). O prazo de 24 horas para "
-                            "lançamento começa nesta confirmação."
-                        )
-                        st.rerun()
-                    except Exception as exc:
-                        action_name = (
-                            "salvar as datas de recebimento"
-                            if save_receipt_dates
-                            else "confirmar o envio"
-                        )
-                        st.error(
-                            f"Falha ao {action_name}: {exc}"
-                        )
-
         st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-        section_band(
-            "06 · PRAZO",
-            "ACOMPANHAMENTO DE LANÇAMENTOS",
-        )
-        render_launch_tracking_panel(pending_records)
+        if st.button(
+            "CONTINUAR PARA DOCUMENTOS FISCAIS",
+            type="primary",
+            use_container_width=True,
+            disabled=_has_missing_stage1 or pending_pre.empty,
+            key="flow_to_documents",
+        ):
+            _set_nf_flow_stage(2)
+            st.rerun()
+
+        st.stop()
 
 
 elif page == "Configurações":
