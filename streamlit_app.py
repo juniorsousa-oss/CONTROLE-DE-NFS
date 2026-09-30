@@ -7639,9 +7639,6 @@ def render_file_processing():
             "As tratativas e a vinculação dos XMLs ficam em Pré-notas pendentes."
         )
 
-    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-    _render_nfs_sources_status()
-
 
 
 def _central_pre_notes_from_bytes(raw: bytes, name: str) -> pd.DataFrame:
