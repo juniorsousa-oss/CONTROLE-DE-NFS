@@ -455,6 +455,7 @@ def init():
         "excluded_nf_db_loaded": False,
         "last_generation_audit": {},
         "nf_flow_stage": 1,
+        "nf_selected_flow_keys": set(),
         "document_ignored_items": [],
         "danfe_outputs": {},
         "danfe_results": [],
@@ -4212,6 +4213,7 @@ def _reset_nf_session_flow() -> None:
     st.session_state.document_upload_cache = []
     st.session_state.document_reprocess_needed = False
     st.session_state.last_generation_audit = {}
+    st.session_state.nf_selected_flow_keys = set()
     st.session_state.pop("pending_fiscal_documents", None)
     st.session_state.pop("pending_pre_notes_editor", None)
     st.session_state.pop("linked_documents_to_delete", None)
@@ -4239,6 +4241,19 @@ def _render_nf_flow_header(stage: int) -> None:
         <div style="font-size:.72rem;color:#64748b;font-weight:700">FLUXO GUIADO</div></div>""",
         unsafe_allow_html=True,
     )
+
+
+def selected_pending_pre_notes() -> pd.DataFrame:
+    base = current_pending_pre_notes()
+    if base.empty:
+        return base
+
+    selected = set(st.session_state.get("nf_selected_flow_keys") or set())
+    if not selected:
+        return pd.DataFrame(columns=base.columns)
+
+    mask = base.apply(flow_nf_key, axis=1).isin(selected)
+    return base.loc[mask].copy().reset_index(drop=True)
 
 
 def current_pending_pre_notes() -> pd.DataFrame:
