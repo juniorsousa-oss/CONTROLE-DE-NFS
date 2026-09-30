@@ -274,6 +274,11 @@ def _cached_materials_api_status() -> dict:
     return db.load_materials_api_status() if db.configured() else {}
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_active_users() -> list[dict]:
+    return db.list_users(active_only=True) if db.configured() else []
+
+
 def _invalidate_process_cache() -> None:
     try:
         _cached_db_process_records.clear()
@@ -307,6 +312,89 @@ def _invalidate_materials_status_cache() -> None:
         _cached_materials_api_status.clear()
     except Exception:
         pass
+
+
+def _invalidate_users_cache() -> None:
+    try:
+        _cached_active_users.clear()
+    except Exception:
+        pass
+
+
+def _ensure_operational_reference_data() -> None:
+    """Carrega bases grandes somente quando a área operacional realmente é aberta."""
+    if not db.configured():
+        return
+
+    if not st.session_state.get("suppliers_db_loaded", False):
+        remote_suppliers = _cached_db_suppliers()
+        if remote_suppliers:
+            st.session_state.suppliers = supplier_dataframe(
+                pd.DataFrame(remote_suppliers)
+            )
+        st.session_state.suppliers_db_loaded = True
+
+    if SAVE_NF_HISTORY and not st.session_state.get(
+        "pre_notes_db_loaded",
+        False,
+    ):
+        remote_pre_notes = _cached_db_pre_notes()
+        if remote_pre_notes:
+            pre_frame = pd.DataFrame(remote_pre_notes)
+            if "data_pre_nota" in pre_frame.columns:
+                pre_frame["data_pre_nota"] = pd.to_datetime(
+                    pre_frame["data_pre_nota"],
+                    errors="coerce",
+                ).dt.date
+            st.session_state.pre_notes = pre_frame
+        st.session_state.pre_notes_db_loaded = True
+
+    if SAVE_NF_HISTORY and not st.session_state.get(
+        "mrp_db_loaded",
+        False,
+    ):
+        remote_mrp = _cached_db_mrp_load()
+        if remote_mrp:
+            detail = pd.DataFrame(remote_mrp.get("detalhe") or [])
+            summary = pd.DataFrame(remote_mrp.get("resumo") or [])
+            for frame in (detail, summary):
+                for column in ("data_pre_nota", "data_cm"):
+                    if column in frame.columns:
+                        frame[column] = pd.to_datetime(
+                            frame[column],
+                            errors="coerce",
+                        ).dt.date
+
+            st.session_state.mrp_impact_detail = detail
+            st.session_state.mrp_priority_summary = summary
+            st.session_state.mrp_priority_files = tuple(
+                remote_mrp.get("arquivos") or []
+            )
+            st.session_state.mrp_priority_stats = (
+                remote_mrp.get("stats") or {}
+            )
+
+            if not summary.empty:
+                high = summary[
+                    summary["prioridade"]
+                    .fillna("")
+                    .astype(str)
+                    .str.upper()
+                    .eq("ALTA")
+                ]
+                st.session_state.priority_date_nf_keys = set(
+                    high.get(
+                        "data_nf",
+                        pd.Series(dtype=str),
+                    ).dropna().astype(str).tolist()
+                )
+                st.session_state.priority_nf_numbers = set(
+                    high.get(
+                        "numero_nf",
+                        pd.Series(dtype=str),
+                    ).dropna().astype(str).tolist()
+                )
+        st.session_state.mrp_db_loaded = True
 
 
 def init():
@@ -360,6 +448,9 @@ def init():
         "supplier_import_conflicts": pd.DataFrame(),
         "supplier_import_name": "",
         "db_synced": False,
+        "suppliers_db_loaded": False,
+        "pre_notes_db_loaded": False,
+        "mrp_db_loaded": False,
         "operator": "",
     }
     for key, value in defaults.items():
@@ -367,67 +458,14 @@ def init():
 
     if db.configured() and not st.session_state.db_synced:
         try:
+            # Startup leve: carrega somente configuração visual.
+            # Pré-notas, MRP e a base grande de fornecedores ficam sob demanda.
             remote_cfg = _cached_db_config()
             if remote_cfg:
-                st.session_state.cfg = {**st.session_state.cfg, **remote_cfg}
-            remote_suppliers = _cached_db_suppliers()
-            if remote_suppliers:
-                st.session_state.suppliers = supplier_dataframe(pd.DataFrame(remote_suppliers))
-            if SAVE_NF_HISTORY:
-                remote_pre_notes = _cached_db_pre_notes()
-                if remote_pre_notes:
-                    pre_frame = pd.DataFrame(remote_pre_notes)
-                    if "data_pre_nota" in pre_frame.columns:
-                        pre_frame["data_pre_nota"] = pd.to_datetime(
-                            pre_frame["data_pre_nota"],
-                            errors="coerce",
-                        ).dt.date
-                    st.session_state.pre_notes = pre_frame
-
-                remote_mrp = _cached_db_mrp_load()
-                if remote_mrp:
-                    detail = pd.DataFrame(remote_mrp.get("detalhe") or [])
-                    summary = pd.DataFrame(remote_mrp.get("resumo") or [])
-                    for frame in (detail, summary):
-                        for column in ("data_pre_nota", "data_cm"):
-                            if column in frame.columns:
-                                frame[column] = pd.to_datetime(
-                                    frame[column],
-                                    errors="coerce",
-                                ).dt.date
-
-                    st.session_state.mrp_impact_detail = detail
-                    st.session_state.mrp_priority_summary = summary
-                    st.session_state.mrp_priority_files = tuple(
-                        remote_mrp.get("arquivos") or []
-                    )
-                    st.session_state.mrp_priority_stats = (
-                        remote_mrp.get("stats") or {}
-                    )
-
-                    if not summary.empty:
-                        high = summary[
-                            summary["prioridade"]
-                            .fillna("")
-                            .astype(str)
-                            .str.upper()
-                            .eq("ALTA")
-                        ]
-                        st.session_state.priority_date_nf_keys = set(
-                            high.get(
-                                "data_nf",
-                                pd.Series(dtype=str),
-                            ).dropna().astype(str).tolist()
-                        )
-                        st.session_state.priority_nf_numbers = set(
-                            high.get(
-                                "numero_nf",
-                                pd.Series(dtype=str),
-                            ).dropna().astype(str).tolist()
-                        )
-
-                # Histórico de processamentos é carregado sob demanda nas telas
-                # que realmente o utilizam. Evita bloquear o startup do aplicativo.
+                st.session_state.cfg = {
+                    **st.session_state.cfg,
+                    **remote_cfg,
+                }
             st.session_state.db_synced = True
         except Exception as exc:
             st.session_state.db_sync_error = str(exc)
@@ -4128,6 +4166,7 @@ def render_mrp_background_feed() -> None:
 
                 st.session_state.mrp_impact_detail = detail.copy()
                 st.session_state.mrp_priority_summary = summary.copy()
+                st.session_state.mrp_db_loaded = True
                 st.session_state.mrp_priority_stats = {
                     **mat_stats,
                     **nf_stats,
@@ -4609,6 +4648,8 @@ def render_suppliers_feed() -> None:
                         stats,
                     )
                     st.session_state.suppliers = final
+                    st.session_state.suppliers_db_loaded = True
+                    _invalidate_suppliers_cache()
                     message = (
                         f"Base de fornecedores substituída: "
                         f"{int(result.get('fornecedores', len(final)))} registro(s)."
@@ -7417,6 +7458,7 @@ def render_file_processing():
                         )
                         _invalidate_suppliers_cache()
                     st.session_state.suppliers = final_sup
+                    st.session_state.suppliers_db_loaded = True
 
                 # Pré-notas.
                 temp_pre, _ = read_uploaded_table(pre_file, header_row=None)
@@ -7465,6 +7507,7 @@ def render_file_processing():
                     )
 
                 st.session_state.pre_notes = pre_valid
+                st.session_state.pre_notes_db_loaded = True
                 if SAVE_NF_HISTORY and db.configured():
                     persist_pre_notes_current(pre_file.name)
 
@@ -7652,7 +7695,7 @@ with st.sidebar:
     st.divider()
     st.markdown('<div class="sidebar-section-label">Operador</div>', unsafe_allow_html=True)
     try:
-        _usuarios_ativos = db.list_users(active_only=True) if db.configured() else []
+        _usuarios_ativos = _cached_active_users() if db.configured() else []
     except Exception:
         _usuarios_ativos = []
     _nomes_usuarios = [str(x.get("nome") or "").strip() for x in _usuarios_ativos if str(x.get("nome") or "").strip()]
@@ -7680,6 +7723,12 @@ with st.sidebar:
     )
     if st.session_state.get("db_sync_error"):
         st.warning("Falha na sincronização inicial do banco. Veja Configurações.")
+
+if page == "Pendências":
+    try:
+        _ensure_operational_reference_data()
+    except Exception as exc:
+        st.session_state.db_sync_error = str(exc)
 
 st.markdown(f'<div class="setta-logo-card">{logo_html()}</div>', unsafe_allow_html=True)
 st.markdown(
@@ -9460,6 +9509,12 @@ elif page == "Configurações":
             st.success("Supabase configurado para este aplicativo.")
             if st.button("Recarregar configurações e fornecedores do banco"):
                 st.session_state.db_synced = False
+                st.session_state.suppliers_db_loaded = False
+                st.session_state.pre_notes_db_loaded = False
+                st.session_state.mrp_db_loaded = False
+                _invalidate_suppliers_cache()
+                _invalidate_pre_notes_cache()
+                _invalidate_mrp_cache()
                 st.rerun()
         else:
             st.warning("Persistência ainda não está ativa neste deployment. Adicione SUPABASE_ANON_KEY nos Secrets do Streamlit. A URL do projeto já está configurada no código.")
