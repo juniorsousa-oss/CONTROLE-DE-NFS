@@ -930,9 +930,8 @@ def _last_update_info(kind: str) -> tuple[str, str]:
 
 
 def show_last_update(kind: str) -> None:
-    updated, source = _last_update_info(kind)
-    suffix = f" • {source}" if source else ""
-    st.caption(f"Última atualização: **{updated}**{suffix}")
+    updated, _source = _last_update_info(kind)
+    st.caption(f"ATUALIZAÇÃO · {updated}")
 
 
 @st.cache_data(show_spinner=False, max_entries=20)
@@ -3790,23 +3789,23 @@ def render_launch_tracking_panel(
                 width="large",
             ),
             "enviado_em_local": st.column_config.DatetimeColumn(
-                "Enviado em",
+                "ENVIADO EM",
                 format="DD/MM/YYYY HH:mm",
             ),
             "prazo_lancamento": st.column_config.DatetimeColumn(
-                "Prazo 24h",
+                "PRAZO 24H",
                 format="DD/MM/YYYY HH:mm",
             ),
             "verificado_em_local": st.column_config.DatetimeColumn(
-                "Último relatório verificado",
+                "ÚLTIMO RELATÓRIO VERIFICADO",
                 format="DD/MM/YYYY HH:mm",
             ),
             "lancado_em_local": st.column_config.DatetimeColumn(
-                "Lançamento confirmado em",
+                "LANÇAMENTO CONFIRMADO EM",
                 format="DD/MM/YYYY HH:mm",
             ),
             "situacao_lancamento": st.column_config.TextColumn(
-                "Situação",
+                "SITUAÇÃO",
                 width="medium",
             ),
         },
