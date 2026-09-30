@@ -244,6 +244,71 @@ def local_suppliers() -> pd.DataFrame:
     return supplier_dataframe(base)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _cached_db_config() -> dict:
+    return db.load_config() if db.configured() else {}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_db_suppliers() -> list[dict]:
+    return db.load_suppliers() if db.configured() else []
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_db_pre_notes() -> list[dict]:
+    return db.load_pre_notes() if db.configured() else []
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_db_mrp_load() -> dict:
+    return db.load_mrp_load() if db.configured() else {}
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def _cached_db_process_records() -> list[dict]:
+    return db.list_process_records() if db.configured() else []
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_materials_api_status() -> dict:
+    return db.load_materials_api_status() if db.configured() else {}
+
+
+def _invalidate_process_cache() -> None:
+    try:
+        _cached_db_process_records.clear()
+    except Exception:
+        pass
+
+
+def _invalidate_pre_notes_cache() -> None:
+    try:
+        _cached_db_pre_notes.clear()
+    except Exception:
+        pass
+
+
+def _invalidate_suppliers_cache() -> None:
+    try:
+        _cached_db_suppliers.clear()
+    except Exception:
+        pass
+
+
+def _invalidate_mrp_cache() -> None:
+    try:
+        _cached_db_mrp_load.clear()
+    except Exception:
+        pass
+
+
+def _invalidate_materials_status_cache() -> None:
+    try:
+        _cached_materials_api_status.clear()
+    except Exception:
+        pass
+
+
 def init():
     if "cfg" not in st.session_state:
         logo_data, logo_mime = load_default_logo()
@@ -302,14 +367,14 @@ def init():
 
     if db.configured() and not st.session_state.db_synced:
         try:
-            remote_cfg = db.load_config()
+            remote_cfg = _cached_db_config()
             if remote_cfg:
                 st.session_state.cfg = {**st.session_state.cfg, **remote_cfg}
-            remote_suppliers = db.load_suppliers()
+            remote_suppliers = _cached_db_suppliers()
             if remote_suppliers:
                 st.session_state.suppliers = supplier_dataframe(pd.DataFrame(remote_suppliers))
             if SAVE_NF_HISTORY:
-                remote_pre_notes = db.load_pre_notes()
+                remote_pre_notes = _cached_db_pre_notes()
                 if remote_pre_notes:
                     pre_frame = pd.DataFrame(remote_pre_notes)
                     if "data_pre_nota" in pre_frame.columns:
@@ -319,7 +384,7 @@ def init():
                         ).dt.date
                     st.session_state.pre_notes = pre_frame
 
-                remote_mrp = db.load_mrp_load()
+                remote_mrp = _cached_db_mrp_load()
                 if remote_mrp:
                     detail = pd.DataFrame(remote_mrp.get("detalhe") or [])
                     summary = pd.DataFrame(remote_mrp.get("resumo") or [])
@@ -361,7 +426,7 @@ def init():
                             ).dropna().astype(str).tolist()
                         )
 
-                st.session_state.history = db.list_process_records()
+                st.session_state.history = _cached_db_process_records()
             st.session_state.db_synced = True
         except Exception as exc:
             st.session_state.db_sync_error = str(exc)
@@ -1541,12 +1606,11 @@ def refresh_mrp_from_materials_api(force: bool = False) -> dict:
         except Exception:
             pass
 
-    payload = _load_materials_api_current_cached()
-    carga = payload.get("carga") or {}
-    if not bool(payload.get("disponivel") and isinstance(carga, dict)):
+    status = _cached_materials_api_status() or {}
+    if not bool(status.get("disponivel")):
         return {"ok": False, "recalculado": False, "motivo": "API_SEM_CARGA"}
 
-    carga_id = carga.get("carga_id")
+    carga_id = status.get("carga_id")
     current_stats = st.session_state.get("mrp_priority_stats") or {}
     current_detail = st.session_state.get("mrp_impact_detail")
 
@@ -1555,7 +1619,7 @@ def refresh_mrp_from_materials_api(force: bool = False) -> dict:
         and db.configured()
     ):
         try:
-            remote_mrp = db.load_mrp_load() or {}
+            remote_mrp = _cached_db_mrp_load() or {}
         except Exception:
             remote_mrp = {}
         if remote_mrp:
@@ -1613,6 +1677,13 @@ def refresh_mrp_from_materials_api(force: bool = False) -> dict:
         if col not in entries.columns:
             entries[col] = ""
     entries = entries[entry_cols].copy()
+
+    payload = _load_materials_api_current_cached()
+    if not bool(
+        payload.get("disponivel")
+        and isinstance(payload.get("carga"), dict)
+    ):
+        return {"ok": False, "recalculado": False, "motivo": "API_SEM_CARGA"}
 
     materials, mat_stats = _clean_mrp_materials_api_snapshot(payload)
     detail, summary, impact_stats = _build_mrp_impact(materials, entries)
@@ -3489,7 +3560,7 @@ def current_process_records_for_tests() -> pd.DataFrame:
 
     if db.configured():
         try:
-            frame = pd.DataFrame(db.list_process_records())
+            frame = pd.DataFrame(_cached_db_process_records())
         except Exception:
             frame = pd.DataFrame(st.session_state.history)
     else:
@@ -3681,7 +3752,9 @@ def persist_pre_notes_current(source_name: str = "app") -> dict:
                 "data_pre_nota": data_pre.isoformat() if data_pre else None,
                 "natureza": str(row.get("natureza") or "").strip(),
             })
-    return db.replace_pre_notes(rows, source_name)
+    result = db.replace_pre_notes(rows, source_name)
+    _invalidate_pre_notes_cache()
+    return result
 
 
 def persist_mrp_current() -> dict:
@@ -3693,12 +3766,14 @@ def persist_mrp_current() -> dict:
             "resumo": len(summary) if isinstance(summary, pd.DataFrame) else 0,
         }
 
-    return db.save_mrp_load(
+    result = db.save_mrp_load(
         dataframe_records_for_db(detail if isinstance(detail, pd.DataFrame) else pd.DataFrame()),
         dataframe_records_for_db(summary if isinstance(summary, pd.DataFrame) else pd.DataFrame()),
         list(st.session_state.get("mrp_priority_files") or []),
         st.session_state.get("mrp_priority_stats") or {},
     )
+    _invalidate_mrp_cache()
+    return result
 
 
 def flow_nf_key(row: pd.Series | dict) -> str:
@@ -7091,15 +7166,9 @@ def render_file_processing():
         "as prioridades. Os XMLs só entram depois, em Pré-notas pendentes."
     )
 
-    api_material_payload = _load_materials_api_current_cached()
+    api_material_carga = _cached_materials_api_status() or {}
     api_material_available = bool(
-        api_material_payload.get("disponivel")
-        and isinstance(api_material_payload.get("carga"), dict)
-    )
-    api_material_carga = (
-        api_material_payload.get("carga") or {}
-        if api_material_available
-        else {}
+        api_material_carga.get("disponivel")
     )
 
     st.markdown("#### Integração de Materiais")
@@ -7157,6 +7226,7 @@ def render_file_processing():
             try:
                 with st.spinner("Atualizando Materiais a partir do Gestão de Entregas..."):
                     sync_result = db.force_materials_api_sync()
+                    _invalidate_materials_status_cache()
                     try:
                         _load_materials_api_current_cached.clear()
                     except Exception:
@@ -7344,6 +7414,7 @@ def render_file_processing():
                                 "conflitos": 0,
                             },
                         )
+                        _invalidate_suppliers_cache()
                     st.session_state.suppliers = final_sup
 
                 # Pré-notas.
@@ -7627,7 +7698,7 @@ if page == "Dashboard":
         st.caption("Modo de testes: Dashboard considera somente a carga atual e ignora o histórico do banco.")
     elif db.configured():
         try:
-            records = pd.DataFrame(db.list_process_records())
+            records = pd.DataFrame(_cached_db_process_records())
         except Exception as exc:
             st.error(f"Não foi possível consultar o histórico: {exc}")
             records = pd.DataFrame(st.session_state.history)
@@ -8061,6 +8132,7 @@ if page == "Dashboard":
                             result = db.delete_process_records(
                                 selected_ids
                             )
+                            _invalidate_process_cache()
                             deleted_count = int(
                                 result.get("excluidos", 0)
                             )
@@ -8266,7 +8338,7 @@ elif page == "Pendências":
                 )
 
                 api_live = bool(
-                    (_load_materials_api_current_cached() or {}).get("disponivel")
+                    (_cached_materials_api_status() or {}).get("disponivel")
                 )
                 pending_view["prioridade"] = match_results.map(
                     lambda result: (
@@ -9075,6 +9147,7 @@ elif page == "Pendências":
                             result = db.delete_process_records(
                                 selected_send_ids
                             )
+                            _invalidate_process_cache()
                             deleted_count = int(
                                 result.get("excluidos", 0)
                             )
@@ -9145,6 +9218,8 @@ elif page == "Pendências":
                                 date_result = db.update_receipt_dates(
                                     receipt_updates
                                 )
+                                _invalidate_process_cache()
+                                _invalidate_pre_notes_cache()
                                 date_updated_count = int(
                                     date_result.get(
                                         "atualizados",
@@ -9192,6 +9267,7 @@ elif page == "Pendências":
                                 selected_send_ids,
                                 st.session_state.operator,
                             )
+                            _invalidate_process_cache()
                             updated_count = int(
                                 result.get("atualizados", 0)
                             )
