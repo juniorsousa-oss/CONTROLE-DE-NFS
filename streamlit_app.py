@@ -1445,6 +1445,105 @@ def _clean_mrp_materials_cached(raw: bytes, name: str) -> tuple[pd.DataFrame, di
     return cleaned, stats
 
 
+def _clean_mrp_materials_api_snapshot(
+    payload: dict,
+) -> tuple[pd.DataFrame, dict]:
+    """Converte a carga automática do Gestão de Entregas para a base do MRP."""
+    payload = payload if isinstance(payload, dict) else {}
+    rows = payload.get("itens") or []
+    carga = payload.get("carga") or {}
+
+    base = pd.DataFrame(rows)
+    if base.empty:
+        base = pd.DataFrame(columns=["projeto", "produto", "data_cm"])
+
+    for col in ("projeto", "produto", "data_cm"):
+        if col not in base.columns:
+            base[col] = None
+
+    base["produto"] = base["produto"].map(normalized_material_code)
+    base["projeto"] = (
+        base["projeto"]
+        .fillna("")
+        .astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.strip()
+    )
+    base["data_cm"] = pd.to_datetime(
+        base["data_cm"],
+        errors="coerce",
+        dayfirst=True,
+    ).dt.date
+
+    total_raw = len(base)
+    invalid = int(
+        (
+            base["produto"].eq("")
+            | base["projeto"].eq("")
+            | base["data_cm"].isna()
+        ).sum()
+    )
+    base = base[
+        base["produto"].ne("")
+        & base["projeto"].ne("")
+        & base["data_cm"].notna()
+    ].copy()
+
+    cleaned = (
+        base.groupby(
+            ["produto", "data_cm"],
+            as_index=False,
+            dropna=False,
+        )
+        .agg(
+            ops=("projeto", _join_unique),
+            linhas_origem=("projeto", "size"),
+        )
+        .sort_values(
+            ["produto", "data_cm"],
+            ascending=[True, True],
+        )
+        .reset_index(drop=True)
+    )
+
+    stats = {
+        "linhas_origem": total_raw,
+        "invalidas": invalid,
+        "linhas_limpas": len(cleaned),
+        "produtos": (
+            int(cleaned["produto"].nunique())
+            if not cleaned.empty
+            else 0
+        ),
+        "linhas_unificadas": max(
+            0,
+            total_raw - invalid - len(cleaned),
+        ),
+        "fonte_materiais": "API Gestão de Entregas",
+        "filtro_materiais": str(
+            carga.get("filtro") or "PENDÊNCIA SEM ESTOQUE"
+        ),
+        "carga_materiais_id": carga.get("carga_id"),
+        "carga_materiais_em": (
+            carga.get("ativada_em")
+            or carga.get("criada_em")
+            or carga.get("ultima_verificacao_em")
+        ),
+    }
+    return cleaned, stats
+
+
+@st.cache_data(ttl=20, show_spinner=False, max_entries=4)
+def _load_materials_api_current_cached() -> dict:
+    if not db.configured():
+        return {}
+    try:
+        payload = db.load_materials_api_current()
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 @st.cache_data(show_spinner=False, max_entries=8)
 def _clean_mrp_nf_cached(
     raw: bytes,
@@ -3835,7 +3934,7 @@ def render_mrp_background_feed() -> None:
                     **impact_stats,
                 }
                 st.session_state.mrp_priority_files = (
-                    material_file.name,
+                    material_source_name,
                     nf_file.name,
                 )
                 st.session_state.mrp_ignored_records = []
@@ -6868,8 +6967,50 @@ def render_file_processing():
         "as prioridades. Os XMLs só entram depois, em Pré-notas pendentes."
     )
 
+    api_material_payload = _load_materials_api_current_cached()
+    api_material_available = bool(
+        api_material_payload.get("disponivel")
+        and isinstance(api_material_payload.get("carga"), dict)
+    )
+    api_material_carga = (
+        api_material_payload.get("carga") or {}
+        if api_material_available
+        else {}
+    )
+
     with st.container(border=True):
         st.markdown("#### Relatórios-base")
+
+        if api_material_available:
+            api_when = pd.to_datetime(
+                api_material_carga.get("ultima_verificacao_em")
+                or api_material_carga.get("ativada_em")
+                or api_material_carga.get("criada_em"),
+                errors="coerce",
+                utc=True,
+            )
+            if not pd.isna(api_when):
+                try:
+                    api_when = api_when.tz_convert(TZ)
+                except Exception:
+                    pass
+                api_when_txt = api_when.strftime("%d/%m/%Y %H:%M")
+            else:
+                api_when_txt = "data não informada"
+
+            st.success(
+                "Materiais conectados automaticamente ao Gestão de Entregas — "
+                f"filtro {api_material_carga.get('filtro') or 'PENDÊNCIA SEM ESTOQUE'}; "
+                f"{int(api_material_carga.get('total_itens') or 0)} item(ns), "
+                f"{int(api_material_carga.get('total_produtos') or 0)} produto(s); "
+                f"última sincronização {api_when_txt}."
+            )
+        else:
+            st.warning(
+                "A API de Materiais ainda não possui carga ativa. "
+                "O arquivo manual permanece disponível como contingência."
+            )
+
         r1, r2, r3 = st.columns(3)
         pre_file = r1.file_uploader(
             "Pré-notas",
@@ -6877,9 +7018,13 @@ def render_file_processing():
             key="base_pre_file",
         )
         material_file = r2.file_uploader(
-            "Materiais",
+            "Materiais — contingência manual",
             type=["xlsx", "xltx", "xls", "csv"],
             key="base_material_file",
+            help=(
+                "A API do Gestão de Entregas é a fonte principal. "
+                "Se um arquivo for enviado aqui, ele substitui a API somente nesta análise."
+            ),
         )
         nf_file = r3.file_uploader(
             "NFs / STSUP01",
@@ -6894,7 +7039,11 @@ def render_file_processing():
             help="Se não selecionar, será usada a base de fornecedores já cadastrada.",
         )
 
-    ready = bool(pre_file and material_file and nf_file)
+    ready = bool(
+        pre_file
+        and nf_file
+        and (api_material_available or material_file)
+    )
     analyze_bases = st.button(
         "ANALISAR BASES",
         type="primary",
@@ -7069,10 +7218,44 @@ def render_file_processing():
                     persist_pre_notes_current(pre_file.name)
 
                 # Impacto MRP.
-                materials, mat_stats = _clean_mrp_materials_cached(
-                    material_file.getvalue(),
-                    material_file.name,
-                )
+                if material_file:
+                    materials, mat_stats = _clean_mrp_materials_cached(
+                        material_file.getvalue(),
+                        material_file.name,
+                    )
+                    material_source_name = (
+                        f"MANUAL - {material_file.name}"
+                    )
+                    mat_stats["fonte_materiais"] = (
+                        "Arquivo manual de contingência"
+                    )
+                else:
+                    api_material_payload = (
+                        _load_materials_api_current_cached()
+                    )
+                    if not bool(
+                        api_material_payload.get("disponivel")
+                        and isinstance(
+                            api_material_payload.get("carga"),
+                            dict,
+                        )
+                    ):
+                        raise RuntimeError(
+                            "A carga automática de Materiais não está disponível."
+                        )
+                    materials, mat_stats = (
+                        _clean_mrp_materials_api_snapshot(
+                            api_material_payload
+                        )
+                    )
+                    api_carga = (
+                        api_material_payload.get("carga") or {}
+                    )
+                    material_source_name = (
+                        "API Gestão de Entregas"
+                        f" · carga {api_carga.get('carga_id') or '-'}"
+                    )
+
                 entries, nf_stats = _clean_mrp_nf_cached(
                     nf_file.getvalue(),
                     nf_file.name,
@@ -7180,10 +7363,14 @@ def render_file_processing():
             else 0
         )
 
+        material_source = (
+            st.session_state.get("mrp_priority_files") or ("", "")
+        )[0]
         st.success(
             f"Análise concluída: {pending_count} pré-nota(s) pendente(s), "
             f"{missing_count} NF(s) do MRP sem correspondência segura e "
             f"{high_count} NF(s) com prioridade ALTA. "
+            f"Materiais: {material_source or 'fonte não informada'}. "
             "As tratativas e a vinculação dos XMLs ficam em Pré-notas pendentes."
         )
 
