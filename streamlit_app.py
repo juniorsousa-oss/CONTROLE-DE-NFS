@@ -10328,7 +10328,7 @@ elif page == "Pendências":
             ),
             key="flow_to_documents",
         ):
-            st.session_state.nf_selected_flow_keys = set(
+            _new_selection = set(
                 selected_pending.get(
                     "_flow_key",
                     pd.Series(dtype=str),
@@ -10338,6 +10338,27 @@ elif page == "Pendências":
                 .loc[lambda values: values.ne("")]
                 .tolist()
             )
+            _old_selection = set(
+                st.session_state.get("nf_selected_flow_keys") or set()
+            )
+            if _new_selection != _old_selection:
+                st.session_state.analysis = pd.DataFrame()
+                st.session_state.pdfs = {}
+                st.session_state.zip_outputs = {}
+                st.session_state.prefilter_rejected = []
+                st.session_state.prefilter_resolved = []
+                st.session_state.prefilter_files = {}
+                st.session_state.prefilter_stats = {}
+                st.session_state.cte_links = []
+                st.session_state.cte_rejected = []
+                st.session_state.cte_outputs = {}
+                st.session_state.cte_ignored_non_setta = []
+                st.session_state.document_ignored_items = []
+                st.session_state.document_link_stats = {}
+                st.session_state.document_upload_cache = []
+                st.session_state.pop("pending_fiscal_documents", None)
+
+            st.session_state.nf_selected_flow_keys = _new_selection
             _set_nf_flow_stage(2)
             st.rerun()
 
