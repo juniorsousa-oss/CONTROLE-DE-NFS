@@ -7277,7 +7277,7 @@ def render_file_processing():
                     **impact_stats,
                 }
                 st.session_state.mrp_priority_files = (
-                    material_file.name,
+                    material_source_name,
                     nf_file.name,
                 )
                 st.session_state.mrp_ignored_records = []
