@@ -6633,6 +6633,137 @@ def render_document_linking_stage() -> None:
             },
         )
 
+    # Exclusão disponível ainda na etapa de vínculo, antes da geração final.
+    linked_delete_options = {}
+    if isinstance(analysis, pd.DataFrame) and not analysis.empty:
+        for _, row in analysis.iterrows():
+            file_id = str(row.get("file_id") or "").strip()
+            if not file_id:
+                continue
+            label = (
+                f"NF-e {normalized_nf(row.get('numero_nf'))} — "
+                f"{str(row.get('fornecedor_padrao') or '').strip()} "
+                f"[{file_id[-6:]}]"
+            )
+            linked_delete_options[label] = f"NF::{file_id}"
+
+    for item in cte_links:
+        cte_id = str(item.get("cte_id") or "").strip()
+        if not cte_id:
+            continue
+        label = (
+            f"CT-e {str(item.get('numero_cte') or '').strip()} — "
+            f"{str(item.get('transportadora') or '').strip()} "
+            f"[{cte_id[-6:]}]"
+        )
+        linked_delete_options[label] = f"CTE::{cte_id}"
+
+    if linked_delete_options:
+        with st.expander(
+            "Excluir documentos vinculados desta etapa",
+            expanded=False,
+        ):
+            linked_delete_labels = st.multiselect(
+                "Documentos para excluir",
+                options=list(linked_delete_options.keys()),
+                key="linked_documents_to_delete",
+            )
+            if st.button(
+                "EXCLUIR DOCUMENTOS SELECIONADOS",
+                use_container_width=True,
+                disabled=not bool(linked_delete_labels),
+                key="delete_linked_documents",
+            ):
+                selected_tokens = {
+                    linked_delete_options[label]
+                    for label in linked_delete_labels
+                    if label in linked_delete_options
+                }
+                nf_ids = {
+                    token.split("::", 1)[1]
+                    for token in selected_tokens
+                    if token.startswith("NF::")
+                }
+                cte_ids = {
+                    token.split("::", 1)[1]
+                    for token in selected_tokens
+                    if token.startswith("CTE::")
+                }
+
+                current_analysis = st.session_state.analysis.copy()
+                if (
+                    nf_ids
+                    and isinstance(current_analysis, pd.DataFrame)
+                    and not current_analysis.empty
+                    and "file_id" in current_analysis.columns
+                ):
+                    current_analysis = current_analysis[
+                        ~current_analysis["file_id"]
+                        .fillna("")
+                        .astype(str)
+                        .isin(nf_ids)
+                    ].copy().reset_index(drop=True)
+                    st.session_state.analysis = current_analysis
+
+                    for file_id in nf_ids:
+                        st.session_state.pdfs.pop(file_id, None)
+
+                remaining_nf_by_id = {}
+                if (
+                    isinstance(current_analysis, pd.DataFrame)
+                    and not current_analysis.empty
+                    and "file_id" in current_analysis.columns
+                ):
+                    remaining_nf_by_id = {
+                        str(row.get("file_id") or ""): normalized_nf(
+                            row.get("numero_nf")
+                        )
+                        for _, row in current_analysis.iterrows()
+                        if str(row.get("file_id") or "").strip()
+                    }
+
+                kept_ctes = []
+                for item in st.session_state.get("cte_links") or []:
+                    item_id = str(item.get("cte_id") or "").strip()
+                    if item_id in cte_ids:
+                        st.session_state.cte_outputs.pop(item_id, None)
+                        continue
+
+                    linked_ids = [
+                        str(value)
+                        for value in (item.get("linked_file_ids") or [])
+                        if str(value).strip()
+                    ]
+                    remaining_ids = [
+                        value
+                        for value in linked_ids
+                        if value not in nf_ids
+                        and value in remaining_nf_by_id
+                    ]
+                    if linked_ids and not remaining_ids:
+                        st.session_state.cte_outputs.pop(item_id, None)
+                        continue
+
+                    updated_item = dict(item)
+                    updated_item["linked_file_ids"] = remaining_ids
+                    updated_item["linked_nf_numbers"] = [
+                        remaining_nf_by_id[value]
+                        for value in remaining_ids
+                        if remaining_nf_by_id.get(value)
+                    ]
+                    kept_ctes.append(updated_item)
+
+                st.session_state.cte_links = kept_ctes
+                st.session_state.zip_outputs = {}
+                st.session_state.document_upload_cache = []
+                st.session_state.pop("pending_fiscal_documents", None)
+                st.session_state.pop("linked_documents_to_delete", None)
+                st.success(
+                    f"{len(selected_tokens)} documento(s) removido(s) "
+                    "da etapa de vinculação."
+                )
+                st.rerun()
+
     non_setta_ctes = list(
         st.session_state.get("cte_ignored_non_setta") or []
     )
