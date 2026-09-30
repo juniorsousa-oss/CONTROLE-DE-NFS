@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
-from st_aggrid import AgGrid, DataReturnMode, GridUpdateMode
 from rapidfuzz import fuzz
 from PIL import Image
 from openpyxl import load_workbook
@@ -718,125 +717,6 @@ button[kind="primary"],button[data-testid="stBaseButton-primary"]{background:var
 """.replace("__COLOR__", color),
     unsafe_allow_html=True,
 )
-
-
-def render_filter_grid(
-    frame: pd.DataFrame,
-    key: str,
-    *,
-    column_headers: dict[str, str] | None = None,
-    editable_columns: set[str] | None = None,
-    selectable: bool = False,
-    hidden_columns: set[str] | None = None,
-    height: int | None = None,
-):
-    """Grade operacional com filtro diretamente no cabeçalho."""
-    if not isinstance(frame, pd.DataFrame):
-        frame = pd.DataFrame()
-    data = frame.copy()
-
-    # AgGrid recebe os dados via JSON. Objetos Python como date/datetime
-    # chegam ao navegador como objetos e são exibidos como "[object Object]".
-    # Convertemos esses valores para texto operacional antes da serialização.
-    def _grid_safe_value(value):
-        if value is None:
-            return ""
-        try:
-            if pd.isna(value):
-                return ""
-        except Exception:
-            pass
-        if isinstance(value, pd.Timestamp):
-            if pd.isna(value):
-                return ""
-            if value.hour or value.minute or value.second:
-                return value.strftime("%d/%m/%Y %H:%M")
-            return value.strftime("%d/%m/%Y")
-        if isinstance(value, datetime):
-            if value.hour or value.minute or value.second:
-                return value.strftime("%d/%m/%Y %H:%M")
-            return value.strftime("%d/%m/%Y")
-        if isinstance(value, date):
-            return value.strftime("%d/%m/%Y")
-        if isinstance(value, (dict, list, tuple, set)):
-            try:
-                return json.dumps(
-                    value,
-                    ensure_ascii=False,
-                    default=str,
-                )
-            except Exception:
-                return str(value)
-        return value
-
-    for _grid_col in data.columns:
-        data[_grid_col] = data[_grid_col].map(_grid_safe_value)
-
-    headers = column_headers or {}
-    editable = editable_columns or set()
-    hidden = hidden_columns or set()
-
-    column_defs = []
-    visible_fields = [col for col in data.columns if col not in hidden]
-    for index, col in enumerate(data.columns):
-        definition = {
-            "field": col,
-            "headerName": headers.get(col, str(col).upper()),
-            "sortable": True,
-            "filter": True,
-            "floatingFilter": True,
-            "resizable": True,
-            "editable": col in editable,
-            "hide": col in hidden,
-            "minWidth": 105,
-        }
-        if col in {"fornecedor", "fornecedor_padrao", "parte", "arquivo_final"}:
-            definition["minWidth"] = 220
-        if col in {"tratativa", "situacao_lancamento", "acompanhamento_lancamento"}:
-            definition["minWidth"] = 190
-        if selectable and index == next(
-            (i for i, name in enumerate(data.columns) if name not in hidden),
-            0,
-        ):
-            definition["checkboxSelection"] = True
-            definition["headerCheckboxSelection"] = True
-            definition["headerCheckboxSelectionFilteredOnly"] = True
-        column_defs.append(definition)
-
-    grid_options = {
-        "columnDefs": column_defs,
-        "defaultColDef": {
-            "sortable": True,
-            "filter": True,
-            "floatingFilter": True,
-            "resizable": True,
-        },
-        "animateRows": False,
-        "rowSelection": "multiple" if selectable else "single",
-        "suppressRowClickSelection": bool(selectable),
-        "pagination": len(data) > 50,
-        "paginationPageSize": 50,
-        "domLayout": "normal",
-    }
-    grid_height = height or min(620, max(180, 74 + min(len(data), 14) * 34))
-
-    update_mode = (
-        GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED
-        if selectable or editable
-        else GridUpdateMode.NO_UPDATE
-    )
-    return AgGrid(
-        data,
-        gridOptions=grid_options,
-        data_return_mode=DataReturnMode.AS_INPUT,
-        update_mode=update_mode,
-        fit_columns_on_grid_load=False,
-        allow_unsafe_jscode=False,
-        theme="alpine",
-        height=grid_height,
-        use_container_width=True,
-        key=key,
-    )
 
 
 def recalc(df: pd.DataFrame) -> pd.DataFrame:
@@ -9310,29 +9190,44 @@ if page == "Dashboard":
 
         table = table.fillna("NÃO INFORMADO").replace("", "NÃO INFORMADO")
 
-        render_filter_grid(
-            table,
-            "dashboard_documentos_finalizados",
-            hidden_columns={"id"},
-            column_headers={
+        st.dataframe(
+            table.drop(columns=["id"], errors="ignore"),
+            use_container_width=True,
+            hide_index=True,
+            height=520,
+            column_config={
                 "tipo_documento": "TIPO",
                 "documento": "NF / CT-e",
-                "parte": "FORNECEDOR / TRANSPORTADORA",
-                "nfs_vinculadas": "NFs VINCULADAS",
+                "parte": st.column_config.TextColumn(
+                    "FORNECEDOR / TRANSPORTADORA",
+                    width="large",
+                ),
+                "nfs_vinculadas": st.column_config.TextColumn(
+                    "NFs VINCULADAS",
+                    width="medium",
+                ),
                 "empresa_sigla": "EMPRESA",
-                "natureza": "NATUREZA",
+                "natureza": st.column_config.TextColumn(
+                    "NATUREZA",
+                    width="medium",
+                ),
                 "vencimento": "VENCIMENTO",
                 "prioridade_mrp": "PRIORIDADE",
                 "status": "STATUS",
                 "pdf_criado_em": "PDF CRIADO EM",
                 "enviado_em": "ENVIADO EM",
                 "prazo_lancamento": "PRAZO 24H",
-                "acompanhamento_lancamento": "ACOMPANHAMENTO",
+                "acompanhamento_lancamento": st.column_config.TextColumn(
+                    "ACOMPANHAMENTO",
+                    width="large",
+                ),
                 "lancado_em": "LANÇAMENTO CONFIRMADO",
                 "lancamento_verificado_em": "ÚLTIMA CONFERÊNCIA STSUP01",
-                "arquivo_final": "ARQUIVO",
+                "arquivo_final": st.column_config.TextColumn(
+                    "ARQUIVO",
+                    width="large",
+                ),
             },
-            height=520,
         )
 
         export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
@@ -9862,14 +9757,16 @@ elif page == "Pendências":
                 na_position="last",
             ).drop(columns="_priority_order")
 
-            # Grade profissional: filtros por coluna no cabeçalho,
-            # seleção múltipla e edição somente dos campos operacionais.
+            # Tabela operacional no padrão nativo do aplicativo.
             editor_view = filtered.copy()
             editor_view["_flow_key"] = editor_view.apply(
                 flow_nf_key,
                 axis=1,
             )
+            editor_view.insert(0, "Selecionar", True)
+
             table_cols = [
+                "Selecionar",
                 "_flow_key",
                 "data_pre_nota",
                 "numero_nf",
@@ -9879,36 +9776,53 @@ elif page == "Pendências":
                 "cte",
                 "tratativa",
             ]
-            _grid_response = render_filter_grid(
+
+            pending_editor = st.data_editor(
                 editor_view[table_cols],
-                "pending_pre_notes_grid",
-                selectable=True,
-                hidden_columns={"_flow_key"},
-                editable_columns={"recebedor", "data_pre_nota"},
-                column_headers={
-                    "data_pre_nota": "DATA DE RECEBIMENTO",
+                use_container_width=True,
+                hide_index=True,
+                num_rows="fixed",
+                key="pending_pre_notes_editor",
+                disabled=[
+                    col
+                    for col in table_cols
+                    if col not in {
+                        "Selecionar",
+                        "recebedor",
+                        "data_pre_nota",
+                    }
+                ],
+                column_config={
+                    "Selecionar": st.column_config.CheckboxColumn(
+                        "SELECIONAR",
+                        width="small",
+                    ),
+                    "_flow_key": None,
+                    "data_pre_nota": st.column_config.DateColumn(
+                        "DATA DE RECEBIMENTO",
+                        format="DD/MM/YYYY",
+                    ),
                     "numero_nf": "NF",
-                    "fornecedor": "FORNECEDOR",
-                    "recebedor": "RECEBEDOR",
+                    "fornecedor": st.column_config.TextColumn(
+                        "FORNECEDOR",
+                        width="large",
+                    ),
+                    "recebedor": st.column_config.TextColumn(
+                        "RECEBEDOR",
+                        width="medium",
+                    ),
                     "prioridade": "PRIORIDADE MRP",
                     "cte": "CT-e",
-                    "tratativa": "TRATATIVA",
+                    "tratativa": st.column_config.TextColumn(
+                        "TRATATIVA",
+                        width="medium",
+                    ),
                 },
-                height=500,
             )
 
-            _grid_data = _grid_response.get("data")
-            pending_editor = (
-                _grid_data.copy()
-                if isinstance(_grid_data, pd.DataFrame)
-                else pd.DataFrame(_grid_data or [])
-            )
-            _selected_raw = _grid_response.get("selected_rows")
-            selected_pending = (
-                _selected_raw.copy()
-                if isinstance(_selected_raw, pd.DataFrame)
-                else pd.DataFrame(_selected_raw or [])
-            )
+            selected_pending = pending_editor[
+                pending_editor["Selecionar"].fillna(False).astype(bool)
+            ].copy()
             st.caption(
                 f"SELECIONADAS: {len(selected_pending)} X {len(editor_view)}"
             )
@@ -9934,19 +9848,34 @@ elif page == "Pendências":
                     _technical_view = _technical_view.fillna(
                         "NÃO INFORMADO"
                     ).replace("", "NÃO INFORMADO")
-                    render_filter_grid(
+                    st.dataframe(
                         _technical_view,
-                        "pending_technical_grid",
-                        column_headers={
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
                             "numero_nf": "NF",
                             "cnpj": "CNPJ",
-                            "data_cm": "DATA CM",
-                            "ops_mrp": "OPs IMPACTADAS",
-                            "situacao_mrp": "SITUAÇÃO MRP",
-                            "aderencia_fornecedor": "ADERÊNCIA",
-                            "validacao_documento": "DOCUMENTO",
+                            "data_cm": st.column_config.DateColumn(
+                                "DATA CM",
+                                format="DD/MM/YYYY",
+                            ),
+                            "ops_mrp": st.column_config.TextColumn(
+                                "OPs IMPACTADAS",
+                                width="medium",
+                            ),
+                            "situacao_mrp": st.column_config.TextColumn(
+                                "SITUAÇÃO MRP",
+                                width="large",
+                            ),
+                            "aderencia_fornecedor": st.column_config.NumberColumn(
+                                "ADERÊNCIA",
+                                format="%d%%",
+                            ),
+                            "validacao_documento": st.column_config.TextColumn(
+                                "DOCUMENTO",
+                                width="medium",
+                            ),
                         },
-                        height=360,
                     )
 
             a1, a2 = st.columns([1, 1])
