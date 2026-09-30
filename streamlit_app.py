@@ -559,6 +559,28 @@ def logo_html() -> str:
     return f'<img src="data:{mime};base64,{data}" alt="Logo">' if data else '<b class="fallback">SETTA</b>'
 
 
+def section_band(
+    kicker: str,
+    title: str,
+    note: str = "",
+) -> None:
+    note_html = (
+        f'<div class="section-band-note">{note}</div>'
+        if str(note or "").strip()
+        else ""
+    )
+    st.markdown(
+        f"""
+        <div class="section-band">
+            <div class="section-band-kicker">{kicker}</div>
+            <div class="section-band-title">{title}</div>
+            {note_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 st.markdown(
     """
 <style>
@@ -602,16 +624,37 @@ section[data-testid="stSidebar"][aria-expanded="false"]{width:0!important;min-wi
 .setta-logo-card img{display:block;width:auto;height:auto;max-width:205px;max-height:86px;object-fit:contain}.fallback{font-size:2rem;letter-spacing:.08em}
 .app-title{margin:0!important;padding:0!important;font-size:2.55rem!important;line-height:1.08!important;font-weight:800!important;letter-spacing:-.04em!important;color:#050505!important}
 .app-sub{margin-top:.72rem!important;margin-bottom:1.65rem!important;color:#4f5661!important;font-size:.94rem!important;line-height:1.35!important}
-.section-title{margin:0 0 1rem!important;color:#0f172a!important;font-size:1.28rem!important;font-weight:800!important;letter-spacing:-.02em}
+.section-title{margin:0 0 1rem!important;color:#0f172a!important;font-size:1.28rem!important;font-weight:900!important;letter-spacing:-.02em;text-transform:uppercase}
+.section-band{margin:0 0 .95rem;padding:.82rem 1rem;background:#fff;border:1px solid #e5e8ee;border-left:5px solid #111827;border-radius:12px;box-shadow:0 3px 12px rgba(15,23,42,.035)}
+.section-band-kicker{font-size:.66rem;font-weight:900;letter-spacing:.085em;text-transform:uppercase;color:#ef4444;margin-bottom:.18rem}
+.section-band-title{font-size:1.08rem;font-weight:900;color:#111827;letter-spacing:-.015em;line-height:1.2;text-transform:uppercase}
+.section-band-note{margin-top:.22rem;color:#667085;font-size:.75rem;line-height:1.35}
+.topic-divider{height:1px;background:#cbd5e1;margin:1.55rem 0 1.05rem;width:100%}
+.api-status-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}
+.api-status-name{font-size:.92rem;font-weight:900;color:#111827;text-transform:uppercase}
+.api-status-filter{margin-top:.18rem;font-size:.7rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.025em}
+.api-status-badge{display:inline-flex;padding:.28rem .52rem;border-radius:999px;background:#dcfce7;color:#166534;font-size:.68rem;font-weight:900;letter-spacing:.035em}
+.api-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.7rem;margin:.25rem 0 .8rem}
+.api-stat{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:.7rem .78rem}
+.api-stat-label{font-size:.61rem;font-weight:900;letter-spacing:.055em;text-transform:uppercase;color:#64748b;margin-bottom:.28rem}
+.api-stat-value{font-size:.92rem;font-weight:900;color:#111827;line-height:1.15;overflow-wrap:anywhere}
 .intro{padding:.9rem 1rem;color:#555c66;margin-bottom:1rem;box-shadow:0 3px 12px rgba(15,23,42,.035)}
 .kpi-card{position:relative;min-height:116px;padding:16px 18px 15px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;box-shadow:0 4px 16px rgba(15,23,42,.055);overflow:hidden;transition:transform .12s ease,box-shadow .12s ease}
 .kpi-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--accent)}.kpi-card.selected{outline:2px solid var(--accent);outline-offset:1px}
 .kpi-header{display:flex;align-items:center;gap:8px;margin-bottom:11px}.kpi-dot{width:9px;height:9px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);flex:0 0 auto}
 .kpi-label{color:#475569;font-size:.83rem;font-weight:700;line-height:1.15}.kpi-value{color:#0f172a;font-size:2rem;font-weight:800;line-height:1;letter-spacing:-.035em}.kpi-delta{margin-top:8px;color:#64748b;font-size:.76rem}
-[data-testid="stDataFrame"]{border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;box-shadow:0 3px 12px rgba(15,23,42,.04)}
+[data-testid="stDataFrame"],[data-testid="stDataEditor"]{border:1px solid #dfe3e8;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,23,42,.045);background:#fff}
+[data-testid="stVerticalBlockBorderWrapper"]{border-color:#e5e8ee!important;border-radius:14px!important;background:#fff!important;box-shadow:0 3px 12px rgba(15,23,42,.035)}
+[data-testid="stTabs"] button{font-weight:800!important;text-transform:uppercase!important;letter-spacing:.015em!important}
+.kpi-label{text-transform:uppercase;font-size:.72rem!important;font-weight:900!important;letter-spacing:.025em}
+.kpi-delta{text-transform:uppercase;font-size:.66rem!important;font-weight:700!important;letter-spacing:.02em}
+div[data-testid="stMarkdownContainer"] h1,
+div[data-testid="stMarkdownContainer"] h2,
+div[data-testid="stMarkdownContainer"] h3,
+div[data-testid="stMarkdownContainer"] h4{text-transform:uppercase}
 [data-testid="stAlert"]{border-radius:12px!important;box-shadow:0 3px 12px rgba(15,23,42,.035)}
 button[kind="primary"],button[data-testid="stBaseButton-primary"]{background:var(--p)!important;border-color:var(--p)!important;color:#fff!important}.footer{text-align:center;color:#9298a1;font-size:.72rem;padding-top:1.2rem}
-@media (max-width:900px){.block-container{padding-top:2rem!important;padding-left:1rem!important;padding-right:1rem!important;padding-bottom:2rem!important}.setta-logo-card{min-height:105px;margin-bottom:1.8rem;padding:.9rem 1rem}.setta-logo-card img{max-width:170px;max-height:72px}.app-title{font-size:2rem!important;line-height:1.12!important}.app-sub{font-size:.9rem!important;margin-bottom:1.6rem!important}.section-title{font-size:1.14rem!important}div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="stColumn"]{min-width:100%!important;width:100%!important;flex:1 1 100%!important}.kpi-card{min-height:112px;margin-bottom:.12rem}}
+@media (max-width:900px){.block-container{padding-top:2rem!important;padding-left:1rem!important;padding-right:1rem!important;padding-bottom:2rem!important}.setta-logo-card{min-height:105px;margin-bottom:1.8rem;padding:.9rem 1rem}.setta-logo-card img{max-width:170px;max-height:72px}.app-title{font-size:2rem!important;line-height:1.12!important}.app-sub{font-size:.86rem!important;margin-bottom:1.35rem!important}.section-title{font-size:1.14rem!important}div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="stColumn"]{min-width:100%!important;width:100%!important;flex:1 1 100%!important}.kpi-card{min-height:112px;margin-bottom:.12rem}.api-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 """.replace("__COLOR__", color),
     unsafe_allow_html=True,
@@ -2361,13 +2404,13 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
             column_config={
                 "data_pre_nota": st.column_config.DateColumn("Data pré-nota", format="DD/MM/YYYY"),
                 "numero_nf": "NF",
-                "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
+                "fornecedor": st.column_config.TextColumn("FORNECEDOR", width="large"),
                 "natureza": st.column_config.TextColumn("Natureza", width="medium"),
                 "cr": st.column_config.TextColumn("CR", width="small"),
                 "desc_cr": st.column_config.TextColumn("Desc. CR", width="medium"),
                 "prioridade": "Prioridade",
                 "ops": st.column_config.TextColumn("OPs", width="large"),
-                "data_cm_exibicao": st.column_config.TextColumn("Data CM"),
+                "data_cm_exibicao": st.column_config.TextColumn("DATA CM"),
                 "itens_impacto_exibicao": st.column_config.TextColumn("Itens impacto"),
                 "fornecedor_validacao": st.column_config.TextColumn(
                     "Fornecedor validado",
@@ -2394,12 +2437,12 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                         ),
                         "numero_nf": "NF",
                         "fornecedor": st.column_config.TextColumn(
-                            "Fornecedor",
+                            "FORNECEDOR",
                             width="large",
                         ),
                         "prioridade": "Prioridade anterior",
                         "data_cm": st.column_config.DateColumn(
-                            "Data CM",
+                            "DATA CM",
                             format="DD/MM/YYYY",
                         ),
                         "desconsiderada_em": "Desconsiderada em",
@@ -2483,12 +2526,12 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                         "numero_nf": "NF",
                         "cnpj": "CNPJ",
                         "fornecedor": st.column_config.TextColumn(
-                            "Fornecedor",
+                            "FORNECEDOR",
                             width="large",
                         ),
                         "prioridade": "Prioridade",
                         "data_cm": st.column_config.DateColumn(
-                            "Data CM",
+                            "DATA CM",
                             format="DD/MM/YYYY",
                         ),
                         "situacao_vinculo": st.column_config.TextColumn(
@@ -2496,7 +2539,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                             width="large",
                         ),
                         "score_fornecedor": st.column_config.NumberColumn(
-                            "Aderência fornecedor",
+                            "ADERÊNCIA FORNECEDOR",
                             format="%d%%",
                         ),
                     },
@@ -3704,16 +3747,13 @@ def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
 
 def render_launch_tracking_panel(
     records: pd.DataFrame | None = None,
-    title: str = "Acompanhamento de lançamentos",
+    title: str = "",
 ) -> None:
     frame = launch_tracking_frame(records)
-    st.markdown(f"#### {title}")
-    st.caption(
-        "O prazo começa na confirmação de envio. A conferência de lançamento "
-        "é feita no próximo relatório NFs / STSUP01 carregado."
-    )
+    if title:
+        st.markdown(f"#### {title.upper()}")
     if frame.empty:
-        st.caption("Nenhuma NF enviada aguardando acompanhamento.")
+        st.caption("SEM NFs ENVIADAS EM ACOMPANHAMENTO.")
         return
 
     overdue = frame[
@@ -3746,7 +3786,7 @@ def render_launch_tracking_panel(
         column_config={
             "numero_nf": "NF",
             "fornecedor_padrao": st.column_config.TextColumn(
-                "Fornecedor",
+                "FORNECEDOR",
                 width="large",
             ),
             "enviado_em_local": st.column_config.DatetimeColumn(
@@ -4357,9 +4397,9 @@ def render_pre_notes_feed() -> None:
                     "Data", format="DD/MM/YYYY"
                 ),
                 "numero_nf": "NF",
-                "recebedor": st.column_config.TextColumn("Recebedor", width="medium"),
+                "recebedor": st.column_config.TextColumn("RECEBEDOR", width="medium"),
                 "cnpj": "CNPJ",
-                "fornecedor": st.column_config.TextColumn("Fornecedor", width="large"),
+                "fornecedor": st.column_config.TextColumn("FORNECEDOR", width="large"),
                 "status": "Status",
             },
         )
@@ -4891,7 +4931,7 @@ def render_nf_treatment_center() -> None:
                 "fornecedor": st.column_config.TextColumn("Fornecedor identificado", width="large"),
                 "motivo": st.column_config.TextColumn("Motivo / atenção necessária", width="large"),
                 "aderencia_fornecedor": st.column_config.NumberColumn(
-                    "Aderência fornecedor",
+                    "ADERÊNCIA FORNECEDOR",
                     format="%d%%",
                 ),
             },
@@ -5079,7 +5119,7 @@ def render_nf_treatment_center() -> None:
                     "arquivo_original": "Arquivo",
                     "origem_dados": "Origem",
                     "numero_nf": "NF",
-                    "fornecedor_padrao": "Fornecedor",
+                    "fornecedor_padrao": "FORNECEDOR",
                     "empresa_sigla": st.column_config.TextColumn("Empresa"),
                     "vencimento": st.column_config.DateColumn("Vencimento", format="DD/MM/YYYY"),
                     "natureza": "Natureza",
@@ -5127,7 +5167,7 @@ def render_nf_treatment_center() -> None:
                 ],
                 column_config={
                     "arquivo_original": st.column_config.TextColumn(
-                        "Arquivo",
+                        "ARQUIVO",
                         width="medium",
                     ),
                     "origem_dados": st.column_config.TextColumn(
@@ -5141,11 +5181,11 @@ def render_nf_treatment_center() -> None:
                     "numero_nf": st.column_config.TextColumn("NF"),
                     "cnpj_fornecedor": st.column_config.TextColumn("CNPJ emitente"),
                     "fornecedor_padrao": st.column_config.TextColumn(
-                        "Fornecedor",
+                        "FORNECEDOR",
                         width="large",
                     ),
                     "pre_nota_recebedor": st.column_config.TextColumn(
-                        "Recebedor",
+                        "RECEBEDOR",
                         width="medium",
                     ),
                     "empresa_sigla": st.column_config.SelectboxColumn(
@@ -5280,7 +5320,7 @@ def render_nf_treatment_center() -> None:
                     "file_id": None,
                     "numero_nf": "NF",
                     "fornecedor_padrao": st.column_config.TextColumn(
-                        "Fornecedor",
+                        "FORNECEDOR",
                         width="large",
                     ),
                     "empresa_sigla": st.column_config.TextColumn(
@@ -5292,7 +5332,7 @@ def render_nf_treatment_center() -> None:
                         width="medium",
                     ),
                     "prioridade_mrp_base": st.column_config.CheckboxColumn(
-                        "Prioridade MRP",
+                        "PRIORIDADE MRP",
                         help="Definida automaticamente pelo cálculo do MRP.",
                     ),
                     "prioridade_manual": st.column_config.CheckboxColumn(
@@ -5357,7 +5397,7 @@ def render_nf_treatment_center() -> None:
                         "arquivo_original": "Arquivo original",
                         "nome_sugerido": "Nome final",
                         "natureza": "Natureza",
-                        "prioridade_mrp": st.column_config.CheckboxColumn("Prioridade MRP"),
+                        "prioridade_mrp": st.column_config.CheckboxColumn("PRIORIDADE MRP"),
                     },
                 )
 
@@ -5538,17 +5578,17 @@ def render_mrp_missing_pre_treatments() -> None:
             "numero_nf": "NF",
             "cnpj": "CNPJ",
             "fornecedor": st.column_config.TextColumn(
-                "Fornecedor",
+                "FORNECEDOR",
                 width="large",
             ),
             "recebedor": st.column_config.TextColumn(
-                "Recebedor",
+                "RECEBEDOR",
                 width="medium",
                 help="Obrigatório para adicionar a NF ao fluxo.",
             ),
             "prioridade": "Prioridade",
             "data_cm": st.column_config.DateColumn(
-                "Data CM",
+                "DATA CM",
                 format="DD/MM/YYYY",
             ),
             "situacao_vinculo": st.column_config.TextColumn(
@@ -5556,7 +5596,7 @@ def render_mrp_missing_pre_treatments() -> None:
                 width="large",
             ),
             "score_fornecedor": st.column_config.NumberColumn(
-                "Aderência fornecedor",
+                "ADERÊNCIA FORNECEDOR",
                 format="%d%%",
             ),
         },
@@ -6989,7 +7029,7 @@ def render_document_linking_stage() -> None:
             column_config={
                 "numero_nf": "NF",
                 "fornecedor_padrao": st.column_config.TextColumn(
-                    "Fornecedor",
+                    "FORNECEDOR",
                     width="large",
                 ),
                 "origem_dados": "Origem",
@@ -7198,22 +7238,15 @@ def render_document_linking_stage() -> None:
 
 
 def render_file_processing():
-    st.markdown(
-        '<div class="section-title">Processamento de arquivos</div>',
-        unsafe_allow_html=True,
-    )
-    st.caption(
-        "Etapa 1 — alimente somente os relatórios-base. O aplicativo identifica "
-        "as pré-notas pendentes, verifica NFs ausentes no confronto MRP e calcula "
-        "as prioridades. Os XMLs só entram depois, em Pré-notas pendentes."
-    )
-
     api_material_carga = _cached_materials_api_status() or {}
     api_material_available = bool(
         api_material_carga.get("disponivel")
     )
 
-    st.markdown("#### Integração de Materiais")
+    section_band(
+        "01 · INTEGRAÇÃO",
+        "MATERIAIS VIA API",
+    )
     with st.container(border=True):
         if api_material_available:
             api_when = pd.to_datetime(
@@ -7234,25 +7267,34 @@ def render_file_processing():
 
             st.markdown(
                 f"""
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
+                <div class="api-status-head">
                     <div>
-                        <div style="font-size:1.05rem;font-weight:800;color:#0f172a;">API Gestão de Entregas</div>
-                        <div style="margin-top:.22rem;color:#64748b;font-size:.83rem;">
-                            Fonte automática do relatório de Materiais · filtro <b>{api_material_carga.get('filtro') or 'PENDÊNCIA SEM ESTOQUE'}</b>
-                        </div>
+                        <div class="api-status-name">GESTÃO DE ENTREGAS</div>
+                        <div class="api-status-filter">{api_material_carga.get('filtro') or 'PENDÊNCIA SEM ESTOQUE'}</div>
                     </div>
-                    <div style="padding:.35rem .65rem;border-radius:999px;background:#dcfce7;color:#166534;font-weight:800;font-size:.76rem;">
-                        CONECTADA
+                    <span class="api-status-badge">CONECTADA</span>
+                </div>
+                <div class="api-grid">
+                    <div class="api-stat">
+                        <div class="api-stat-label">ITENS ATIVOS</div>
+                        <div class="api-stat-value">{int(api_material_carga.get('total_itens') or 0)}</div>
+                    </div>
+                    <div class="api-stat">
+                        <div class="api-stat-label">PRODUTOS</div>
+                        <div class="api-stat-value">{int(api_material_carga.get('total_produtos') or 0)}</div>
+                    </div>
+                    <div class="api-stat">
+                        <div class="api-stat-label">CARGA</div>
+                        <div class="api-stat-value">#{api_material_carga.get('carga_id') or '—'}</div>
+                    </div>
+                    <div class="api-stat">
+                        <div class="api-stat-label">ÚLTIMA VERIFICAÇÃO</div>
+                        <div class="api-stat-value">{api_when_txt}</div>
                     </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Itens ativos", int(api_material_carga.get("total_itens") or 0))
-            k2.metric("Produtos", int(api_material_carga.get("total_produtos") or 0))
-            k3.metric("Carga", str(api_material_carga.get("carga_id") or "—"))
-            k4.metric("Última verificação", api_when_txt)
         else:
             st.error(
                 "API de Materiais sem carga ativa. "
@@ -7288,8 +7330,12 @@ def render_file_processing():
             except Exception as exc:
                 st.error(f"Não foi possível atualizar a API de Materiais: {exc}")
 
+    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+    section_band(
+        "02 · ALIMENTAÇÃO",
+        "RELATÓRIOS-BASE",
+    )
     with st.container(border=True):
-        st.markdown("#### Relatórios-base")
         r1, r2 = st.columns(2)
         pre_file = r1.file_uploader(
             "Pré-notas",
@@ -7305,13 +7351,9 @@ def render_file_processing():
         material_file = None
         supplier_file = None
         with st.expander(
-            "Contingência manual — Materiais e Fornecedores",
+            "CONTINGÊNCIA MANUAL · MATERIAIS E FORNECEDORES",
             expanded=False,
         ):
-            st.caption(
-                "Use somente se a integração automática estiver indisponível "
-                "ou se for necessário substituir a fonte nesta análise."
-            )
             c1, c2 = st.columns(2)
             material_file = c1.file_uploader(
                 "Materiais — contingência",
@@ -7742,7 +7784,11 @@ st.markdown(
 
 
 if page == "Dashboard":
-    st.markdown('<div class="section-title">Dashboard operacional</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">DASHBOARD OPERACIONAL</div>', unsafe_allow_html=True)
+    section_band(
+        "01 · VISÃO GERAL",
+        "INDICADORES DO FLUXO",
+    )
     if not SAVE_NF_HISTORY:
         records = pd.DataFrame(st.session_state.get("current_test_manifest") or [])
         st.caption("Modo de testes: Dashboard considera somente a carga atual e ignora o histórico do banco.")
@@ -7862,10 +7908,10 @@ if page == "Dashboard":
     )
 
     kpis = [
-        ("NFs recebidas", nf_received, "Notas fiscais vinculadas", "#2563eb", "#dbeafe", True),
-        ("CT-es vinculados", cte_received, "Conhecimentos no controle", "#7c3aed", "#ede9fe", False),
-        ("Pré-notas realizadas", pre_done, "Vinculadas ao controle", "#d97706", "#ffedd5", False),
-        ("Arquivos criados", created, "DANFEs + DACTEs", "#0891b2", "#cffafe", False),
+        ("NFs RECEBIDAS", nf_received, "VINCULADAS", "#2563eb", "#dbeafe", False),
+        ("CT-es VINCULADOS", cte_received, "NO CONTROLE", "#7c3aed", "#ede9fe", False),
+        ("PRÉ-NOTAS REALIZADAS", pre_done, "CONCLUÍDAS", "#d97706", "#ffedd5", False),
+        ("ARQUIVOS CRIADOS", created, "DANFE + DACTE", "#0891b2", "#cffafe", False),
     ]
     for col, item in zip(st.columns(4), kpis):
         label, value, delta, accent, soft, selected = item
@@ -7878,8 +7924,8 @@ if page == "Dashboard":
         )
 
     sent_cards = [
-        ("NFs enviadas", nf_sent, "Envio confirmado", "#16a34a", "#dcfce7"),
-        ("CT-es enviados", cte_sent, "Envio confirmado", "#15803d", "#dcfce7"),
+        ("NFs ENVIADAS", nf_sent, "CONFIRMADAS", "#16a34a", "#dcfce7"),
+        ("CT-es ENVIADOS", cte_sent, "CONFIRMADOS", "#15803d", "#dcfce7"),
     ]
     for col, item in zip(st.columns(2), sent_cards):
         label, value, delta, accent, soft = item
@@ -7890,20 +7936,24 @@ if page == "Dashboard":
             unsafe_allow_html=True,
         )
 
-    st.markdown("<div style='height:.55rem'></div>", unsafe_allow_html=True)
-    render_launch_tracking_panel(
-        title="Acompanhamento de lançamentos — prazo de 24 horas"
+    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+    section_band(
+        "02 · PRAZO",
+        "ACOMPANHAMENTO DE LANÇAMENTOS",
+        "PRAZO OPERACIONAL: 24 HORAS",
     )
+    render_launch_tracking_panel()
 
     if not db.configured():
-        st.caption("Persistência ainda não conectada neste deployment. Configure a chave do Supabase em Configurações.")
+        st.caption("SUPABASE NÃO CONECTADO.")
 
-    st.markdown('<div class="section-title" style="margin-top:1.65rem!important;">Consulta de documentos finalizados</div>', unsafe_allow_html=True)
-    st.caption(
-        "Esta área é somente para consulta. O envio é confirmado em Geração de Arquivos → Pré-notas pendentes."
+    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+    section_band(
+        "03 · DOCUMENTOS",
+        "DOCUMENTOS FINALIZADOS",
     )
     if finalized_records.empty:
-        st.caption("Nenhum documento teve o envio confirmado até o momento.")
+        st.caption("NENHUM DOCUMENTO FINALIZADO.")
     else:
         ref_date = (
             pd.to_datetime(
@@ -8069,35 +8119,35 @@ if page == "Dashboard":
             use_container_width=True,
             hide_index=True,
             column_config={
-                "tipo_documento": "Tipo",
+                "tipo_documento": "TIPO",
                 "documento": "NF / CT-e",
                 "parte": st.column_config.TextColumn(
-                    "Fornecedor / Transportadora",
+                    "FORNECEDOR / TRANSPORTADORA",
                     width="large",
                 ),
                 "nfs_vinculadas": st.column_config.TextColumn(
-                    "NFs vinculadas",
+                    "NFs VINCULADAS",
                     width="medium",
                 ),
-                "empresa_sigla": "Empresa",
-                "natureza": "Natureza",
+                "empresa_sigla": "EMPRESA",
+                "natureza": "NATUREZA",
                 "prioridade_mrp": st.column_config.CheckboxColumn(
-                    "Prioridade"
+                    "PRIORIDADE"
                 ),
                 "pdf_criado_em": st.column_config.DatetimeColumn(
-                    "PDF criado em",
+                    "PDF CRIADO EM",
                     format="DD/MM/YYYY HH:mm",
                 ),
                 "enviado_em": st.column_config.DatetimeColumn(
-                    "Enviado em",
+                    "ENVIADO EM",
                     format="DD/MM/YYYY HH:mm",
                 ),
                 "lancado_em": st.column_config.DatetimeColumn(
-                    "Lançamento confirmado",
+                    "LANÇAMENTO CONFIRMADO",
                     format="DD/MM/YYYY HH:mm",
                 ),
                 "lancamento_verificado_em": st.column_config.DatetimeColumn(
-                    "Última conferência STSUP01",
+                    "ÚLTIMA CONFERÊNCIA STSUP01",
                     format="DD/MM/YYYY HH:mm",
                 ),
                 "arquivo_final": st.column_config.TextColumn(
@@ -8235,11 +8285,8 @@ elif page == "Pendências":
 
     _control_docs_title = str(cfg.get("control_docs_label") or DEFAULT["control_docs_label"]).strip()
     st.markdown(
-        f'<div class="section-title">{_control_docs_title}</div>',
+        f'<div class="section-title">{_control_docs_title.upper()}</div>',
         unsafe_allow_html=True,
-    )
-    st.caption(
-        "Pré-notas pendentes é a central de tratativa geral das NFs. O Impacto MRP é calculado em segundo plano e apenas influencia a prioridade."
     )
 
     pending_records = current_process_records_for_tests()
@@ -8265,17 +8312,20 @@ elif page == "Pendências":
             temp["chave_validacao"].ne("") & ~temp["chave_validacao"].isin(pre_keys)
         ].copy()
 
-    pend_pre_tab, pend_process_tab = st.tabs(["Pré-notas pendentes", "Processamento de arquivos"])
+    pend_pre_tab, pend_process_tab = st.tabs(["PRÉ-NOTAS PENDENTES", "PROCESSAMENTO DE ARQUIVOS"])
 
     with pend_pre_tab:
+        section_band(
+            "01 · PENDÊNCIAS",
+            "PRÉ-NOTAS PENDENTES",
+        )
         show_last_update("pre")
         if pre_base.empty:
             st.info(
-                "A base de pré-notas ainda não foi carregada. "
-                "Use Processamento de arquivos > Alimentação."
+                "BASE DE PRÉ-NOTAS NÃO CARREGADA. USE PROCESSAMENTO DE ARQUIVOS."
             )
         elif pending_pre.empty:
-            st.success("Nenhuma pré-nota pendente de documento na carga atual.")
+            st.success("NENHUMA PRÉ-NOTA PENDENTE.")
         else:
             # Complementa a carga com o fornecedor padrão usando o CNPJ.
             supplier_base = supplier_dataframe(st.session_state.suppliers)
@@ -8491,28 +8541,12 @@ elif page == "Pendências":
             )
             if mrp_errors:
                 st.error(
-                    f"{mrp_errors} pré-nota(s) não foram localizadas com segurança no relatório de NFs. "
-                    "O vínculo usa número da NF e fornecedor; o impacto MRP é calculado depois, "
-                    "comparando os códigos de produto da NF com o relatório de peças/materiais."
+                    f"{mrp_errors} PRÉ-NOTA(S) EXIGEM REVISÃO DE VÍNCULO COM O STSUP01."
                 )
 
-            st.markdown(
-                f"""
-                <div class="panel" style="padding:1.05rem 1.2rem;margin:0 0 1rem 0;">
-                    <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;">
-                        <div>
-                            <div style="font-size:1.12rem;font-weight:800;color:#0f172a;">Pré-notas pendentes de documento</div>
-                            <div style="margin-top:.24rem;font-size:.82rem;color:#64748b;">
-                                Vínculo da NF por número + fornecedor. A prioridade MRP é calculada pelos códigos dos produtos da NF comparados ao relatório de peças/materiais.
-                            </div>
-                        </div>
-                        <div style="font-size:.82rem;font-weight:800;color:#0f172a;background:#f8fafc;border:1px solid #e2e8f0;border-radius:999px;padding:.45rem .75rem;">
-                            {len(pending_view)} pendente(s)
-                        </div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
+            section_band(
+                "02 · TRATATIVA",
+                f"DOCUMENTOS PENDENTES · {len(pending_view)}",
             )
 
             # Barra de pesquisa no mesmo padrão visual do fluxo operacional.
@@ -8556,20 +8590,20 @@ elif page == "Pendências":
                     key="pre_pending_date",
                 )
                 f3.selectbox(
-                    "Fornecedor",
+                    "FORNECEDOR",
                     supplier_options,
                     key="pre_pending_supplier",
                 )
 
                 b1, b2 = st.columns([9, 1])
                 b1.button(
-                    "Pesquisar",
+                    "PESQUISAR",
                     type="primary",
                     use_container_width=True,
                     key="pre_pending_search_button",
                 )
                 b2.button(
-                    "Limpar",
+                    "LIMPAR",
                     use_container_width=True,
                     key="pre_pending_clear_button",
                     on_click=_clear_pre_pending_filters,
@@ -8629,7 +8663,7 @@ elif page == "Pendências":
                 axis=1,
             )
             pending_select_all = st.checkbox(
-                "Marcar / desmarcar todas as NFs exibidas",
+                "MARCAR / DESMARCAR TODAS AS NFs EXIBIDAS",
                 value=True,
                 key=f"pending_select_all_{len(editor_view)}",
             )
@@ -8675,11 +8709,11 @@ elif page == "Pendências":
                     ],
                     column_config={
                         "Selecionar": st.column_config.CheckboxColumn(
-                            "Selecionar"
+                            "SELECIONAR"
                         ),
                         "_flow_key": None,
                         "data_pre_nota": st.column_config.DateColumn(
-                            "Data de recebimento",
+                            "DATA DE RECEBIMENTO",
                             format="DD/MM/YYYY",
                             help=(
                                 "Data usada no controle interno/carimbo. "
@@ -8689,32 +8723,32 @@ elif page == "Pendências":
                         "numero_nf": "NF",
                         "cnpj": "CNPJ",
                         "fornecedor": st.column_config.TextColumn(
-                            "Fornecedor",
+                            "FORNECEDOR",
                             width="large",
                         ),
                         "recebedor": st.column_config.TextColumn(
-                            "Recebedor",
+                            "RECEBEDOR",
                             width="medium",
                             help=(
                                 "Obrigatório para seguir para geração. "
                                 "Pode ser preenchido diretamente nesta tabela."
                             ),
                         ),
-                        "prioridade": "Prioridade MRP",
+                        "prioridade": "PRIORIDADE MRP",
                         "data_cm": st.column_config.DateColumn(
-                            "Data CM",
+                            "DATA CM",
                             format="DD/MM/YYYY",
                         ),
                         "ops_mrp": st.column_config.TextColumn(
-                            "OPs impactadas",
+                            "OPs IMPACTADAS",
                             width="medium",
                         ),
                         "situacao_mrp": st.column_config.TextColumn(
-                            "Situação MRP",
+                            "SITUAÇÃO MRP",
                             width="large",
                         ),
                         "aderencia_fornecedor": st.column_config.NumberColumn(
-                            "Aderência fornecedor",
+                            "ADERÊNCIA FORNECEDOR",
                             format="%d%%",
                         ),
                         "cte": st.column_config.TextColumn(
@@ -8722,11 +8756,11 @@ elif page == "Pendências":
                             width="medium",
                         ),
                         "tratativa": st.column_config.TextColumn(
-                            "Tratativa",
+                            "TRATATIVA",
                             width="medium",
                         ),
                         "validacao_documento": st.column_config.TextColumn(
-                            "Validação documento",
+                            "VALIDAÇÃO DOCUMENTO",
                             width="medium",
                         ),
                     },
@@ -9122,7 +9156,7 @@ elif page == "Pendências":
                             width="small",
                         ),
                         "pre_nota_em": st.column_config.DateColumn(
-                            "Data de recebimento",
+                            "DATA DE RECEBIMENTO",
                             format="DD/MM/YYYY",
                         ),
                         "documento": st.column_config.TextColumn(
@@ -9364,11 +9398,12 @@ elif page == "Pendências":
                             f"Falha ao {action_name}: {exc}"
                         )
 
-        st.divider()
-        render_launch_tracking_panel(
-            pending_records,
-            title="Acompanhamento de lançamentos",
+        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+        section_band(
+            "03 · PRAZO",
+            "ACOMPANHAMENTO DE LANÇAMENTOS",
         )
+        render_launch_tracking_panel(pending_records)
 
     with pend_process_tab:
         render_file_processing()
