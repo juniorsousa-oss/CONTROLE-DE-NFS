@@ -329,6 +329,49 @@ def delete_process_records(ids: Iterable[str]) -> dict:
     ) or {}
 
 
+def list_excluded_documents() -> list[dict]:
+    if not configured():
+        return []
+    data = rpc("nf_listar_desconsiderados", {}, timeout=45)
+    return data if isinstance(data, list) else []
+
+
+def mark_documents_excluded(
+    numbers: Iterable[str],
+    reason: str = "",
+    source: str = "",
+    operator: str = "",
+) -> dict:
+    values = [str(x) for x in numbers if str(x).strip()]
+    if not values:
+        return {"marcados": 0}
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    return rpc(
+        "nf_desconsiderar_documentos",
+        {
+            "p_numeros": values,
+            "p_motivo": str(reason or "").strip() or None,
+            "p_origem": str(source or "").strip() or None,
+            "p_operador": str(operator or "").strip() or None,
+        },
+        timeout=45,
+    ) or {}
+
+
+def restore_excluded_documents(numbers: Iterable[str]) -> dict:
+    values = [str(x) for x in numbers if str(x).strip()]
+    if not values:
+        return {"restaurados": 0}
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    return rpc(
+        "nf_restaurar_documentos",
+        {"p_numeros": values},
+        timeout=45,
+    ) or {}
+
+
 def update_receipt_dates(updates: Iterable[dict]) -> dict:
     updates = [
         dict(item)
