@@ -2900,20 +2900,31 @@ def match_document_to_pre_note(
 
     # O CNPJ é o vínculo mais forte quando existe nos dois lados. Isso é
     # especialmente importante para NFs adicionadas pela análise do MRP.
-    if doc_cnpj and "cnpj" in candidates.columns:
+    if len(doc_cnpj) == 14 and "cnpj" in candidates.columns:
         candidate_cnpj = candidates["cnpj"].map(digits_only)
         exact_cnpj = candidates[candidate_cnpj.eq(doc_cnpj)].copy()
         if len(exact_cnpj) == 1:
             best = exact_cnpj.iloc[0]
             result.update(
                 matched=True,
-                situacao="OK",
+                situacao="OK - CNPJ EXATO",
                 score_fornecedor=100,
                 row=best.to_dict(),
             )
             return result
         if len(exact_cnpj) > 1:
             candidates = exact_cnpj
+        else:
+            # Se documento e pré-nota possuem CNPJ completo e eles divergem,
+            # não permitimos que similaridade de nome force uma associação.
+            known_candidate_cnpjs = {
+                value for value in candidate_cnpj.tolist()
+                if len(value) == 14
+            }
+            if known_candidate_cnpjs:
+                result["situacao"] = "CNPJ DIVERGENTE"
+                result["score_fornecedor"] = 0
+                return result
 
     supplier_names = [
         str(document_row.get("fornecedor_padrao") or "").strip(),
@@ -4271,6 +4282,20 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
         # O PDF pode complementar leitura/validação, mas nunca prevalece como
         # arquivo-base quando também existe XML.
         row = pdf_result.to_dict()
+
+        # O CNPJ fiscal prevalece sobre qualquer associação aproximada por nome.
+        # Isso evita atribuir uma NF a outro fornecedor com razão social parecida.
+        _pdf_cnpj = digits_only(row.get("cnpj_fornecedor"))
+        _pdf_exact_supplier = supplier_name_from_cnpj(_pdf_cnpj)
+        if _pdf_exact_supplier:
+            row["fornecedor_padrao"] = _pdf_exact_supplier
+            row["metodo_fornecedor"] = "CNPJ exato"
+        elif len(_pdf_cnpj) == 14:
+            _pdf_emitter = str(row.get("fornecedor_lido") or "").strip()
+            if _pdf_emitter:
+                row["fornecedor_padrao"] = _pdf_emitter
+            row["metodo_fornecedor"] = "CNPJ não cadastrado - conferir"
+
         # Natureza interna não é aceita do PDF/carimbo antigo. Ela será
         # preenchida exclusivamente pela carga de Nota Fiscal (STSUP01).
         row["natureza"] = ""
@@ -4316,17 +4341,33 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
         source_mode = "XML + PDF" if pdf_item else "XML"
 
         supplier_read = str(xml_data.get("fornecedor_lido") or "").strip()
-        supplier_match = match_supplier(
-            str(xml_data.get("cnpj_fornecedor") or ""),
-            supplier_read,
-            st.session_state.suppliers,
-        )
+        _xml_cnpj = digits_only(xml_data.get("cnpj_fornecedor"))
+        _xml_exact_supplier = supplier_name_from_cnpj(_xml_cnpj)
         pre_supplier = pre_supplier_name(pre_row)
-        supplier_standard = str(
-            supplier_match.get("nome_padrao")
-            or standard_supplier_name(pre_supplier)
-            or supplier_read
-        ).strip()
+
+        if _xml_exact_supplier:
+            supplier_standard = _xml_exact_supplier
+            supplier_method = "CNPJ exato"
+            supplier_score = 100
+        elif len(_xml_cnpj) == 14:
+            supplier_standard = supplier_read or pre_supplier
+            supplier_method = "CNPJ não cadastrado - emitente do XML"
+            supplier_score = 0
+        else:
+            supplier_match = match_supplier(
+                "",
+                supplier_read,
+                st.session_state.suppliers,
+            )
+            supplier_standard = str(
+                supplier_match.get("nome_padrao")
+                or supplier_read
+                or pre_supplier
+            ).strip()
+            supplier_method = str(
+                supplier_match.get("metodo") or "Nome do XML"
+            )
+            supplier_score = int(supplier_match.get("score") or 0)
 
         row["numero_nf"] = normalized_nf(xml_data.get("numero_nf"))
         row["serie"] = str(xml_data.get("serie") or "").strip()
@@ -4342,10 +4383,11 @@ def _build_hybrid_nf_document(group: dict) -> tuple[dict, dict]:
             row["destinatario"],
             row["cnpj_destinatario"],
         )
-        row["metodo_fornecedor"] = (
-            f"XML + {supplier_match.get('metodo') or 'fornecedor validado'}"
+        row["metodo_fornecedor"] = f"XML + {supplier_method}"
+        row["confianca"] = max(
+            int(row.get("confianca") or 0),
+            98 if supplier_score == 100 else 88,
         )
-        row["confianca"] = max(int(row.get("confianca") or 0), 98)
 
         xml_due = xml_data.get("vencimento")
         if xml_due:
