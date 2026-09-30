@@ -6864,6 +6864,7 @@ def render_document_linking_stage() -> None:
         nf_candidates = []
         cte_candidates = []
         ignored = 0
+        ignored_items = []
         nf_rejected = []
         cte_rejected = []
         cte_non_setta = []
@@ -6911,6 +6912,11 @@ def render_document_linking_stage() -> None:
                     })
                 except Exception:
                     ignored += 1
+                    ignored_items.append({
+                        "arquivo": file.name,
+                        "tipo": "XML",
+                        "motivo": "Arquivo não identificado como NF-e ou CT-e válido.",
+                    })
 
             elif ext == ".pdf":
                 try:
@@ -6920,6 +6926,11 @@ def render_document_linking_stage() -> None:
                     )
                 except Exception:
                     ignored += 1
+                    ignored_items.append({
+                        "arquivo": file.name,
+                        "tipo": "PDF",
+                        "motivo": "PDF sem leitura suficiente para identificar NF-e/CT-e.",
+                    })
                     progress.progress(
                         idx / max(1, len(uploaded)),
                         text=f"Classificando {idx}/{len(uploaded)} — {file.name}",
@@ -6963,6 +6974,11 @@ def render_document_linking_stage() -> None:
                     })
             else:
                 ignored += 1
+                ignored_items.append({
+                    "arquivo": file.name,
+                    "tipo": ext or "ARQUIVO",
+                    "motivo": "Formato não suportado nesta etapa.",
+                })
 
             progress.progress(
                 idx / max(1, len(uploaded)),
@@ -7094,6 +7110,14 @@ def render_document_linking_stage() -> None:
                     extras = docs[1:]
                     ignored += len(extras)
                     for extra in extras:
+                        ignored_items.append({
+                            "arquivo": str(extra.get("name") or "Documento"),
+                            "tipo": "NF-e duplicada",
+                            "motivo": (
+                                "Versão sobressalente da mesma NF; foi mantido "
+                                "o documento com melhor correspondência."
+                            ),
+                        })
                         file_store.pop(
                             str(extra.get("file_id") or ""),
                             None,
@@ -7174,6 +7198,11 @@ def render_document_linking_stage() -> None:
         for item in cte_candidates:
             if not isinstance(analysis, pd.DataFrame) or analysis.empty:
                 ignored += 1
+                ignored_items.append({
+                    "arquivo": item.get("name") or "CT-e",
+                    "tipo": "CT-e",
+                    "motivo": "Nenhuma NF-e vinculada estava disponível para associar o CT-e.",
+                })
                 continue
 
             linked_rows = []
@@ -7229,6 +7258,11 @@ def render_document_linking_stage() -> None:
 
                     if meta.chave and meta.chave in existing_cte_keys:
                         ignored += 1
+                        ignored_items.append({
+                            "arquivo": item.get("name") or "CT-e XML",
+                            "tipo": "CT-e duplicado",
+                            "motivo": f"Chave do CT-e {meta.numero or ''} já vinculada ao lote.",
+                        })
                         continue
 
                     payload = generate_dacte_pdf(item["raw"])
@@ -7310,6 +7344,11 @@ def render_document_linking_stage() -> None:
                 chave_cte = cte_keys[0] if cte_keys else ""
                 if chave_cte and chave_cte in existing_cte_keys:
                     ignored += 1
+                    ignored_items.append({
+                        "arquivo": item.get("name") or "CT-e PDF",
+                        "tipo": "CT-e duplicado",
+                        "motivo": "Chave do CT-e já vinculada ao lote.",
+                    })
                     continue
 
                 numero_cte = ""
@@ -7410,6 +7449,15 @@ def render_document_linking_stage() -> None:
         st.session_state.document_link_stats = dict(
             st.session_state.prefilter_stats
         )
+        _unassociated = list(ignored_items)
+        for _item in nf_rejected:
+            if not bool(_item.get("vinculado_base")):
+                _unassociated.append({
+                    "arquivo": _item.get("arquivo") or "NF-e",
+                    "tipo": _item.get("tipo") or "NF-e",
+                    "motivo": _item.get("motivo") or "Sem associação com a base principal.",
+                })
+        st.session_state.document_ignored_items = _unassociated
         progress.empty()
         st.rerun()
 
@@ -7636,6 +7684,24 @@ def render_document_linking_stage() -> None:
             f"{ignored_count} arquivo(s) sem vínculo com a base principal "
             "foram desconsiderados automaticamente."
         )
+
+    _ignored_items = list(st.session_state.get("document_ignored_items") or [])
+    if _ignored_items:
+        with st.expander(
+            f"DOCUMENTOS NÃO ASSOCIADOS / IGNORADOS ({len(_ignored_items)})",
+            expanded=False,
+        ):
+            _ignored_view = pd.DataFrame(_ignored_items).fillna("NÃO INFORMADO")
+            st.dataframe(
+                _ignored_view,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "arquivo": st.column_config.TextColumn("ARQUIVO", width="large"),
+                    "tipo": st.column_config.TextColumn("TIPO", width="small"),
+                    "motivo": st.column_config.TextColumn("MOTIVO", width="large"),
+                },
+            )
 
     if st.session_state.get("cte_rejected"):
         st.error(
