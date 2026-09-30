@@ -241,6 +241,26 @@ def load_mrp_load() -> dict:
     return rows[0] if rows else {}
 
 
+def load_materials_api_status() -> dict:
+    if not configured():
+        return {}
+    return rpc(
+        "nf_materiais_api_status",
+        {},
+        timeout=45,
+    ) or {}
+
+
+def load_materials_api_current() -> dict:
+    if not configured():
+        return {}
+    return rpc(
+        "nf_materiais_api_atual",
+        {},
+        timeout=60,
+    ) or {}
+
+
 def list_mrp_imports(limit: int = 100) -> list[dict]:
     if not configured():
         return []
