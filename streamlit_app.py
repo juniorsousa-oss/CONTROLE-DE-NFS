@@ -581,6 +581,13 @@ def section_band(
     )
 
 
+def empty_state(message: str) -> None:
+    st.markdown(
+        f'<div class="setta-empty-state">{message}</div>',
+        unsafe_allow_html=True,
+    )
+
+
 st.markdown(
     """
 <style>
@@ -638,6 +645,7 @@ section[data-testid="stSidebar"][aria-expanded="false"]{width:0!important;min-wi
 .api-stat{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:.7rem .78rem}
 .api-stat-label{font-size:.61rem;font-weight:900;letter-spacing:.055em;text-transform:uppercase;color:#64748b;margin-bottom:.28rem}
 .api-stat-value{font-size:.92rem;font-weight:900;color:#111827;line-height:1.15;overflow-wrap:anywhere}
+.setta-empty-state{border:1px dashed #cbd5e1;border-radius:12px;background:#f8fafc;padding:.85rem 1rem;color:#64748b;font-size:.76rem;font-weight:800;letter-spacing:.02em;text-transform:uppercase;margin:.1rem 0 .5rem}
 .intro{padding:.9rem 1rem;color:#555c66;margin-bottom:1rem;box-shadow:0 3px 12px rgba(15,23,42,.035)}
 .kpi-card{position:relative;min-height:116px;padding:16px 18px 15px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;box-shadow:0 4px 16px rgba(15,23,42,.055);overflow:hidden;transition:transform .12s ease,box-shadow .12s ease}
 .kpi-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--accent)}.kpi-card.selected{outline:2px solid var(--accent);outline-offset:1px}
@@ -4716,14 +4724,13 @@ def render_nf_treatment_center() -> None:
     resolved = list(st.session_state.get("prefilter_resolved") or [])
     file_store = st.session_state.get("prefilter_files") or {}
 
-    st.markdown("### Central de tratativas de NF")
-    st.caption(
-        "Aqui aparecem somente problemas de documentos já reconhecidos como pertencentes "
-        "às NFs válidas da base. Arquivos sobressalentes são ignorados automaticamente."
+    section_band(
+        "04 · TRATATIVAS",
+        "CENTRAL DE TRATATIVAS DE NF",
     )
 
     if rejected:
-        st.markdown("#### Arquivos que exigem decisão")
+        st.markdown("#### ARQUIVOS QUE EXIGEM DECISÃO")
         st.warning(
             f"{len(rejected)} arquivo(s) precisam ser avaliados antes de encerrar a carga."
         )
@@ -4764,7 +4771,7 @@ def render_nf_treatment_center() -> None:
             replace_map[f"{rid}::{label}"] = rid
 
         if replace_map:
-            with st.expander("Substituir XML/PDF corrigido", expanded=False):
+            with st.expander("SUBSTITUIR XML/PDF CORRIGIDO", expanded=False):
                 selected_replace = st.selectbox(
                     "Arquivo que será substituído",
                     list(replace_map.keys()),
@@ -5057,7 +5064,7 @@ def render_nf_treatment_center() -> None:
             st.rerun()
 
     elif resolved:
-        st.success("Nenhum arquivo aguardando decisão manual nesta carga.")
+        empty_state("NENHUM ARQUIVO AGUARDANDO DECISÃO MANUAL")
 
     # Conferência, correções, aprovação, geração e download que antes ficavam
     # em Processamento de arquivos agora vivem integralmente nesta central.
@@ -5065,7 +5072,7 @@ def render_nf_treatment_center() -> None:
     if not frame.empty and "origem_dados" not in frame.columns:
         frame["origem_dados"] = "PDF"
     if frame.empty:
-        st.info("Nenhum lote analisado nesta sessão.")
+        empty_state("AGUARDANDO DOCUMENTOS ANALISADOS")
     else:
         frame = apply_cross_checks(frame)
         frame = recalc(frame)
@@ -5084,15 +5091,14 @@ def render_nf_treatment_center() -> None:
             .sum()
         )
 
-        st.markdown("### Conferência")
+        st.markdown("### CONFERÊNCIA")
         st.caption(
-            f"{len(merged)} NF(s) vinculada(s) • {ready_count} pronta(s) • "
-            f"{len(pending)} tratativa(s) • {priority_count} prioridade(s)"
+            f"{len(merged)} NF(s) · {ready_count} PRONTA(S) · "
+            f"{len(pending)} TRATATIVA(S) · {priority_count} PRIORIDADE(S)"
         )
-        with st.expander("Regras da conferência", expanded=False):
+        with st.expander("REGRAS DA CONFERÊNCIA", expanded=False):
             st.caption(
-                "Corrija apenas exceções. Vencimento, NF, fornecedor, empresa e status "
-                "podem ser ajustados. A Natureza vem exclusivamente da carga STSUP01."
+                "AJUSTE SOMENTE AS EXCEÇÕES. A NATUREZA É RETORNADA PELO STSUP01."
             )
 
         with st.expander(
@@ -5128,9 +5134,9 @@ def render_nf_treatment_center() -> None:
             )
 
         if pending.empty:
-            st.caption("Sem tratativas pendentes nesta carga.")
+            empty_state("SEM TRATATIVAS PENDENTES")
         else:
-            st.markdown("### Tratativas necessárias")
+            st.markdown("### TRATATIVAS NECESSÁRIAS")
             st.warning(
                 f"{len(pending)} documento(s) precisam de tratativa. "
                 "Corrija somente os campos necessários abaixo e clique em **Aplicar correções**."
@@ -5281,7 +5287,7 @@ def render_nf_treatment_center() -> None:
             & merged["nome_sugerido"].fillna("").astype(str).str.strip().ne("")
         )
 
-        st.markdown("### Definição de prioridade")
+        st.markdown("### DEFINIÇÃO DE PRIORIDADE")
         st.caption(
             "A prioridade calculada pelo MRP permanece automática. O operador pode "
             "marcar prioridade adicional para qualquer NF antes da geração dos arquivos."
@@ -5380,7 +5386,7 @@ def render_nf_treatment_center() -> None:
                 f"Lote aprovado: {normal} documento(s) no fluxo normal e "
                 f"{priority} em prioridade."
             )
-            with st.expander("Prévia final dos nomes", expanded=False):
+            with st.expander("PRÉVIA FINAL DOS NOMES", expanded=False):
                 st.dataframe(
                     merged[
                         [
@@ -5517,16 +5523,16 @@ def render_mrp_missing_pre_treatments() -> None:
 
     missing = _refresh_missing_mrp_analysis()
 
-    st.markdown("### Conferência entre MRP e Pré-notas")
+    section_band(
+        "02 · CONFERÊNCIA",
+        "MRP × PRÉ-NOTAS",
+    )
     if missing.empty:
-        st.success(
-            "Nenhuma NF do MRP está pendente de decisão em relação à base de Pré-notas."
-        )
+        empty_state("SEM DIVERGÊNCIAS ENTRE MRP E PRÉ-NOTAS")
         return
 
     st.warning(
-        f"{len(missing)} NF(s) do MRP não tiveram correspondência segura na base de Pré-notas. "
-        "Resolva essas ocorrências antes de vincular os XMLs."
+        f"{len(missing)} NF(s) EXIGEM REVISÃO DE VÍNCULO ENTRE MRP E PRÉ-NOTAS."
     )
 
     missing = missing.copy()
@@ -6375,30 +6381,24 @@ def _analysis_rows_for_cte_pdf(
 
 
 def render_document_linking_stage() -> None:
-    st.markdown("### Documentos fiscais")
-    st.caption(
-        "Envie em um único campo XMLs e PDFs de NF-e e CT-e. O aplicativo separa "
-        "automaticamente os tipos e mantém somente documentos vinculados às NFs "
-        "válidas da base principal."
+    section_band(
+        "03 · DOCUMENTOS",
+        "DOCUMENTOS FISCAIS",
+        "NF-e E CT-e · XML / PDF",
     )
 
     if not st.session_state.get("base_analysis_ready"):
-        st.info(
-            "Primeiro execute a análise dos relatórios em Processamento de arquivos."
-        )
+        empty_state("AGUARDANDO ANÁLISE DOS RELATÓRIOS")
         return
 
     missing = _refresh_missing_mrp_analysis()
     if not missing.empty:
-        st.info(
-            "Resolva primeiro as NFs do MRP sem correspondência segura nas Pré-notas. "
-            "Depois disso a vinculação documental será liberada."
-        )
+        empty_state("VINCULAÇÃO BLOQUEADA · REVISE AS DIVERGÊNCIAS MRP × PRÉ-NOTAS")
         return
 
     pending_base = current_pending_pre_notes()
     if pending_base.empty:
-        st.success("Não há NFs pendentes aguardando documentos.")
+        empty_state("NENHUMA NF AGUARDANDO DOCUMENTOS")
         return
 
     uploaded = st.file_uploader(
@@ -7010,7 +7010,7 @@ def render_document_linking_stage() -> None:
     cte_links = list(st.session_state.get("cte_links") or [])
 
     if isinstance(analysis, pd.DataFrame) and not analysis.empty:
-        st.markdown("#### NF-e vinculadas")
+        st.markdown("#### NF-e VINCULADAS")
         nf_cols = [
             col for col in [
                 "numero_nf",
@@ -7041,7 +7041,7 @@ def render_document_linking_stage() -> None:
         )
 
     if cte_links:
-        st.markdown("#### CT-e vinculados")
+        st.markdown("#### CT-e VINCULADOS")
         cte_view = pd.DataFrame([
             {
                 "CT-e": item.get("numero_cte") or "",
@@ -8320,11 +8320,11 @@ elif page == "Pendências":
         )
         show_last_update("pre")
         if pre_base.empty:
-            st.info(
-                "BASE DE PRÉ-NOTAS NÃO CARREGADA. USE PROCESSAMENTO DE ARQUIVOS."
+            empty_state(
+                "BASE DE PRÉ-NOTAS NÃO CARREGADA · USE PROCESSAMENTO DE ARQUIVOS"
             )
         elif pending_pre.empty:
-            st.success("NENHUMA PRÉ-NOTA PENDENTE.")
+            empty_state("NENHUMA PRÉ-NOTA PENDENTE")
         else:
             # Complementa a carga com o fornecedor padrão usando o CNPJ.
             supplier_base = supplier_dataframe(st.session_state.suppliers)
@@ -8543,10 +8543,6 @@ elif page == "Pendências":
                     f"{mrp_errors} PRÉ-NOTA(S) EXIGEM REVISÃO DE VÍNCULO COM O STSUP01."
                 )
 
-            section_band(
-                "02 · TRATATIVA",
-                f"DOCUMENTOS PENDENTES · {len(pending_view)}",
-            )
 
             # Barra de pesquisa no mesmo padrão visual do fluxo operacional.
             if "pre_pending_search" not in st.session_state:
@@ -8950,16 +8946,16 @@ elif page == "Pendências":
                     st.rerun()
 
             st.caption(
-                f"Exibindo {len(filtered)} de {len(pending_view)} pré-nota(s) pendente(s)."
+                f"{len(filtered)} DE {len(pending_view)} PRÉ-NOTA(S) EXIBIDA(S)"
             )
 
-        st.divider()
+        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         render_mrp_missing_pre_treatments()
-        st.divider()
+        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         render_document_linking_stage()
-        st.divider()
+        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         render_nf_treatment_center()
-        st.divider()
+        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
 
         # Etapa final do fluxo: depois de baixar/enviar os ZIPs, a confirmação
         # acontece ainda nesta aba de Pré-notas. Só após esta ação a NF entra
@@ -8983,9 +8979,12 @@ elif page == "Pendências":
                 & sent_series.isna()
             ].copy()
 
-        st.markdown("#### Aguardando confirmação de envio")
+        section_band(
+            "05 · ENVIO",
+            "CONFIRMAÇÃO DE ENVIO",
+        )
         if awaiting_send.empty:
-            st.caption("Nenhum documento processado aguardando confirmação de envio.")
+            empty_state("NENHUM DOCUMENTO AGUARDANDO CONFIRMAÇÃO DE ENVIO")
         else:
             send_cols = [x for x in [
                 "id",
@@ -9060,12 +9059,12 @@ elif page == "Pendências":
 
             sel0, sel1, sel2 = st.columns(3)
             select_all_send = sel0.checkbox(
-                "Marcar / desmarcar tudo",
+                "MARCAR / DESMARCAR TUDO",
                 value=True,
                 key="select_all_send",
             )
             select_all_nf_send = sel1.checkbox(
-                "Selecionar todas as NFs",
+                "SELECIONAR TODAS AS NFs",
                 value=bool(select_all_send),
                 key=(
                     "select_all_nf_send_"
@@ -9073,7 +9072,7 @@ elif page == "Pendências":
                 ),
             )
             select_all_cte_send = sel2.checkbox(
-                "Selecionar todos os CT-es",
+                "SELECIONAR TODOS OS CT-es",
                 value=bool(select_all_send),
                 key=(
                     "select_all_cte_send_"
@@ -9083,7 +9082,7 @@ elif page == "Pendências":
 
             send_view.insert(
                 0,
-                "Confirmar",
+                "CONFIRMAR",
                 [
                     bool(select_all_cte_send)
                     if is_cte
@@ -9095,7 +9094,7 @@ elif page == "Pendências":
             display_send_cols = [
                 col for col in [
                     "id",
-                    "Confirmar",
+                    "CONFIRMAR",
                     "tipo_documento",
                     "pre_nota_em",
                     "documento",
@@ -9141,17 +9140,17 @@ elif page == "Pendências":
                     hide_index=True,
                     disabled=[
                         x for x in send_view.columns
-                        if x not in {"Confirmar", "pre_nota_em"}
+                        if x not in {"CONFIRMAR", "pre_nota_em"}
                     ],
                     key=editor_key,
                     column_config={
                         "id": None,
-                        "Confirmar": st.column_config.CheckboxColumn(
-                            "Confirmar",
+                        "CONFIRMAR": st.column_config.CheckboxColumn(
+                            "CONFIRMAR",
                             help="Marque os documentos efetivamente enviados.",
                         ),
                         "tipo_documento": st.column_config.TextColumn(
-                            "Tipo",
+                            "TIPO",
                             width="small",
                         ),
                         "pre_nota_em": st.column_config.DateColumn(
@@ -9163,30 +9162,30 @@ elif page == "Pendências":
                             width="small",
                         ),
                         "parte": st.column_config.TextColumn(
-                            "Fornecedor / Transportadora",
+                            "FORNECEDOR / TRANSPORTADORA",
                             width="large",
                         ),
                         "vinculo": st.column_config.TextColumn(
-                            "NFs vinculadas",
+                            "NFs VINCULADAS",
                             width="medium",
                         ),
                         "natureza": st.column_config.TextColumn(
-                            "Natureza",
+                            "NATUREZA",
                             width="medium",
                         ),
                         "vencimento": st.column_config.DateColumn(
-                            "Vencimento",
+                            "VENCIMENTO",
                             format="DD/MM/YYYY",
                         ),
                         "prioridade_mrp": st.column_config.CheckboxColumn(
-                            "Prioridade"
+                            "PRIORIDADE"
                         ),
                         "pdf_criado_em": st.column_config.DatetimeColumn(
-                            "PDF criado em",
+                            "PDF CRIADO EM",
                             format="DD/MM/YYYY HH:mm",
                         ),
                         "arquivo_final": st.column_config.TextColumn(
-                            "Arquivo",
+                            "ARQUIVO",
                             width="large",
                         ),
                     },
@@ -9210,7 +9209,7 @@ elif page == "Pendências":
             if confirm_send or delete_send or save_receipt_dates:
                 selected_send_ids = (
                     send_editor.loc[
-                        send_editor["Confirmar"].fillna(False).astype(bool),
+                        send_editor["CONFIRMAR"].fillna(False).astype(bool),
                         "id",
                     ]
                     .dropna()
@@ -9270,7 +9269,7 @@ elif page == "Pendências":
                 else:
                     try:
                         selected_rows = send_editor[
-                            send_editor["Confirmar"]
+                            send_editor["CONFIRMAR"]
                             .fillna(False)
                             .astype(bool)
                         ].copy()
@@ -9399,7 +9398,7 @@ elif page == "Pendências":
 
         st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         section_band(
-            "03 · PRAZO",
+            "06 · PRAZO",
             "ACOMPANHAMENTO DE LANÇAMENTOS",
         )
         render_launch_tracking_panel(pending_records)
