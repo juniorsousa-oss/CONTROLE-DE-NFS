@@ -7264,97 +7264,13 @@ def render_document_linking_stage() -> None:
 
 
 def render_file_processing():
+    _render_nfs_sources_status()
+    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+
     api_material_carga = _cached_materials_api_status() or {}
     api_material_available = bool(
         api_material_carga.get("disponivel")
     )
-
-    section_band(
-        "01 · INTEGRAÇÃO",
-        "MATERIAIS VIA API",
-    )
-    with st.container(border=True):
-        if api_material_available:
-            api_when = pd.to_datetime(
-                api_material_carga.get("ultima_verificacao_em")
-                or api_material_carga.get("ativada_em")
-                or api_material_carga.get("criada_em"),
-                errors="coerce",
-                utc=True,
-            )
-            if not pd.isna(api_when):
-                try:
-                    api_when = api_when.tz_convert(TZ)
-                except Exception:
-                    pass
-                api_when_txt = api_when.strftime("%d/%m/%Y %H:%M")
-            else:
-                api_when_txt = "—"
-
-            st.markdown(
-                f"""
-                <div class="api-status-head">
-                    <div>
-                        <div class="api-status-name">GESTÃO DE ENTREGAS</div>
-                        <div class="api-status-filter">{api_material_carga.get('filtro') or 'PENDÊNCIA SEM ESTOQUE'}</div>
-                    </div>
-                    <span class="api-status-badge">CONECTADA</span>
-                </div>
-                <div class="api-grid">
-                    <div class="api-stat">
-                        <div class="api-stat-label">ITENS ATIVOS</div>
-                        <div class="api-stat-value">{int(api_material_carga.get('total_itens') or 0)}</div>
-                    </div>
-                    <div class="api-stat">
-                        <div class="api-stat-label">PRODUTOS</div>
-                        <div class="api-stat-value">{int(api_material_carga.get('total_produtos') or 0)}</div>
-                    </div>
-                    <div class="api-stat">
-                        <div class="api-stat-label">CARGA</div>
-                        <div class="api-stat-value">#{api_material_carga.get('carga_id') or '—'}</div>
-                    </div>
-                    <div class="api-stat">
-                        <div class="api-stat-label">ÚLTIMA VERIFICAÇÃO</div>
-                        <div class="api-stat-value">{api_when_txt}</div>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-        else:
-            st.error(
-                "API de Materiais sem carga ativa. "
-                "Use a contingência manual até a conexão ser restabelecida."
-            )
-
-        refresh_api = st.button(
-            "FORÇAR ATUALIZAÇÃO DA API",
-            use_container_width=True,
-            key="force_materials_api_refresh",
-        )
-        if refresh_api:
-            try:
-                with st.spinner("Atualizando Materiais a partir do Gestão de Entregas..."):
-                    sync_result = db.force_materials_api_sync()
-                    _invalidate_materials_status_cache()
-                    try:
-                        _load_materials_api_current_cached.clear()
-                    except Exception:
-                        pass
-                    live_result = refresh_mrp_from_materials_api(force=True)
-                st.success(
-                    "API atualizada. "
-                    f"Carga {sync_result.get('carga_id') or '—'} · "
-                    f"{int(sync_result.get('total_itens') or 0)} item(ns). "
-                    + (
-                        "Prioridades MRP recalculadas com o último STSUP01."
-                        if live_result.get("recalculado")
-                        else "Aguardando uma base NF/STSUP01 para calcular as prioridades."
-                    )
-                )
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Não foi possível atualizar a API de Materiais: {exc}")
 
     pre_file = None
     nf_file = None
@@ -7913,7 +7829,7 @@ except Exception as _central_sync_exc:
 
 
 def _render_nfs_sources_status():
-    section_band("04 · FONTES", "CENTRAL DE DADOS")
+    section_band("01 · FONTES", "CENTRAL DE DADOS")
     try:
         bundle = central_data.load_bundle_state()
         states = central_data.sync_state()
@@ -8566,7 +8482,7 @@ elif page == "Pendências":
             temp["chave_validacao"].ne("") & ~temp["chave_validacao"].isin(pre_keys)
         ].copy()
 
-    pend_pre_tab, pend_process_tab = st.tabs(["PRÉ-NOTAS PENDENTES", "PROCESSAMENTO DE ARQUIVOS"])
+    pend_pre_tab = st.container()
 
     with pend_pre_tab:
         section_band(
@@ -8576,7 +8492,7 @@ elif page == "Pendências":
         show_last_update("pre")
         if pre_base.empty:
             empty_state(
-                "BASE DE PRÉ-NOTAS NÃO CARREGADA · USE PROCESSAMENTO DE ARQUIVOS"
+                "BASE DE PRÉ-NOTAS NÃO CARREGADA · VERIFIQUE A CENTRAL DE DADOS"
             )
         elif pending_pre.empty:
             empty_state("NENHUMA PRÉ-NOTA PENDENTE")
@@ -9658,15 +9574,12 @@ elif page == "Pendências":
         )
         render_launch_tracking_panel(pending_records)
 
-    with pend_process_tab:
-        render_file_processing()
-
 
 elif page == "Configurações":
-    section_band("01 · USUÁRIOS", "GESTÃO DE USUÁRIOS")
-    tab_usuarios = st.container()
+    tab_usuarios, tab_api = st.tabs(["USUÁRIOS", "ACOMPANHAMENTO DE API"])
 
     with tab_usuarios:
+        section_band("01 · USUÁRIOS", "GESTÃO DE USUÁRIOS")
         st.markdown("### Usuários")
         st.caption("Cadastre os usuários operacionais que poderão ser selecionados como responsáveis pelos processamentos do aplicativo.")
 
@@ -9752,6 +9665,10 @@ elif page == "Configurações":
                         st.rerun()
                     except Exception as exc:
                         st.error(f"Não foi possível excluir o usuário: {exc}")
+
+
+    with tab_api:
+        render_file_processing()
 
 
 st.markdown(f'<div class="footer">{cfg["footer"]}</div>', unsafe_allow_html=True)
