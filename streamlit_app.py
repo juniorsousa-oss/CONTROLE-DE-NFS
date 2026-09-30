@@ -6829,9 +6829,9 @@ def _analysis_rows_for_cte_pdf(
 
 def render_document_linking_stage() -> None:
     section_band(
-        "03 · DOCUMENTOS",
+        "02 · VALIDAÇÃO",
         "DOCUMENTOS FISCAIS",
-        "NF-e E CT-e · XML / PDF",
+        "XML / PDF · VINCULAÇÃO E CONFERÊNCIA AUTOMÁTICA",
     )
 
     if not st.session_state.get("base_analysis_ready"):
@@ -6852,14 +6852,12 @@ def render_document_linking_stage() -> None:
             )
             return
 
-    missing = _refresh_missing_mrp_analysis()
-    if not missing.empty:
-        empty_state("VINCULAÇÃO BLOQUEADA · REVISE AS DIVERGÊNCIAS MRP × PRÉ-NOTAS")
-        return
-
-    pending_base = current_pending_pre_notes()
+    pending_base = selected_pending_pre_notes()
     if pending_base.empty:
-        empty_state("NENHUMA NF AGUARDANDO DOCUMENTOS")
+        st.warning(
+            "Nenhuma NF foi selecionada na etapa anterior. Volte à base e "
+            "selecione as NFs que devem receber documentos."
+        )
         return
 
     uploaded = st.file_uploader(
@@ -7519,248 +7517,367 @@ def render_document_linking_stage() -> None:
     cte_links = list(st.session_state.get("cte_links") or [])
 
     if isinstance(analysis, pd.DataFrame) and not analysis.empty:
-        st.markdown("#### NF-e VINCULADAS")
-        nf_cols = [
-            col for col in [
-                "numero_nf",
-                "fornecedor_padrao",
-                "origem_dados",
-                "arquivo_original",
-                "status",
-            ]
-            if col in analysis.columns
-        ]
+        merged = recalc(apply_cross_checks(analysis.copy()))
+        st.session_state.analysis = merged
+
+        def _xml_label(row):
+            original = str(row.get("arquivo_original") or "").strip()
+            parts = [part.strip() for part in original.split(" + ") if part.strip()]
+            xml_parts = [part for part in parts if part.lower().endswith(".xml")]
+            if xml_parts:
+                return xml_parts[0]
+            if "XML" in str(row.get("origem_dados") or "").upper():
+                return original or "XML VINCULADO"
+            return "SEM XML"
+
+        def _stamp_summary(row):
+            arrival = (
+                normalized_business_date(row.get("pre_nota_em"))
+                or normalized_business_date(row.get("pre_nota_data"))
+            )
+            nature = str(row.get("natureza") or "").strip()
+            cr = str(row.get("cr") or "").strip()
+            desc_cr = str(row.get("desc_cr") or "").strip()
+            receiver = str(
+                row.get("pre_nota_recebedor")
+                or row.get("recebedor")
+                or ""
+            ).strip()
+
+            missing = []
+            if not arrival:
+                missing.append("DATA")
+            if not nature:
+                missing.append("NATUREZA")
+            if not cr:
+                missing.append("CR")
+            if not desc_cr:
+                missing.append("DESC. CR")
+            if not receiver:
+                missing.append("RECEBEDOR")
+
+            if missing:
+                return "INCOMPLETO · " + ", ".join(missing)
+
+            return (
+                f"COMPLETO · {arrival:%d/%m/%Y} · CR {cr} · "
+                f"{desc_cr} · {nature} · {receiver}"
+            )
+
+        pending_mask = treatment_mask(merged)
+        summary_rows = []
+        for idx, row in merged.iterrows():
+            score = int(
+                row.get("confianca")
+                or row.get("vinculo_fornecedor_score")
+                or 0
+            )
+            if score >= 90:
+                confidence = f"ALTA · {score}%"
+            elif score >= 75:
+                confidence = f"MÉDIA · {score}%"
+            else:
+                confidence = f"ATENÇÃO · {score}%"
+
+            validated = not bool(pending_mask.loc[idx])
+            summary_rows.append({
+                "NF": normalized_nf(row.get("numero_nf")),
+                "XML": _xml_label(row),
+                "CARIMBO COMPLETO": _stamp_summary(row),
+                "CONFIANÇA": confidence,
+                "STATUS": "VALIDADO" if validated else "ATENÇÃO",
+                "PENDÊNCIA": str(row.get("validacao") or "").strip(),
+            })
+
+        st.markdown("#### NFs VINCULADAS")
         st.dataframe(
-            analysis[nf_cols],
+            pd.DataFrame(summary_rows),
             use_container_width=True,
             hide_index=True,
             column_config={
-                "numero_nf": "NF",
-                "fornecedor_padrao": st.column_config.TextColumn(
-                    "FORNECEDOR",
+                "NF": "NF",
+                "XML": st.column_config.TextColumn(
+                    "XML VINCULADO",
                     width="large",
                 ),
-                "origem_dados": "Origem",
-                "arquivo_original": st.column_config.TextColumn(
-                    "Arquivo",
+                "CARIMBO COMPLETO": st.column_config.TextColumn(
+                    "CARIMBO",
                     width="large",
                 ),
-                "status": "Status",
-            },
-        )
-
-    if cte_links:
-        st.markdown("#### CT-e VINCULADOS")
-        cte_view = pd.DataFrame([
-            {
-                "CT-e": item.get("numero_cte") or "",
-                "Origem": item.get("origem") or "XML",
-                "Tomador": item.get("tomador_servico") or "",
-                "NFs vinculadas": ", ".join(
-                    item.get("linked_nf_numbers") or []
-                ),
-                "Arquivo": item.get("arquivo_original") or "",
-            }
-            for item in cte_links
-        ])
-        st.dataframe(
-            cte_view,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "CT-e": "CT-e",
-                "Origem": "Origem",
-                "Tomador": st.column_config.TextColumn(
-                    "Tomador do serviço",
-                    width="large",
-                ),
-                "NFs vinculadas": st.column_config.TextColumn(
-                    "NFs vinculadas",
-                    width="large",
-                ),
-                "Arquivo": st.column_config.TextColumn(
-                    "Arquivo",
+                "CONFIANÇA": "CONFIANÇA",
+                "STATUS": "STATUS",
+                "PENDÊNCIA": st.column_config.TextColumn(
+                    "PENDÊNCIA",
                     width="large",
                 ),
             },
         )
 
-    # Exclusão disponível ainda na etapa de vínculo, antes da geração final.
-    linked_delete_options = {}
-    if isinstance(analysis, pd.DataFrame) and not analysis.empty:
-        for _, row in analysis.iterrows():
-            file_id = str(row.get("file_id") or "").strip()
-            if not file_id:
-                continue
-            label = (
-                f"NF-e {normalized_nf(row.get('numero_nf'))} — "
-                f"{str(row.get('fornecedor_padrao') or '').strip()} "
-                f"[{file_id[-6:]}]"
-            )
-            linked_delete_options[label] = f"NF::{file_id}"
-
-    for item in cte_links:
-        cte_id = str(item.get("cte_id") or "").strip()
-        if not cte_id:
-            continue
-        label = (
-            f"CT-e {str(item.get('numero_cte') or '').strip()} — "
-            f"{str(item.get('transportadora') or '').strip()} "
-            f"[{cte_id[-6:]}]"
-        )
-        linked_delete_options[label] = f"CTE::{cte_id}"
-
-    if linked_delete_options:
-        with st.expander(
-            "Excluir documentos vinculados desta etapa",
-            expanded=False,
-        ):
-            linked_delete_labels = st.multiselect(
-                "Documentos para excluir",
-                options=list(linked_delete_options.keys()),
-                key="linked_documents_to_delete",
-            )
-            if st.button(
-                "EXCLUIR DOCUMENTOS SELECIONADOS",
-                use_container_width=True,
-                disabled=not bool(linked_delete_labels),
-                key="delete_linked_documents",
+        pending = merged.loc[pending_mask].copy()
+        if not pending.empty:
+            with st.expander(
+                f"TRATAR ATENÇÕES ({len(pending)})",
+                expanded=True,
             ):
-                selected_tokens = {
-                    linked_delete_options[label]
-                    for label in linked_delete_labels
-                    if label in linked_delete_options
-                }
-                nf_ids = {
-                    token.split("::", 1)[1]
-                    for token in selected_tokens
-                    if token.startswith("NF::")
-                }
-                cte_ids = {
-                    token.split("::", 1)[1]
-                    for token in selected_tokens
-                    if token.startswith("CTE::")
-                }
-
-                current_analysis = st.session_state.analysis.copy()
-                if (
-                    nf_ids
-                    and isinstance(current_analysis, pd.DataFrame)
-                    and not current_analysis.empty
-                    and "file_id" in current_analysis.columns
-                ):
-                    current_analysis = current_analysis[
-                        ~current_analysis["file_id"]
-                        .fillna("")
-                        .astype(str)
-                        .isin(nf_ids)
-                    ].copy().reset_index(drop=True)
-                    st.session_state.analysis = current_analysis
-
-                    for file_id in nf_ids:
-                        st.session_state.pdfs.pop(file_id, None)
-
-                remaining_nf_by_id = {}
-                if (
-                    isinstance(current_analysis, pd.DataFrame)
-                    and not current_analysis.empty
-                    and "file_id" in current_analysis.columns
-                ):
-                    remaining_nf_by_id = {
-                        str(row.get("file_id") or ""): normalized_nf(
-                            row.get("numero_nf")
-                        )
-                        for _, row in current_analysis.iterrows()
-                        if str(row.get("file_id") or "").strip()
-                    }
-
-                kept_ctes = []
-                for item in st.session_state.get("cte_links") or []:
-                    item_id = str(item.get("cte_id") or "").strip()
-                    if item_id in cte_ids:
-                        st.session_state.cte_outputs.pop(item_id, None)
-                        continue
-
-                    linked_ids = [
-                        str(value)
-                        for value in (item.get("linked_file_ids") or [])
-                        if str(value).strip()
-                    ]
-                    remaining_ids = [
-                        value
-                        for value in linked_ids
-                        if value not in nf_ids
-                        and value in remaining_nf_by_id
-                    ]
-                    if linked_ids and not remaining_ids:
-                        st.session_state.cte_outputs.pop(item_id, None)
-                        continue
-
-                    updated_item = dict(item)
-                    updated_item["linked_file_ids"] = remaining_ids
-                    updated_item["linked_nf_numbers"] = [
-                        remaining_nf_by_id[value]
-                        for value in remaining_ids
-                        if remaining_nf_by_id.get(value)
-                    ]
-                    kept_ctes.append(updated_item)
-
-                st.session_state.cte_links = kept_ctes
-                st.session_state.zip_outputs = {}
-                st.session_state.document_upload_cache = []
-                st.session_state.pop("pending_fiscal_documents", None)
-                st.session_state.pop("linked_documents_to_delete", None)
-                st.success(
-                    f"{len(selected_tokens)} documento(s) removido(s) "
-                    "da etapa de vinculação."
+                st.caption(
+                    "Somente as linhas com atenção aparecem aqui. "
+                    "As linhas sem pendência já ficam validadas automaticamente."
                 )
-                st.rerun()
+                treatment_cols = [
+                    col for col in [
+                        "arquivo_original",
+                        "vencimento",
+                        "numero_nf",
+                        "cnpj_fornecedor",
+                        "fornecedor_padrao",
+                        "pre_nota_recebedor",
+                        "empresa_sigla",
+                        "natureza",
+                        "status",
+                        "validacao",
+                    ]
+                    if col in pending.columns
+                ]
+                treatment_editor = st.data_editor(
+                    pending[treatment_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    key="stage2_attention_editor",
+                    disabled=[
+                        col for col in treatment_cols
+                        if col in {
+                            "arquivo_original",
+                            "natureza",
+                            "validacao",
+                        }
+                    ],
+                    column_config={
+                        "arquivo_original": st.column_config.TextColumn(
+                            "ARQUIVO",
+                            width="large",
+                        ),
+                        "vencimento": st.column_config.DateColumn(
+                            "VENCIMENTO",
+                            format="DD/MM/YYYY",
+                        ),
+                        "numero_nf": "NF",
+                        "cnpj_fornecedor": "CNPJ",
+                        "fornecedor_padrao": st.column_config.TextColumn(
+                            "FORNECEDOR",
+                            width="large",
+                        ),
+                        "pre_nota_recebedor": "RECEBEDOR",
+                        "empresa_sigla": st.column_config.SelectboxColumn(
+                            "EMPRESA",
+                            options=["SEN", "SEE", "STA"],
+                        ),
+                        "natureza": st.column_config.TextColumn(
+                            "NATUREZA",
+                            width="medium",
+                        ),
+                        "status": st.column_config.SelectboxColumn(
+                            "STATUS",
+                            options=["REVISAR", "APROVADO"],
+                        ),
+                        "validacao": st.column_config.TextColumn(
+                            "PENDÊNCIA",
+                            width="large",
+                        ),
+                    },
+                )
 
-    non_setta_ctes = list(
-        st.session_state.get("cte_ignored_non_setta") or []
-    )
-    if non_setta_ctes:
-        st.info(
-            f"{len(non_setta_ctes)} CT-e(s) foram desconsiderados porque o "
-            "tomador do serviço não foi confirmado como SETTA."
-        )
-        with st.expander("Ver CT-es desconsiderados por tomador", expanded=False):
-            st.dataframe(
-                pd.DataFrame(non_setta_ctes),
-                use_container_width=True,
-                hide_index=True,
+                if st.button(
+                    "APLICAR CORREÇÕES",
+                    type="primary",
+                    use_container_width=True,
+                    key="apply_stage2_attention",
+                ):
+                    updated = merged.copy()
+                    editable_cols = [
+                        "vencimento",
+                        "numero_nf",
+                        "cnpj_fornecedor",
+                        "fornecedor_padrao",
+                        "pre_nota_recebedor",
+                        "empresa_sigla",
+                        "status",
+                    ]
+                    for idx in treatment_editor.index:
+                        for col in editable_cols:
+                            if col in treatment_editor.columns:
+                                updated.loc[idx, col] = treatment_editor.loc[idx, col]
+
+                    updated = recalc(apply_cross_checks(updated))
+                    for idx in treatment_editor.index:
+                        if idx not in updated.index:
+                            continue
+                        validation = str(updated.loc[idx, "validacao"] or "").strip()
+                        final_name = str(
+                            updated.loc[idx, "nome_sugerido"] or ""
+                        ).strip()
+                        if not validation and final_name:
+                            updated.loc[idx, "status"] = "APROVADO"
+
+                    st.session_state.analysis = recalc(updated)
+                    st.session_state.pop("stage2_attention_editor", None)
+                    st.rerun()
+        else:
+            st.success(
+                f"{len(merged)} NF(s) validadas automaticamente e prontas "
+                "para a etapa de arquivo final."
             )
 
-    ignored_count = int(stats.get("ignorados") or 0)
-    if ignored_count:
-        st.caption(
-            f"{ignored_count} arquivo(s) sem vínculo com a base principal "
-            "foram desconsiderados automaticamente."
-        )
+    # Todos os XMLs/documentos não vinculados ficam em um único quadro recolhido.
+    exceptions = []
+    rejected = list(st.session_state.get("prefilter_rejected") or [])
+    ignored = list(st.session_state.get("document_ignored_items") or [])
+    cte_rejected = list(st.session_state.get("cte_rejected") or [])
+    cte_non_setta = list(st.session_state.get("cte_ignored_non_setta") or [])
 
-    _ignored_items = list(st.session_state.get("document_ignored_items") or [])
-    if _ignored_items:
+    for item in rejected:
+        exceptions.append({
+            "arquivo": item.get("arquivo") or "XML/PDF",
+            "tipo": item.get("tipo") or "NF-e",
+            "motivo": item.get("motivo") or "SEM VÍNCULO AUTOMÁTICO",
+            "file_id": item.get("file_id") or "",
+        })
+    for item in ignored:
+        exceptions.append({
+            "arquivo": item.get("arquivo") or "DOCUMENTO",
+            "tipo": item.get("tipo") or "DOCUMENTO",
+            "motivo": item.get("motivo") or "IGNORADO",
+            "file_id": "",
+        })
+    for item in cte_rejected:
+        exceptions.append({
+            "arquivo": item.get("arquivo") or "CT-e",
+            "tipo": item.get("tipo") or "CT-e",
+            "motivo": item.get("motivo") or "SEM VÍNCULO",
+            "file_id": "",
+        })
+    for item in cte_non_setta:
+        exceptions.append({
+            "arquivo": item.get("arquivo") or "CT-e",
+            "tipo": "CT-e",
+            "motivo": (
+                "TOMADOR NÃO CONFIRMADO COMO SETTA · "
+                + str(item.get("tomador") or "")
+            ).strip(),
+            "file_id": "",
+        })
+
+    if exceptions:
         with st.expander(
-            f"DOCUMENTOS NÃO ASSOCIADOS / IGNORADOS ({len(_ignored_items)})",
+            f"XMLs / DOCUMENTOS NÃO VINCULADOS ({len(exceptions)})",
             expanded=False,
         ):
-            _ignored_view = pd.DataFrame(_ignored_items).fillna("NÃO INFORMADO")
+            exc_view = pd.DataFrame(exceptions)
             st.dataframe(
-                _ignored_view,
+                exc_view[["arquivo", "tipo", "motivo"]],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "arquivo": st.column_config.TextColumn("ARQUIVO", width="large"),
-                    "tipo": st.column_config.TextColumn("TIPO", width="small"),
-                    "motivo": st.column_config.TextColumn("MOTIVO", width="large"),
+                    "arquivo": st.column_config.TextColumn(
+                        "ARQUIVO",
+                        width="large",
+                    ),
+                    "tipo": "TIPO",
+                    "motivo": st.column_config.TextColumn(
+                        "MOTIVO",
+                        width="large",
+                    ),
                 },
             )
 
-    if st.session_state.get("cte_rejected"):
-        st.error(
-            f"{len(st.session_state.cte_rejected)} CT-e(s) vinculados à base "
-            "precisam de correção."
+            file_store = st.session_state.get("prefilter_files") or {}
+            recoverable = [
+                item for item in rejected
+                if str(item.get("file_id") or "") in file_store
+                and str(
+                    (file_store.get(str(item.get("file_id") or "")) or {})
+                    .get("ext") or ""
+                ).lower() == ".xml"
+            ]
+            if recoverable:
+                st.markdown("##### RESGATAR XML")
+                recover_map = {
+                    f"{item.get('arquivo') or 'XML'} · NF {item.get('nf') or '-'}":
+                    str(item.get("file_id") or "")
+                    for item in recoverable
+                }
+                selected_file_label = st.selectbox(
+                    "XML NÃO VINCULADO",
+                    list(recover_map.keys()),
+                    key="stage2_recover_xml",
+                )
+
+                target_map = {}
+                for idx, row in pending_base.iterrows():
+                    label = (
+                        f"NF {normalized_nf(row.get('numero_nf'))} · "
+                        f"{pre_supplier_name(row)}"
+                    )
+                    target_map[f"{idx}::{label}"] = row
+
+                selected_target = st.selectbox(
+                    "VINCULAR À NF",
+                    list(target_map.keys()),
+                    format_func=lambda value: value.split("::", 1)[-1],
+                    key="stage2_recover_target",
+                )
+
+                if st.button(
+                    "VINCULAR XML SELECIONADO",
+                    type="primary",
+                    use_container_width=True,
+                    key="stage2_recover_button",
+                ):
+                    try:
+                        file_id = recover_map[selected_file_label]
+                        stored_file = file_store[file_id]
+                        xml_data = extract_nfe_processing_data(
+                            stored_file.get("raw") or b""
+                        )
+                        target_pre = target_map[selected_target]
+                        group = {
+                            "pre": target_pre,
+                            "xmls": [{
+                                "file_id": file_id,
+                                "name": stored_file.get("name") or "arquivo.xml",
+                                "raw": stored_file.get("raw") or b"",
+                                "data": xml_data,
+                                "score": 100,
+                            }],
+                            "pdfs": [],
+                        }
+                        row, stored = _build_hybrid_nf_document(group)
+                        row["status"] = "REVISAR"
+                        current = st.session_state.analysis.copy()
+                        appended = pd.DataFrame([row])
+                        combined = (
+                            pd.concat([current, appended], ignore_index=True)
+                            if isinstance(current, pd.DataFrame) and not current.empty
+                            else appended
+                        )
+                        st.session_state.analysis = recalc(
+                            apply_cross_checks(combined)
+                        )
+                        st.session_state.pdfs[row["file_id"]] = stored
+                        st.session_state.prefilter_rejected = [
+                            item for item in rejected
+                            if str(item.get("file_id") or "") != file_id
+                        ]
+                        st.success("XML vinculado. A linha foi enviada para validação.")
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(f"Não foi possível vincular o XML: {exc}")
+
+    if cte_links:
+        st.caption(
+            f"{len(cte_links)} CT-e(s) vinculados automaticamente às NFs selecionadas."
         )
+
 
 
 def render_file_processing():
