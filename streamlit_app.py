@@ -296,6 +296,11 @@ def _cached_active_users() -> list[dict]:
     return db.list_users(active_only=True) if db.configured() else []
 
 
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_db_excluded_documents() -> list[dict]:
+    return db.list_excluded_documents() if db.configured() else []
+
+
 def _invalidate_process_cache() -> None:
     try:
         _cached_db_process_records.clear()
@@ -338,6 +343,13 @@ def _invalidate_users_cache() -> None:
         pass
 
 
+def _invalidate_excluded_cache() -> None:
+    try:
+        _cached_db_excluded_documents.clear()
+    except Exception:
+        pass
+
+
 def _ensure_operational_reference_data() -> None:
     """Carrega bases grandes somente quando a área operacional realmente é aberta."""
     if not db.configured():
@@ -350,6 +362,16 @@ def _ensure_operational_reference_data() -> None:
                 pd.DataFrame(remote_suppliers)
             )
         st.session_state.suppliers_db_loaded = True
+
+    if not st.session_state.get("excluded_nf_db_loaded", False):
+        excluded_records = _cached_db_excluded_documents()
+        st.session_state.excluded_nf_records = list(excluded_records or [])
+        st.session_state.excluded_nf_numbers = {
+            normalized_nf(item.get("numero_nf"))
+            for item in (excluded_records or [])
+            if normalized_nf(item.get("numero_nf"))
+        }
+        st.session_state.excluded_nf_db_loaded = True
 
     if SAVE_NF_HISTORY and not st.session_state.get(
         "pre_notes_db_loaded",
@@ -440,6 +462,10 @@ def init():
         "base_analysis_at": None,
         "base_analysis_missing_mrp": pd.DataFrame(),
         "excluded_flow_keys": set(),
+        "excluded_nf_numbers": set(),
+        "excluded_nf_records": [],
+        "excluded_nf_db_loaded": False,
+        "last_generation_audit": {},
         "danfe_outputs": {},
         "danfe_results": [],
         "danfe_errors": [],
@@ -678,7 +704,10 @@ section[data-testid="stSidebar"][aria-expanded="false"]{width:0!important;min-wi
 .kpi-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--accent)}.kpi-card.selected{outline:2px solid var(--accent);outline-offset:1px}
 .kpi-header{display:flex;align-items:center;gap:8px;margin-bottom:11px}.kpi-dot{width:9px;height:9px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);flex:0 0 auto}
 .kpi-label{color:#475569;font-size:.83rem;font-weight:700;line-height:1.15}.kpi-value{color:#0f172a;font-size:2rem;font-weight:800;line-height:1;letter-spacing:-.035em}.kpi-delta{margin-top:8px;color:#64748b;font-size:.76rem}
-[data-testid="stDataFrame"],[data-testid="stDataEditor"]{border:1px solid #dfe3e8;border-radius:14px;overflow:hidden;box-shadow:0 4px 16px rgba(15,23,42,.045);background:#fff}
+[data-testid="stDataFrame"],[data-testid="stDataEditor"]{border:1px solid #d9dee7;border-radius:12px;overflow:hidden;box-shadow:0 5px 18px rgba(15,23,42,.06);background:#fff}
+[data-testid="stDataFrame"] canvas,[data-testid="stDataEditor"] canvas{font-family:Inter,Arial,sans-serif!important}
+[data-testid="stDataFrame"] [role="columnheader"],[data-testid="stDataEditor"] [role="columnheader"]{font-weight:800!important;text-transform:uppercase!important;letter-spacing:.025em!important;background:#f8fafc!important}
+[data-testid="stDataFrame"] [role="gridcell"],[data-testid="stDataEditor"] [role="gridcell"]{border-color:#eef1f5!important}
 [data-testid="stVerticalBlockBorderWrapper"]{border-color:#e5e8ee!important;border-radius:14px!important;background:#fff!important;box-shadow:0 3px 12px rgba(15,23,42,.035)}
 [data-testid="stTabs"] button{font-weight:800!important;text-transform:uppercase!important;letter-spacing:.015em!important}
 .kpi-label{text-transform:uppercase;font-size:.72rem!important;font-weight:900!important;letter-spacing:.025em}
@@ -881,6 +910,20 @@ def excel_bytes(frame: pd.DataFrame, sheet: str = "Dados") -> bytes:
         # listas JSON ou escalares NumPy.
         if series.dtype == "object":
             export[column] = series.map(excel_safe_value)
+
+    # Padrão operacional: a planilha exportada não leva None/NaN/células vazias.
+    # Lacunas ficam explicitamente identificadas para não parecer falha de geração.
+    for column in export.columns:
+        series = export[column].astype(object)
+        series = series.where(pd.notna(series), "NÃO INFORMADO")
+        series = series.map(
+            lambda value: (
+                "NÃO INFORMADO"
+                if isinstance(value, str) and not value.strip()
+                else value
+            )
+        )
+        export[column] = series
 
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
@@ -2663,6 +2706,11 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                         st.rerun()
 
                     if action == "Desconsiderar do Impacto MRP":
+                        _register_excluded_nfs(
+                            selected.get("numero_nf", pd.Series(dtype=str)).tolist(),
+                            reason="Desconsiderada do Impacto MRP",
+                            source="MRP",
+                        )
                         ignore_keys = set(
                             selected["_mrp_key"]
                             .fillna("")
@@ -3501,7 +3549,10 @@ def make_zip_outputs(df: pd.DataFrame):
                     )
 
                 if cte_name in used:
-                    continue
+                    raise ValueError(
+                        f"Nome de CT-e duplicado no pacote {company}: {cte_name}. "
+                        "A geração foi interrompida para não perder documento."
+                    )
                 used.add(cte_name)
                 archive.writestr(cte_name, cte_bytes)
 
@@ -3563,6 +3614,61 @@ def make_zip_outputs(df: pd.DataFrame):
 
         zip_name = f"CTE´s - {date_label} - {company}.zip"
         outputs[zip_name] = buffer.getvalue()
+
+    nf_manifest_count = sum(
+        1
+        for item in manifest
+        if not is_cte_document_type(item.get("tipo_documento"))
+    )
+    cte_manifest_count = sum(
+        1
+        for item in manifest
+        if is_cte_document_type(item.get("tipo_documento"))
+    )
+
+    selected_file_ids = {
+        str(value)
+        for value in work.get("file_id", pd.Series(dtype=str)).fillna("").astype(str)
+        if str(value).strip()
+    }
+    expected_cte_keys = set()
+    for cte in st.session_state.get("cte_links") or []:
+        linked_ids = {
+            str(value)
+            for value in (cte.get("linked_file_ids") or [])
+            if str(value).strip()
+        }
+        if not (linked_ids & selected_file_ids):
+            continue
+        cte_key = (
+            str(cte.get("chave_cte") or "").strip()
+            or str(cte.get("cte_id") or "").strip()
+            or str(cte.get("arquivo_final") or cte.get("arquivo_original") or "").strip()
+        )
+        if cte_key:
+            expected_cte_keys.add(cte_key)
+
+    expected_nf_count = len(work)
+    expected_cte_count = len(expected_cte_keys)
+
+    if nf_manifest_count != expected_nf_count:
+        raise ValueError(
+            f"Conferência de geração falhou: {expected_nf_count} NF(s) selecionada(s), "
+            f"mas {nf_manifest_count} registrada(s) na saída."
+        )
+    if cte_manifest_count != expected_cte_count:
+        raise ValueError(
+            f"Conferência de geração falhou: {expected_cte_count} CT-e(s) vinculado(s), "
+            f"mas {cte_manifest_count} registrado(s) na saída."
+        )
+
+    st.session_state.last_generation_audit = {
+        "nf_esperadas": expected_nf_count,
+        "nf_geradas": nf_manifest_count,
+        "cte_esperados": expected_cte_count,
+        "cte_gerados": cte_manifest_count,
+        "lote_id": batch,
+    }
 
     return outputs, manifest
 
@@ -3903,13 +4009,162 @@ def flow_nf_key(row: pd.Series | dict) -> str:
     return nf
 
 
+def _active_excluded_nf_numbers() -> set[str]:
+    return {
+        normalized_nf(value)
+        for value in (st.session_state.get("excluded_nf_numbers") or set())
+        if normalized_nf(value)
+    }
+
+
+def _filter_excluded_nfs(frame: pd.DataFrame) -> pd.DataFrame:
+    if not isinstance(frame, pd.DataFrame) or frame.empty or "numero_nf" not in frame.columns:
+        return frame.copy() if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+    excluded = _active_excluded_nf_numbers()
+    if not excluded:
+        return frame.copy()
+    mask = frame["numero_nf"].map(normalized_nf).isin(excluded)
+    return frame.loc[~mask].copy().reset_index(drop=True)
+
+
+def _register_excluded_nfs(
+    numbers,
+    reason: str,
+    source: str,
+) -> dict:
+    normalized = sorted({
+        normalized_nf(value)
+        for value in (numbers or [])
+        if normalized_nf(value)
+    })
+    if not normalized:
+        return {"marcados": 0}
+
+    result = {"marcados": len(normalized)}
+    if db.configured():
+        result = db.mark_documents_excluded(
+            normalized,
+            reason=reason,
+            source=source,
+            operator=str(st.session_state.get("operator") or ""),
+        )
+        _invalidate_excluded_cache()
+
+    current = _active_excluded_nf_numbers()
+    current.update(normalized)
+    st.session_state.excluded_nf_numbers = current
+
+    records = list(st.session_state.get("excluded_nf_records") or [])
+    known = {
+        normalized_nf(item.get("numero_nf")): item
+        for item in records
+        if normalized_nf(item.get("numero_nf"))
+    }
+    stamp = now_local().isoformat(timespec="seconds")
+    for nf in normalized:
+        known[nf] = {
+            "numero_nf": nf,
+            "ativo": True,
+            "motivo": reason,
+            "origem": source,
+            "operador": str(st.session_state.get("operator") or ""),
+            "atualizado_em": stamp,
+        }
+    st.session_state.excluded_nf_records = list(known.values())
+    return result
+
+
+def _restore_excluded_nfs(numbers) -> dict:
+    normalized = sorted({
+        normalized_nf(value)
+        for value in (numbers or [])
+        if normalized_nf(value)
+    })
+    if not normalized:
+        return {"restaurados": 0}
+
+    result = {"restaurados": len(normalized)}
+    if db.configured():
+        result = db.restore_excluded_documents(normalized)
+        _invalidate_excluded_cache()
+
+    remove = set(normalized)
+    st.session_state.excluded_nf_numbers = (
+        _active_excluded_nf_numbers() - remove
+    )
+    st.session_state.excluded_nf_records = [
+        item
+        for item in (st.session_state.get("excluded_nf_records") or [])
+        if normalized_nf(item.get("numero_nf")) not in remove
+    ]
+    return result
+
+
+def render_excluded_nf_manager() -> None:
+    records = list(st.session_state.get("excluded_nf_records") or [])
+    if not records:
+        return
+
+    with st.expander(
+        f"NFs DESCONSIDERADAS ({len(records)})",
+        expanded=False,
+    ):
+        view = pd.DataFrame(records)
+        visible = [
+            col for col in [
+                "numero_nf", "motivo", "origem", "operador", "atualizado_em"
+            ]
+            if col in view.columns
+        ]
+        if visible:
+            st.dataframe(
+                view[visible].fillna("NÃO INFORMADO"),
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    "numero_nf": "NF",
+                    "motivo": "MOTIVO",
+                    "origem": "ORIGEM",
+                    "operador": "OPERADOR",
+                    "atualizado_em": "ATUALIZADO EM",
+                },
+            )
+
+        options = sorted(
+            {
+                normalized_nf(item.get("numero_nf"))
+                for item in records
+                if normalized_nf(item.get("numero_nf"))
+            }
+        )
+        selected = st.multiselect(
+            "NFs QUE DEVEM VOLTAR AO FLUXO",
+            options,
+            key="restore_excluded_nf_numbers",
+        )
+        if st.button(
+            "REINCLUIR NFs SELECIONADAS",
+            use_container_width=True,
+            disabled=not selected,
+            key="restore_excluded_nf_button",
+        ):
+            restored = _restore_excluded_nfs(selected)
+            st.session_state["_force_central_nfs_sync"] = True
+            set_flash(
+                "_flash_nf",
+                "success",
+                f"{int(restored.get('restaurados', len(selected)))} NF(s) liberada(s) para retornar ao fluxo.",
+            )
+            st.rerun()
+
+
 def current_pending_pre_notes() -> pd.DataFrame:
     """Retorna exatamente a base ainda pendente na tela de Pré-notas pendentes."""
     base = st.session_state.pre_notes
     if not isinstance(base, pd.DataFrame) or base.empty:
         return pd.DataFrame()
 
-    pending = base.copy()
+    pending = _filter_excluded_nfs(base)
     excluded_keys = set(st.session_state.get("excluded_flow_keys") or set())
     if excluded_keys:
         pending = pending[
@@ -5474,6 +5729,13 @@ def render_nf_treatment_center() -> None:
                 st.error(f"Falha ao gerar ZIP: {exc}")
 
         if st.session_state.zip_outputs:
+            _audit = st.session_state.get("last_generation_audit") or {}
+            if _audit:
+                st.success(
+                    "CONFERÊNCIA DA GERAÇÃO · "
+                    f"NF: {_audit.get('nf_geradas', 0)} / {_audit.get('nf_esperadas', 0)} · "
+                    f"CT-e: {_audit.get('cte_gerados', 0)} / {_audit.get('cte_esperados', 0)}"
+                )
             all_zips_buffer = io.BytesIO()
             with zipfile.ZipFile(
                 all_zips_buffer,
@@ -5723,6 +5985,11 @@ def render_mrp_missing_pre_treatments() -> None:
             st.rerun()
 
         if action == "Desconsiderar do cálculo atual":
+            _register_excluded_nfs(
+                selected.get("numero_nf", pd.Series(dtype=str)).tolist(),
+                reason="Desconsiderada do cálculo atual",
+                source="MRP",
+            )
             ignore_keys = set(
                 selected["_mrp_key"]
                 .fillna("")
@@ -7711,6 +7978,7 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
 
             if source_key == "mes_pre_notas":
                 pre_valid = _central_pre_notes_from_bytes(raw, filename)
+                pre_valid = _filter_excluded_nfs(pre_valid)
                 st.session_state.pre_notes = pre_valid
                 st.session_state.pre_notes_db_loaded = True
                 persist_pre_notes_current(filename)
@@ -7733,6 +8001,8 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
 
                 materials, mat_stats = _clean_mrp_materials_api_snapshot(api_payload)
                 detail, summary, impact_stats = _build_mrp_impact(materials, entries)
+                detail = _filter_excluded_nfs(detail)
+                summary = _filter_excluded_nfs(summary)
 
                 api_carga = api_payload.get("carga") or {}
                 st.session_state.mrp_impact_detail = detail.copy()
@@ -7817,12 +8087,13 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
 
 
 _force_central_sync = bool(st.session_state.pop("_force_central_nfs_sync", False))
-try:
-    _central_sync_result = _sync_central_nfs_sources(force=_force_central_sync)
-    if _central_sync_result.get("changed"):
-        st.rerun()
-except Exception as _central_sync_exc:
-    st.session_state["_central_nfs_error"] = str(_central_sync_exc)
+if _force_central_sync:
+    try:
+        _central_sync_result = _sync_central_nfs_sources(force=True)
+        if _central_sync_result.get("changed"):
+            st.rerun()
+    except Exception as _central_sync_exc:
+        st.session_state["_central_nfs_error"] = str(_central_sync_exc)
 
 
 def _render_nfs_sources_status():
@@ -8440,21 +8711,31 @@ if page == "Dashboard":
 
 
 elif page == "Pendências":
-    # Mantém as prioridades sincronizadas com a carga atual de Materiais.
-    try:
-        _mrp_live_sync = refresh_mrp_from_materials_api()
-    except Exception as _mrp_live_exc:
-        _mrp_live_sync = {
-            "ok": False,
-            "recalculado": False,
-            "motivo": str(_mrp_live_exc),
-        }
+    # Cargas externas somente sob comando do operador. Alterações de filtros,
+    # seleção e edição não disparam leitura/reprocessamento das bases.
+    _load_col1, _load_col2 = st.columns([4, 1])
+    with _load_col1:
+        st.caption(
+            "Os dados permanecem congelados durante a tratativa. "
+            "Use o botão ao lado somente quando desejar carregar uma nova atualização."
+        )
+    with _load_col2:
+        if st.button(
+            "CARREGAR / ATUALIZAR DADOS",
+            type="primary",
+            use_container_width=True,
+            key="manual_operational_data_refresh",
+        ):
+            st.session_state["_force_central_nfs_sync"] = True
+            st.rerun()
 
     _control_docs_title = str(cfg.get("control_docs_label") or DEFAULT["control_docs_label"]).strip()
     st.markdown(
         f'<div class="section-title">{_control_docs_title.upper()}</div>',
         unsafe_allow_html=True,
     )
+    show_flash("_flash_nf")
+    render_excluded_nf_manager()
 
     pending_records = current_process_records_for_tests()
 
@@ -8741,7 +9022,7 @@ elif page == "Pendências":
                 st.session_state.pre_pending_date = "Todas"
                 st.session_state.pre_pending_supplier = "Todos"
 
-            with st.container(border=True):
+            with st.form("pre_pending_filters", border=True):
                 f1, f2, f3 = st.columns([1.7, 1, 1.3])
                 f1.text_input(
                     "Buscar NF / CNPJ / fornecedor",
@@ -8759,16 +9040,14 @@ elif page == "Pendências":
                 )
 
                 b1, b2 = st.columns([9, 1])
-                b1.button(
+                b1.form_submit_button(
                     "PESQUISAR",
                     type="primary",
                     use_container_width=True,
-                    key="pre_pending_search_button",
                 )
-                b2.button(
+                b2.form_submit_button(
                     "LIMPAR",
                     use_container_width=True,
-                    key="pre_pending_clear_button",
                     on_click=_clear_pre_pending_filters,
                 )
 
@@ -8929,6 +9208,13 @@ elif page == "Pendências":
                     },
                 )
 
+                _selected_count = int(
+                    pending_editor["Selecionar"].fillna(False).astype(bool).sum()
+                )
+                st.caption(
+                    f"SELECIONADAS: {_selected_count} X {len(editor_view)}"
+                )
+
                 a1, a2 = st.columns([1, 1])
                 save_receivers = a1.form_submit_button(
                     "SALVAR DADOS DE RECEBIMENTO",
@@ -9029,6 +9315,21 @@ elif page == "Pendências":
                         "Selecione pelo menos uma NF para excluir do fluxo."
                     )
                 else:
+                    selected_nfs = (
+                        pending_editor.loc[
+                            pending_editor["Selecionar"].fillna(False).astype(bool),
+                            "numero_nf",
+                        ]
+                        .map(normalized_nf)
+                        .loc[lambda values: values.ne("")]
+                        .tolist()
+                    )
+                    _register_excluded_nfs(
+                        selected_nfs,
+                        reason="Exclusão manual do fluxo",
+                        source="PRÉ-NOTAS",
+                    )
+
                     excluded = set(
                         st.session_state.get("excluded_flow_keys")
                         or set()
