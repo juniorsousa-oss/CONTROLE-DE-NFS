@@ -128,6 +128,63 @@ def is_cte_document_type(value: object) -> bool:
     return compact.startswith("CTE")
 
 
+def is_setta_party(name: object = "", cnpj: object = "") -> bool:
+    """Aceita CT-e somente quando o tomador pertence ao grupo SETTA."""
+    source = normalize_text(name)
+    if "SETTA" in source:
+        return True
+    if "ASTEC" in source and (
+        "ASSISTENCIA" in source
+        or "TECNICA" in source
+        or source.strip() == "ASTEC"
+    ):
+        return True
+    # Mantém o CNPJ disponível para futura parametrização sem aceitar
+    # automaticamente um documento apenas pelo número.
+    _ = digits_only(cnpj)
+    return False
+
+
+def cte_pdf_tomador_scope(text: object) -> str:
+    """Recorta somente a região do tomador em DACTEs recebidos em PDF."""
+    normalized = normalize_text(text)
+    markers = [
+        "TOMADOR DO SERVICO",
+        "TOMADOR DO SERVIÇO",
+        "TOMADOR",
+    ]
+    start = -1
+    marker_used = ""
+    for marker in markers:
+        pos = normalized.find(normalize_text(marker))
+        if pos >= 0:
+            start = pos
+            marker_used = normalize_text(marker)
+            break
+    if start < 0:
+        return ""
+
+    start += len(marker_used)
+    end_candidates = []
+    for marker in [
+        "COMPONENTES DO VALOR",
+        "VALOR DA PRESTACAO",
+        "INFORMACOES RELATIVAS",
+        "DOCUMENTOS ORIGINARIOS",
+        "OBSERVACOES",
+    ]:
+        pos = normalized.find(marker, start)
+        if pos > start:
+            end_candidates.append(pos)
+    end = min(end_candidates) if end_candidates else min(len(normalized), start + 900)
+    return normalized[start:end].strip()
+
+
+def cte_pdf_tomador_is_setta(text: object) -> bool:
+    scope = cte_pdf_tomador_scope(text)
+    return bool(scope and is_setta_party(scope))
+
+
 def dataframe_records_for_db(frame: pd.DataFrame) -> list[dict]:
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return []
@@ -172,6 +229,7 @@ def init():
         "cte_rejected": [],
         "cte_outputs": {},
         "cte_ignored_count": 0,
+        "cte_ignored_non_setta": [],
         "document_link_stats": {},
         "document_upload_cache": [],
         "document_reprocess_needed": False,
@@ -936,6 +994,135 @@ def supplier_similarity(name_a: object, name_b: object) -> int:
 
 
 
+def reconcile_launch_report(launch_report: pd.DataFrame) -> dict:
+    """Confere NFs enviadas contra o STSUP01 recém-atualizado."""
+    if not isinstance(launch_report, pd.DataFrame):
+        launch_report = pd.DataFrame()
+
+    if SAVE_NF_HISTORY and db.configured():
+        try:
+            records = pd.DataFrame(db.list_process_records())
+        except Exception:
+            records = pd.DataFrame()
+    else:
+        records = pd.DataFrame(
+            st.session_state.get("current_test_manifest") or []
+        )
+
+    if records.empty or "enviado_em" not in records.columns:
+        return {"lancados": 0, "verificados": 0}
+
+    type_series = records.get(
+        "tipo_documento",
+        pd.Series("NF-e", index=records.index),
+    ).fillna("NF-e")
+    sent = records[
+        ~type_series.map(is_cte_document_type)
+        & pd.to_datetime(
+            records["enviado_em"],
+            errors="coerce",
+            utc=True,
+        ).notna()
+    ].copy()
+    if sent.empty:
+        return {"lancados": 0, "verificados": 0}
+
+    checked_ids = (
+        sent.get("id", pd.Series("", index=sent.index))
+        .fillna("")
+        .astype(str)
+        .loc[lambda values: values.ne("")]
+        .tolist()
+    )
+    launched_ids = []
+
+    if not launch_report.empty:
+        report = launch_report.copy()
+        report["numero_nf"] = report["numero_nf"].map(normalized_nf)
+        report["_supplier_norm"] = report.get(
+            "fornecedor",
+            pd.Series("", index=report.index),
+        ).map(supplier_validation_name)
+
+        for _, row in sent.iterrows():
+            record_id = str(row.get("id") or "").strip()
+            nf = normalized_nf(row.get("numero_nf"))
+            if not record_id or not nf:
+                continue
+
+            candidates = report[
+                report["numero_nf"].eq(nf)
+            ].copy()
+            if candidates.empty:
+                continue
+
+            process_supplier = str(
+                row.get("fornecedor_padrao") or ""
+            ).strip()
+            process_supplier_norm = supplier_validation_name(
+                process_supplier
+            )
+
+            matched = False
+            if process_supplier_norm:
+                exact = candidates[
+                    candidates["_supplier_norm"].eq(
+                        process_supplier_norm
+                    )
+                ]
+                if not exact.empty:
+                    matched = True
+                else:
+                    best_score = max(
+                        [
+                            supplier_similarity(
+                                process_supplier,
+                                candidate,
+                            )
+                            for candidate in candidates.get(
+                                "fornecedor",
+                                pd.Series("", index=candidates.index),
+                            ).tolist()
+                        ]
+                        or [0]
+                    )
+                    matched = best_score >= 82
+            elif len(candidates) == 1:
+                matched = True
+
+            if matched:
+                launched_ids.append(record_id)
+
+    if SAVE_NF_HISTORY and db.configured():
+        return db.reconcile_launches(
+            launched_ids,
+            checked_ids,
+        )
+
+    now_iso = now_local().isoformat(timespec="seconds")
+    launched_set = set(launched_ids)
+    checked_set = set(checked_ids)
+    manifest = list(
+        st.session_state.get("current_test_manifest") or []
+    )
+    launched_count = 0
+    checked_count = 0
+    for row in manifest:
+        row_id = str(row.get("id") or row.get("file_id") or "")
+        if row_id in checked_set:
+            row["lancamento_verificado_em"] = now_iso
+            checked_count += 1
+        if row_id in launched_set:
+            if not row.get("lancado_em"):
+                row["lancado_em"] = now_iso
+            launched_count += 1
+    st.session_state.current_test_manifest = manifest
+    return {
+        "lancados": launched_count,
+        "verificados": checked_count,
+    }
+
+
 def mrp_row_key(row: pd.Series | dict) -> str:
     nf = normalized_nf(row.get("numero_nf"))
     supplier = str(
@@ -1321,6 +1508,62 @@ def _clean_mrp_nf_cached(
         "fim_periodo": reference_date,
     }
     return base, stats
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _extract_launch_report_cached(
+    raw: bytes,
+    name: str,
+) -> pd.DataFrame:
+    """Extrai todas as NFs do STSUP01 para confirmar lançamento, sem filtro de TES."""
+    suffix = Path(name.lower()).suffix.lower()
+    rows = []
+
+    def append_row(values):
+        nf = normalized_nf(values[0] if len(values) > 0 else "")
+        supplier_code = _supplier_code_norm(values[1] if len(values) > 1 else "")
+        supplier = str(values[2] if len(values) > 2 else "").strip()
+        if nf:
+            rows.append({
+                "numero_nf": nf,
+                "fornecedor_codigo": supplier_code,
+                "fornecedor": supplier,
+            })
+
+    if suffix in {".xlsx", ".xltx"}:
+        wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+        try:
+            ws = wb[wb.sheetnames[0]]
+            for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                if idx <= 2 or len(row) < 6:
+                    continue
+                append_row((row[3], row[4], row[5]))
+        finally:
+            wb.close()
+    else:
+        temp, _ = _read_uploaded_table_cached(raw, name, None, None)
+        if temp.shape[1] < 6:
+            raise ValueError(
+                "O relatório de NFs / STSUP01 precisa conter pelo menos as colunas A até F."
+            )
+        for row in temp.itertuples(index=False, name=None):
+            append_row((row[3], row[4], row[5]))
+
+    if not rows:
+        return pd.DataFrame(
+            columns=["numero_nf", "fornecedor_codigo", "fornecedor"]
+        )
+
+    frame = pd.DataFrame(rows)
+    frame["_supplier_norm"] = frame["fornecedor"].map(supplier_validation_name)
+    return (
+        frame.drop_duplicates(
+            ["numero_nf", "_supplier_norm"],
+            keep="last",
+        )
+        .drop(columns="_supplier_norm")
+        .reset_index(drop=True)
+    )
 
 
 def _supplier_cnpj_lookup(entries: pd.DataFrame) -> tuple[pd.Series, int]:
@@ -2986,6 +3229,156 @@ def current_process_records_for_tests() -> pd.DataFrame:
         .isin(completed)
     ].copy()
     return enrich_cte_records_with_nf_data(frame)
+
+
+def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Monta a situação das NFs enviadas frente ao prazo de 24 horas."""
+    if not isinstance(records, pd.DataFrame):
+        records = current_process_records_for_tests()
+    if not isinstance(records, pd.DataFrame) or records.empty:
+        return pd.DataFrame()
+
+    frame = records.copy()
+    type_series = frame.get(
+        "tipo_documento",
+        pd.Series("NF-e", index=frame.index),
+    ).fillna("NF-e")
+    frame = frame[
+        ~type_series.map(is_cte_document_type)
+    ].copy()
+    if frame.empty or "enviado_em" not in frame.columns:
+        return pd.DataFrame()
+
+    frame["_sent"] = pd.to_datetime(
+        frame["enviado_em"],
+        errors="coerce",
+        utc=True,
+    ).dt.tz_convert(TZ)
+    frame = frame[frame["_sent"].notna()].copy()
+    if frame.empty:
+        return pd.DataFrame()
+
+    frame["_launched"] = pd.to_datetime(
+        frame.get(
+            "lancado_em",
+            pd.Series(pd.NaT, index=frame.index),
+        ),
+        errors="coerce",
+        utc=True,
+    ).dt.tz_convert(TZ)
+    frame["_checked"] = pd.to_datetime(
+        frame.get(
+            "lancamento_verificado_em",
+            pd.Series(pd.NaT, index=frame.index),
+        ),
+        errors="coerce",
+        utc=True,
+    ).dt.tz_convert(TZ)
+    frame["_deadline"] = frame["_sent"] + pd.Timedelta(hours=24)
+    current = pd.Timestamp(now_local())
+
+    def status(row):
+        if pd.notna(row["_launched"]):
+            return "LANÇAMENTO CONFIRMADO"
+        if (
+            pd.notna(row["_checked"])
+            and row["_checked"] > row["_deadline"]
+        ):
+            return "ATRASADO - COBRAR LANÇAMENTO"
+        if current > row["_deadline"]:
+            return "AGUARDANDO NOVO RELATÓRIO"
+        return "DENTRO DO PRAZO"
+
+    frame["situacao_lancamento"] = frame.apply(status, axis=1)
+    frame["prazo_lancamento"] = frame["_deadline"].dt.tz_localize(None)
+    frame["enviado_em_local"] = frame["_sent"].dt.tz_localize(None)
+    frame["lancado_em_local"] = frame["_launched"].dt.tz_localize(None)
+    frame["verificado_em_local"] = frame["_checked"].dt.tz_localize(None)
+    order = {
+        "ATRASADO - COBRAR LANÇAMENTO": 0,
+        "AGUARDANDO NOVO RELATÓRIO": 1,
+        "DENTRO DO PRAZO": 2,
+        "LANÇAMENTO CONFIRMADO": 3,
+    }
+    frame["_ord_lanc"] = (
+        frame["situacao_lancamento"].map(order).fillna(9)
+    )
+    return frame.sort_values(
+        ["_ord_lanc", "prazo_lancamento"],
+        ascending=[True, True],
+        na_position="last",
+    ).drop(columns="_ord_lanc")
+
+
+def render_launch_tracking_panel(
+    records: pd.DataFrame | None = None,
+    title: str = "Acompanhamento de lançamentos",
+) -> None:
+    frame = launch_tracking_frame(records)
+    st.markdown(f"#### {title}")
+    st.caption(
+        "O prazo começa na confirmação de envio. A conferência de lançamento "
+        "é feita no próximo relatório NFs / STSUP01 carregado."
+    )
+    if frame.empty:
+        st.caption("Nenhuma NF enviada aguardando acompanhamento.")
+        return
+
+    overdue = frame[
+        frame["situacao_lancamento"].eq(
+            "ATRASADO - COBRAR LANÇAMENTO"
+        )
+    ]
+    if not overdue.empty:
+        st.error(
+            f"{len(overdue)} NF(s) ultrapassaram 24 horas e continuam sem "
+            "lançamento no último STSUP01 verificado. Cobrar o lançamento."
+        )
+
+    cols = [
+        col for col in [
+            "numero_nf",
+            "fornecedor_padrao",
+            "enviado_em_local",
+            "prazo_lancamento",
+            "verificado_em_local",
+            "lancado_em_local",
+            "situacao_lancamento",
+        ]
+        if col in frame.columns
+    ]
+    st.dataframe(
+        frame[cols],
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "numero_nf": "NF",
+            "fornecedor_padrao": st.column_config.TextColumn(
+                "Fornecedor",
+                width="large",
+            ),
+            "enviado_em_local": st.column_config.DatetimeColumn(
+                "Enviado em",
+                format="DD/MM/YYYY HH:mm",
+            ),
+            "prazo_lancamento": st.column_config.DatetimeColumn(
+                "Prazo 24h",
+                format="DD/MM/YYYY HH:mm",
+            ),
+            "verificado_em_local": st.column_config.DatetimeColumn(
+                "Último relatório verificado",
+                format="DD/MM/YYYY HH:mm",
+            ),
+            "lancado_em_local": st.column_config.DatetimeColumn(
+                "Lançamento confirmado em",
+                format="DD/MM/YYYY HH:mm",
+            ),
+            "situacao_lancamento": st.column_config.TextColumn(
+                "Situação",
+                width="medium",
+            ),
+        },
+    )
 
 
 def persist_pre_notes_current(source_name: str = "app") -> dict:
