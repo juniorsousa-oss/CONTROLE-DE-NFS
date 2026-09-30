@@ -2081,10 +2081,19 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                         "score_fornecedor",
                     ]
                 ].copy()
-                add_view.insert(0, "Selecionar", False)
+                missing_select_all = st.checkbox(
+                    "Marcar / desmarcar todas as NFs desta tratativa",
+                    value=True,
+                    key=f"{key_prefix}_missing_pre_select_all",
+                )
+                add_view.insert(
+                    0,
+                    "Selecionar",
+                    bool(missing_select_all),
+                )
 
                 st.caption(
-                    "Marque as NFs desejadas e escolha uma única ação para as selecionadas."
+                    "Todas vêm marcadas por padrão. Desmarque apenas as NFs que não receberão a ação."
                 )
 
                 edited = st.data_editor(
