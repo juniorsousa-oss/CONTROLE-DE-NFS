@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+from st_aggrid import AgGrid, DataReturnMode, GridUpdateMode
 from rapidfuzz import fuzz
 from PIL import Image
 from openpyxl import load_workbook
@@ -496,7 +497,6 @@ def init():
         "suppliers_db_loaded": False,
         "pre_notes_db_loaded": False,
         "mrp_db_loaded": False,
-        "operator": "",
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -650,7 +650,7 @@ st.markdown(
 [data-testid="stAppViewContainer"]{background:#f4f7fb!important}
 [data-testid="stHeader"]{background:rgba(255,255,255,.96)!important}
 .block-container{max-width:1780px!important;padding-top:3.2rem!important;padding-left:2.7rem!important;padding-right:2.7rem!important;padding-bottom:3rem!important;width:100%!important}
-section[data-testid="stSidebar"]{background:#fff!important;border-right:1px solid #e8ebf0!important}
+section[data-testid="stSidebar"]{background:#fff!important;border-right:1px solid #e8ebf0!important;width:260px!important;min-width:260px!important;max-width:260px!important;flex-basis:260px!important}
 section[data-testid="stSidebar"] .block-container{padding-top:1.6rem!important;padding-left:1rem!important;padding-right:1rem!important}
 .intro,.setta-logo-card,.kpi-card,.panel{background:#fff;border:1px solid #e5e8ee;border-radius:14px}
 
@@ -662,16 +662,21 @@ section[data-testid="stSidebar"] .block-container{padding-top:1.6rem!important;p
 .sidebar-logo-preview img{display:block;width:auto;height:auto;max-width:140px;max-height:62px;object-fit:contain}
 .sidebar-info-card{background:#f8fafc;border:1px solid #e5e8ee;border-radius:10px;padding:.75rem .85rem;color:#6b7280;font-size:.76rem;line-height:1.55}
 
-section[data-testid="stSidebar"] div[role="radiogroup"]{display:flex;flex-direction:column;gap:.34rem}
-section[data-testid="stSidebar"] div[role="radiogroup"] input[type="radio"],
-section[data-testid="stSidebar"] div[role="radiogroup"] [data-testid="stMarkdownContainer"] + div{position:absolute!important;opacity:0!important;pointer-events:none!important}
-section[data-testid="stSidebar"] div[role="radiogroup"] label{position:relative;width:100%;min-height:42px;display:flex!important;align-items:center!important;padding:.56rem .72rem .56rem .88rem!important;margin:0!important;border:1px solid transparent!important;border-radius:10px!important;background:transparent!important;cursor:pointer;transition:background .14s ease,border-color .14s ease,box-shadow .14s ease,transform .14s ease;box-sizing:border-box}
-section[data-testid="stSidebar"] div[role="radiogroup"] label>div:first-child{position:absolute!important;opacity:0!important;width:0!important;height:0!important;overflow:hidden!important}
-section[data-testid="stSidebar"] div[role="radiogroup"] label p{margin:0!important;font-size:.83rem!important;font-weight:600!important;color:#374151!important;line-height:1.2!important}
-section[data-testid="stSidebar"] div[role="radiogroup"] label:hover{background:#f8fafc!important;border-color:#e5e7eb!important;transform:translateX(1px)}
-section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked){background:#111827!important;border-color:#111827!important;box-shadow:0 5px 14px rgba(17,24,39,.14)!important}
-section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked)::before{content:"";position:absolute;left:.42rem;top:50%;width:4px;height:20px;border-radius:999px;background:#ef4444;transform:translateY(-50%)}
-section[data-testid="stSidebar"] div[role="radiogroup"] label:has(input:checked) p{color:#fff!important;font-weight:700!important}
+section[data-testid="stSidebar"] div[data-testid="stButton"]{margin:0!important}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button{position:relative!important;min-height:42px!important;justify-content:flex-start!important;text-align:left!important;padding:.56rem .72rem .56rem calc(.88rem + 10px)!important;border-radius:10px!important;font-size:.83rem!important;font-weight:600!important;line-height:1.2!important;width:100%!important}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button > div{width:100%!important;text-align:left!important;justify-content:flex-start!important}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button p{width:100%!important;margin:0!important;text-align:left!important}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]{background:transparent!important;border:1px solid transparent!important;color:#374151!important;box-shadow:none!important}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]:hover{background:#f8fafc!important;border-color:#e5e7eb!important;color:#111827!important}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]{background:#111827!important;border:1px solid #111827!important;color:#fff!important;box-shadow:0 5px 14px rgba(17,24,39,.14)!important;font-weight:700!important}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]::before{content:"";position:absolute;left:.42rem;top:50%;width:4px;height:20px;border-radius:999px;background:#ef4444;transform:translateY(-50%)}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]){margin-bottom:-.45rem!important}
+.sidebar-status-spacer{height:.6rem!important;min-height:.6rem!important}
+.sidebar-status-card{background:#f8fafc;border:1px solid #e5e8ee;border-radius:10px;padding:.75rem .85rem;color:#6b7280;font-size:.72rem;line-height:1.5}
+.sidebar-status-name{font-size:.68rem;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:.025em}
+.sidebar-status-value{margin-top:.16rem;font-size:.8rem;font-weight:900;color:#111827;text-transform:uppercase}
+.sidebar-status-meta{margin-top:.24rem;color:#6b7280;font-size:.66rem;line-height:1.45;text-transform:uppercase}
+section[data-testid="stSidebar"] hr{margin:.85rem 0!important}
 
 [data-testid="stAppViewContainer"] > .main,
 [data-testid="stAppViewContainer"] .main,
@@ -725,6 +730,87 @@ button[kind="primary"],button[data-testid="stBaseButton-primary"]{background:var
 """.replace("__COLOR__", color),
     unsafe_allow_html=True,
 )
+
+
+def render_filter_grid(
+    frame: pd.DataFrame,
+    key: str,
+    *,
+    column_headers: dict[str, str] | None = None,
+    editable_columns: set[str] | None = None,
+    selectable: bool = False,
+    hidden_columns: set[str] | None = None,
+    height: int | None = None,
+):
+    """Grade operacional com filtro diretamente no cabeçalho."""
+    if not isinstance(frame, pd.DataFrame):
+        frame = pd.DataFrame()
+    data = frame.copy()
+    headers = column_headers or {}
+    editable = editable_columns or set()
+    hidden = hidden_columns or set()
+
+    column_defs = []
+    visible_fields = [col for col in data.columns if col not in hidden]
+    for index, col in enumerate(data.columns):
+        definition = {
+            "field": col,
+            "headerName": headers.get(col, str(col).upper()),
+            "sortable": True,
+            "filter": True,
+            "floatingFilter": True,
+            "resizable": True,
+            "editable": col in editable,
+            "hide": col in hidden,
+            "minWidth": 105,
+        }
+        if col in {"fornecedor", "fornecedor_padrao", "parte", "arquivo_final"}:
+            definition["minWidth"] = 220
+        if col in {"tratativa", "situacao_lancamento", "acompanhamento_lancamento"}:
+            definition["minWidth"] = 190
+        if selectable and index == next(
+            (i for i, name in enumerate(data.columns) if name not in hidden),
+            0,
+        ):
+            definition["checkboxSelection"] = True
+            definition["headerCheckboxSelection"] = True
+            definition["headerCheckboxSelectionFilteredOnly"] = True
+        column_defs.append(definition)
+
+    grid_options = {
+        "columnDefs": column_defs,
+        "defaultColDef": {
+            "sortable": True,
+            "filter": True,
+            "floatingFilter": True,
+            "resizable": True,
+        },
+        "animateRows": False,
+        "rowSelection": "multiple" if selectable else "single",
+        "suppressRowClickSelection": bool(selectable),
+        "pagination": len(data) > 50,
+        "paginationPageSize": 50,
+        "domLayout": "normal",
+    }
+    grid_height = height or min(620, max(180, 74 + min(len(data), 14) * 34))
+
+    update_mode = (
+        GridUpdateMode.SELECTION_CHANGED | GridUpdateMode.VALUE_CHANGED
+        if selectable or editable
+        else GridUpdateMode.NO_UPDATE
+    )
+    return AgGrid(
+        data,
+        gridOptions=grid_options,
+        data_return_mode=DataReturnMode.AS_INPUT,
+        update_mode=update_mode,
+        fit_columns_on_grid_load=False,
+        allow_unsafe_jscode=False,
+        theme="alpine",
+        height=grid_height,
+        use_container_width=True,
+        key=key,
+    )
 
 
 def recalc(df: pd.DataFrame) -> pd.DataFrame:
@@ -3324,7 +3410,7 @@ def make_zip_outputs(df: pd.DataFrame):
     outputs: dict[str, bytes] = {}
     manifest: list[dict] = []
     batch = f"NF-{now_local():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:5].upper()}"
-    operator = str(st.session_state.operator or "").strip()
+    operator = ""
     processed_at = now_local().isoformat(timespec="seconds")
     date_label = now_local().strftime("%d.%m")
 
@@ -3473,7 +3559,7 @@ def make_zip_outputs(df: pd.DataFrame):
                         ),
                         "confianca": int(row.confianca),
                         "status": "REALIZADO",
-                        "operador": operator or None,
+                        "operador": None,
                         "recebido_em": processed_at,
                         "pdf_criado_em": processed_at,
                         "processado_em": processed_at,
@@ -4068,7 +4154,7 @@ def _register_excluded_nfs(
             normalized,
             reason=reason,
             source=source,
-            operator=str(st.session_state.get("operator") or ""),
+            operator="",
         )
         _invalidate_excluded_cache()
 
@@ -4089,7 +4175,7 @@ def _register_excluded_nfs(
             "ativo": True,
             "motivo": reason,
             "origem": source,
-            "operador": str(st.session_state.get("operator") or ""),
+            "operador": "",
             "atualizado_em": stamp,
         }
     st.session_state.excluded_nf_records = list(known.values())
@@ -4134,7 +4220,7 @@ def render_excluded_nf_manager() -> None:
         view = pd.DataFrame(records)
         visible = [
             col for col in [
-                "numero_nf", "motivo", "origem", "operador", "atualizado_em"
+                "numero_nf", "motivo", "origem", "atualizado_em"
             ]
             if col in view.columns
         ]
@@ -4147,7 +4233,6 @@ def render_excluded_nf_manager() -> None:
                     "numero_nf": "NF",
                     "motivo": "MOTIVO",
                     "origem": "ORIGEM",
-                    "operador": "OPERADOR",
                     "atualizado_em": "ATUALIZADO EM",
                 },
             )
@@ -8278,12 +8363,6 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
         ]
         send_view = send_view[display_send_cols]
 
-        operator_ready = bool(str(st.session_state.operator or "").strip())
-        if not operator_ready:
-            st.info(
-                "Selecione o operador no menu lateral para confirmar o envio."
-            )
-
         send_id_signature = "-".join(
             send_view.get(
                 "id",
@@ -8540,9 +8619,7 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
                             if row_id in selected_set:
                                 row["status"] = "ENVIADO"
                                 row["enviado_em"] = now_sent
-                                row["operador"] = (
-                                    st.session_state.operator
-                                )
+                                row["operador"] = None
                                 updated_count += 1
                         st.session_state.current_test_manifest = (
                             manifest
@@ -8821,54 +8898,76 @@ def _render_nfs_sources_status():
         st.rerun()
 
 
+_NF_NAV_PAGES = ["Dashboard"]
+if ENABLE_PENDING_REPORT:
+    _NF_NAV_PAGES.append("Pendências")
+_NF_NAV_PAGES.append("Configurações")
+
+
+def _set_nf_page(target: str) -> None:
+    if target in _NF_NAV_PAGES:
+        st.session_state["_nf_sidebar_page"] = target
+
+
+def _current_nf_page() -> str:
+    value = str(st.session_state.get("_nf_sidebar_page") or "Dashboard")
+    if value not in _NF_NAV_PAGES:
+        value = "Dashboard"
+        st.session_state["_nf_sidebar_page"] = value
+    return value
+
+
 with st.sidebar:
     st.markdown(
         f'''<div class="sidebar-brand">
             <div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>
             <div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>
+        </div>
+        <div class="sidebar-section-label">NAVEGAÇÃO</div>''',
+        unsafe_allow_html=True,
+    )
+
+    page = _current_nf_page()
+    _control_docs_label = str(
+        cfg.get("control_docs_label") or DEFAULT["control_docs_label"]
+    ).strip()
+    for _nav_page in _NF_NAV_PAGES:
+        _nav_label = (
+            _control_docs_label.upper()
+            if _nav_page == "Pendências"
+            else _nav_page.upper()
+        )
+        st.button(
+            _nav_label,
+            key=f"nf_sidebar_nav_{_nav_page.lower().replace(' ', '_')}",
+            type="primary" if _nav_page == page else "secondary",
+            use_container_width=True,
+            on_click=_set_nf_page,
+            args=(_nav_page,),
+        )
+
+    st.divider()
+    st.markdown(
+        '<div class="sidebar-status-spacer"></div>'
+        '<div class="sidebar-section-label">STATUS GERAL</div>',
+        unsafe_allow_html=True,
+    )
+    _db_state = db.db_status()
+    _sidebar_value = "ATUALIZADO" if _db_state.get("configured") else "AGUARDANDO"
+    _sidebar_meta = (
+        "BANCO DE DADOS CONECTADO"
+        if _db_state.get("configured")
+        else "BANCO DE DADOS NÃO CONFIGURADO"
+    )
+    st.markdown(
+        f'''<div class="sidebar-status-card">
+            <div class="sidebar-status-name">CONTROLE DE NFs</div>
+            <div class="sidebar-status-value">{_sidebar_value}</div>
+            <div class="sidebar-status-meta">{_sidebar_meta}</div>
         </div>''',
         unsafe_allow_html=True,
     )
-    st.markdown('<div class="sidebar-section-label">Navegação</div>', unsafe_allow_html=True)
-    _pages = ["Dashboard", "Configurações"]
-    if ENABLE_PENDING_REPORT:
-        _pages.insert(1, "Pendências")
-    _control_docs_label = str(cfg.get("control_docs_label") or DEFAULT["control_docs_label"]).strip()
-    page = st.radio(
-        "Página",
-        _pages,
-        label_visibility="collapsed",
-        format_func=lambda item: (
-            _control_docs_label.upper()
-            if item == "Pendências"
-            else str(item).upper()
-        ),
-    )
-    st.divider()
-    st.markdown('<div class="sidebar-section-label">Operador</div>', unsafe_allow_html=True)
-    try:
-        _usuarios_ativos = _cached_active_users() if db.configured() else []
-    except Exception:
-        _usuarios_ativos = []
-    _nomes_usuarios = [str(x.get("nome") or "").strip() for x in _usuarios_ativos if str(x.get("nome") or "").strip()]
-    if _nomes_usuarios:
-        _placeholder_operador = "Selecione o operador"
-        _opcoes_operador = [_placeholder_operador] + _nomes_usuarios
-        _operador_atual = str(st.session_state.operator or "").strip()
-        _indice_operador = _opcoes_operador.index(_operador_atual) if _operador_atual in _opcoes_operador else 0
-        _operador_escolhido = st.selectbox("Operador", _opcoes_operador, index=_indice_operador, label_visibility="collapsed", key="operador_select")
-        st.session_state.operator = "" if _operador_escolhido == _placeholder_operador else _operador_escolhido
-    else:
-        st.session_state.operator = st.text_input("Nome do operador", value=st.session_state.operator, label_visibility="collapsed", placeholder="Cadastre um usuário em Configurações")
-    st.divider()
-    status = db.db_status()
-    db_text = "CONECTADO" if status["configured"] else "AGUARDANDO CHAVE"
-    st.markdown(
-        f'<div class="sidebar-info-card"><b>CENTRAL DE DADOS</b><br>ALIMENTAÇÃO AUTOMÁTICA<br><br><b>BANCO DE DADOS</b><br>{db_text}</div>',
-        unsafe_allow_html=True,
-    )
-    if st.session_state.get("db_sync_error"):
-        st.warning("Falha na sincronização inicial do banco. Veja Configurações.")
+
 
 if page == "Pendências":
     try:
@@ -8914,7 +9013,7 @@ if page == "Dashboard":
             "natureza", "vencimento", "pre_nota_status", "pre_nota_em",
             "prioridade_mrp", "status", "recebido_em", "pdf_criado_em",
             "enviado_em", "lancado_em", "lancamento_verificado_em",
-            "operador", "arquivo_final"
+            "arquivo_final"
         ])
 
     # Timestamps do banco são gravados em UTC. Converte os eventos operacionais
@@ -9211,7 +9310,6 @@ if page == "Dashboard":
                 "enviado_em",
                 "lancado_em",
                 "lancamento_verificado_em",
-                "operador",
                 "arquivo_final",
             ]
             if x in view.columns
@@ -10277,99 +10375,11 @@ elif page == "Pendências":
 
 
 elif page == "Configurações":
-    tab_usuarios, tab_api = st.tabs(["USUÁRIOS", "ACOMPANHAMENTO DE API"])
-
-    with tab_usuarios:
-        section_band("01 · USUÁRIOS", "GESTÃO DE USUÁRIOS")
-        st.markdown("### Usuários")
-        st.caption("Cadastre os usuários operacionais que poderão ser selecionados como responsáveis pelos processamentos do aplicativo.")
-
-        with st.expander("+ NOVO USUÁRIO", expanded=False):
-            with st.form("form_novo_usuario_nf", clear_on_submit=True):
-                u1, u2 = st.columns(2)
-                novo_nome = u1.text_input("Nome do usuário")
-                novo_email = u2.text_input("E-mail (opcional)")
-                criar_usuario = st.form_submit_button("CRIAR USUÁRIO", type="primary", use_container_width=True)
-
-            if criar_usuario:
-                if not str(novo_nome or "").strip():
-                    st.error("Informe o nome do usuário.")
-                elif novo_email and ("@" not in novo_email or "." not in novo_email.split("@")[-1]):
-                    st.error("Informe um e-mail válido ou deixe o campo em branco.")
-                else:
-                    try:
-                        db.create_user(novo_nome, novo_email)
-                        _invalidate_users_cache()
-                        st.success("Usuário criado com sucesso.")
-                        st.rerun()
-                    except Exception as exc:
-                        mensagem = str(exc)
-                        if "duplicate" in mensagem.lower() or "unique" in mensagem.lower():
-                            st.error("Já existe um usuário com esse nome.")
-                        else:
-                            st.error(f"Não foi possível criar o usuário: {exc}")
-
-        try:
-            usuarios = db.list_users() if db.configured() else []
-        except Exception as exc:
-            usuarios = []
-            st.error(f"Não foi possível carregar os usuários: {exc}")
-
-        if not usuarios:
-            st.info("Nenhum usuário cadastrado.")
-        else:
-            ativos = sum(1 for u in usuarios if bool(u.get("ativo")))
-            c1, c2 = st.columns(2)
-            c1.metric("Usuários cadastrados", len(usuarios))
-            c2.metric("Usuários ativos", ativos)
-
-            tabela_usuarios = pd.DataFrame(usuarios)
-            colunas_usuario = [x for x in ["nome", "email", "ativo", "criado_em", "atualizado_em"] if x in tabela_usuarios.columns]
-            st.dataframe(tabela_usuarios[colunas_usuario], use_container_width=True, hide_index=True)
-
-            st.markdown("#### Editar usuário")
-            mapa_usuarios = {str(u.get("nome") or u.get("email") or u.get("id")): u for u in usuarios}
-            usuario_label = st.selectbox("Selecionar usuário", list(mapa_usuarios.keys()), key="usuario_edicao_select")
-            usuario = mapa_usuarios[usuario_label]
-
-            with st.form("form_editar_usuario_nf"):
-                e1, e2 = st.columns(2)
-                nome_editado = e1.text_input("Nome", value=str(usuario.get("nome") or ""))
-                email_editado = e2.text_input("E-mail", value=str(usuario.get("email") or ""))
-                ativo_editado = st.toggle("Usuário ativo", value=bool(usuario.get("ativo")), key="usuario_ativo_toggle")
-                salvar_usuario = st.form_submit_button("SALVAR ALTERAÇÕES", type="primary", use_container_width=True)
-
-            if salvar_usuario:
-                if not nome_editado.strip():
-                    st.error("O nome do usuário não pode ficar vazio.")
-                else:
-                    try:
-                        db.update_user(str(usuario.get("id")), nome_editado, email_editado, ativo_editado)
-                        _invalidate_users_cache()
-                        st.success("Usuário atualizado.")
-                        if st.session_state.operator == str(usuario.get("nome") or "") and not ativo_editado:
-                            st.session_state.operator = ""
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Não foi possível atualizar o usuário: {exc}")
-
-            with st.expander("Excluir usuário", expanded=False):
-                st.warning("A exclusão remove o usuário da lista de operadores. Os registros históricos já gravados permanecem preservados.")
-                confirmar_exclusao = st.checkbox("Confirmo a exclusão deste usuário", key="confirmar_exclusao_usuario")
-                if st.button("EXCLUIR USUÁRIO", disabled=not confirmar_exclusao, use_container_width=True):
-                    try:
-                        db.delete_user(str(usuario.get("id")))
-                        _invalidate_users_cache()
-                        if st.session_state.operator == str(usuario.get("nome") or ""):
-                            st.session_state.operator = ""
-                        st.success("Usuário excluído.")
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Não foi possível excluir o usuário: {exc}")
-
-
-    with tab_api:
-        render_file_processing()
+    st.markdown(
+        '<div class="section-title">CONFIGURAÇÕES</div>',
+        unsafe_allow_html=True,
+    )
+    render_file_processing()
 
 
 st.markdown(f'<div class="footer">{cfg["footer"]}</div>', unsafe_allow_html=True)
