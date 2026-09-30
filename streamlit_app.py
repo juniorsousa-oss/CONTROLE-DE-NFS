@@ -17,6 +17,7 @@ from PIL import Image
 from openpyxl import load_workbook
 
 import db
+import central_nfs_data as central_data
 from nf_processor import (
     build_final_name,
     digits_only,
@@ -97,9 +98,25 @@ def cte_output_name(meta, linked_nf_numbers, supplier_name: str = "") -> str:
     return _impl(meta, linked_nf_numbers, supplier_name)
 
 
+try:
+    _GLOBAL_VISUAL_CONFIG = central_data.load_visual_config()
+except Exception:
+    _GLOBAL_VISUAL_CONFIG = {}
+
+def _global_page_icon():
+    try:
+        raw = central_data.favicon_bytes(_GLOBAL_VISUAL_CONFIG)
+        if raw:
+            image = Image.open(io.BytesIO(raw))
+            image.load()
+            return image
+    except Exception:
+        pass
+    return "📄"
+
 st.set_page_config(
     page_title="Controle de NFs | Setta",
-    page_icon="📄",
+    page_icon=_global_page_icon(),
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -520,6 +537,16 @@ if not SAVE_NF_HISTORY:
         st.session_state[_pre_test_reset_key] = True
 
 cfg = st.session_state.cfg
+_global_logo = str(_GLOBAL_VISUAL_CONFIG.get("logo_data") or "").strip()
+if _global_logo:
+    cfg["logo_data"] = _global_logo
+    cfg["logo_mime"] = str(_GLOBAL_VISUAL_CONFIG.get("logo_mime") or "image/png")
+_global_favicon = str(_GLOBAL_VISUAL_CONFIG.get("favicon_data") or "").strip()
+if _global_favicon:
+    cfg["favicon_data"] = _global_favicon
+    cfg["favicon_mime"] = str(_GLOBAL_VISUAL_CONFIG.get("favicon_mime") or "image/png")
+cfg["button_color"] = "#111111"
+st.session_state.cfg = cfg
 
 
 def browser_icon():
@@ -7329,60 +7356,47 @@ def render_file_processing():
             except Exception as exc:
                 st.error(f"Não foi possível atualizar a API de Materiais: {exc}")
 
-    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-    section_band(
-        "02 · ALIMENTAÇÃO",
-        "RELATÓRIOS-BASE",
-    )
-    with st.container(border=True):
+    pre_file = None
+    nf_file = None
+    material_file = None
+    supplier_file = None
+    analyze_bases = False
+
+    with st.expander("CONTINGÊNCIA MANUAL", expanded=False):
         r1, r2 = st.columns(2)
         pre_file = r1.file_uploader(
-            "Pré-notas",
+            "MES PRÉ NOTAS",
             type=["csv", "xlsx", "xls", "xlt", "xltx"],
             key="base_pre_file",
         )
         nf_file = r2.file_uploader(
-            "NFs / STSUP01",
+            "NF / STSUP01",
             type=["xlsx", "xltx", "xls", "csv"],
             key="base_nf_file",
         )
-
-        material_file = None
-        supplier_file = None
-        with st.expander(
-            "CONTINGÊNCIA MANUAL · MATERIAIS E FORNECEDORES",
-            expanded=False,
-        ):
-            c1, c2 = st.columns(2)
-            material_file = c1.file_uploader(
-                "Materiais — contingência",
-                type=["xlsx", "xltx", "xls", "csv"],
-                key="base_material_file",
-                help=(
-                    "Substitui a API somente nesta análise."
-                ),
-            )
-            supplier_file = c2.file_uploader(
-                "Fornecedores — contingência",
-                type=["csv", "xlsx", "xls", "xlt", "xltx"],
-                key="base_supplier_file",
-                help=(
-                    "Se não selecionar, será usada a base de fornecedores já cadastrada."
-                ),
-            )
-
-    ready = bool(
-        pre_file
-        and nf_file
-        and (api_material_available or material_file)
-    )
-    analyze_bases = st.button(
-        "ANALISAR BASES",
-        type="primary",
-        use_container_width=True,
-        disabled=not ready,
-        key="analyze_base_reports",
-    )
+        c1, c2 = st.columns(2)
+        material_file = c1.file_uploader(
+            "MATERIAIS",
+            type=["xlsx", "xltx", "xls", "csv"],
+            key="base_material_file",
+        )
+        supplier_file = c2.file_uploader(
+            "FORNECEDORES",
+            type=["csv", "xlsx", "xls", "xlt", "xltx"],
+            key="base_supplier_file",
+        )
+        ready = bool(
+            pre_file
+            and nf_file
+            and (api_material_available or material_file)
+        )
+        analyze_bases = st.button(
+            "PROCESSAR CONTINGÊNCIA",
+            type="primary",
+            use_container_width=True,
+            disabled=not ready,
+            key="analyze_base_reports",
+        )
 
     if analyze_bases:
         # Uma nova análise de base invalida qualquer lote documental anterior.
@@ -7709,6 +7723,253 @@ def render_file_processing():
             "As tratativas e a vinculação dos XMLs ficam em Pré-notas pendentes."
         )
 
+    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+    _render_nfs_sources_status()
+
+
+
+def _central_pre_notes_from_bytes(raw: bytes, name: str) -> pd.DataFrame:
+    temp, _ = _read_uploaded_table_cached(raw, name, None, None)
+    if temp.shape[1] < 6:
+        raise ValueError("MES PRÉ NOTAS precisa conter pelo menos as colunas A até F.")
+
+    normalized = pd.DataFrame({
+        "data_pre_nota": pd.to_datetime(
+            temp.iloc[:, 0], errors="coerce", dayfirst=True
+        ).dt.date,
+        "recebedor": temp.iloc[:, 1].fillna("").astype(str).str.strip(),
+        "numero_nf": temp.iloc[:, 2].map(normalized_nf),
+        "fornecedor": temp.iloc[:, 3].fillna("").astype(str).str.strip(),
+        "cnpj": temp.iloc[:, 4].map(digits_only),
+        "status": temp.iloc[:, 5].fillna("").astype(str).str.strip(),
+    })
+    normalized["status_normalizado"] = normalized["status"].map(normalize_text)
+    valid = normalized[
+        normalized["status_normalizado"].eq("PRE-NOTA LANCADA")
+        & normalized["numero_nf"].ne("")
+        & normalized["fornecedor"].ne("")
+        & normalized["data_pre_nota"].notna()
+    ].copy()
+    return (
+        valid.sort_values(
+            ["data_pre_nota", "numero_nf"],
+            ascending=[False, True],
+            na_position="last",
+        )
+        .drop_duplicates(
+            ["data_pre_nota", "numero_nf", "fornecedor"],
+            keep="last",
+        )
+        .drop(columns=["status_normalizado"], errors="ignore")
+        .reset_index(drop=True)
+    )
+
+
+def _sync_central_nfs_sources(force: bool = False) -> dict:
+    if not SAVE_NF_HISTORY or not db.configured():
+        return {"changed": False}
+
+    bundle = central_data.load_bundle_state()
+    sync_state = central_data.sync_state()
+    changed = []
+    errors = []
+
+    for source_key in ("mes_pre_notas", "nf"):
+        meta = bundle.get(source_key) or {}
+        if not bool(meta.get("available")):
+            continue
+
+        token = central_data.source_token(meta)
+        previous = sync_state.get(source_key) or {}
+        if (
+            not force
+            and str(previous.get("version_token") or "") == token
+            and str(previous.get("status") or "").upper() == "ATUALIZADO"
+        ):
+            continue
+
+        try:
+            raw, remote_meta = central_data.download_source_bytes(source_key)
+            filename = str(
+                remote_meta.get("last_file_name")
+                or meta.get("last_file_name")
+                or f"{source_key}.xlsx"
+            )
+
+            if source_key == "mes_pre_notas":
+                pre_valid = _central_pre_notes_from_bytes(raw, filename)
+                st.session_state.pre_notes = pre_valid
+                st.session_state.pre_notes_db_loaded = True
+                persist_pre_notes_current(filename)
+                rows_count = len(pre_valid)
+
+            else:
+                entries, nf_stats = _clean_mrp_nf_cached(
+                    raw,
+                    filename,
+                    now_local().date().isoformat(),
+                )
+                launch_report = _extract_launch_report_cached(raw, filename)
+
+                api_payload = _load_materials_api_current_cached()
+                if not bool(
+                    api_payload.get("disponivel")
+                    and isinstance(api_payload.get("carga"), dict)
+                ):
+                    raise RuntimeError("API DE MATERIAIS SEM CARGA ATIVA.")
+
+                materials, mat_stats = _clean_mrp_materials_api_snapshot(api_payload)
+                detail, summary, impact_stats = _build_mrp_impact(materials, entries)
+
+                api_carga = api_payload.get("carga") or {}
+                st.session_state.mrp_impact_detail = detail.copy()
+                st.session_state.mrp_priority_summary = summary.copy()
+                st.session_state.mrp_priority_stats = {
+                    **mat_stats,
+                    **nf_stats,
+                    **impact_stats,
+                }
+                st.session_state.mrp_priority_files = (
+                    f"API Gestão de Entregas · carga {api_carga.get('carga_id') or '-'}",
+                    filename,
+                )
+                st.session_state.mrp_db_loaded = True
+
+                high = (
+                    summary[
+                        summary["prioridade"]
+                        .fillna("")
+                        .astype(str)
+                        .str.upper()
+                        .eq("ALTA")
+                    ].copy()
+                    if isinstance(summary, pd.DataFrame) and not summary.empty
+                    else pd.DataFrame()
+                )
+                st.session_state.priority_date_nf_keys = set(
+                    high.get("data_nf", pd.Series(dtype=str))
+                    .dropna().astype(str).tolist()
+                )
+                st.session_state.priority_nf_numbers = set(
+                    high.get("numero_nf", pd.Series(dtype=str))
+                    .dropna().astype(str).tolist()
+                )
+                st.session_state.priority_nf_doc_keys = set()
+                st.session_state.priority_nf_keys = set()
+
+                persisted = persist_mrp_current()
+                if not bool(persisted.get("ok", True)):
+                    raise RuntimeError("SUPABASE NÃO CONFIRMOU A CARGA NF/MRP.")
+
+                st.session_state["last_launch_reconciliation"] = (
+                    reconcile_launch_report(launch_report)
+                )
+                rows_count = len(entries)
+
+            central_data.commit_sync(
+                source_key,
+                token,
+                meta.get("last_update_at"),
+                rows_count,
+                status="ATUALIZADO",
+            )
+            changed.append(source_key)
+
+        except Exception as exc:
+            errors.append(f"{source_key}: {exc}")
+            try:
+                central_data.commit_sync(
+                    source_key,
+                    token,
+                    meta.get("last_update_at"),
+                    0,
+                    status="ERRO",
+                    error_message=str(exc)[:1500],
+                )
+            except Exception:
+                pass
+
+    if changed:
+        _invalidate_pre_notes_cache()
+        _invalidate_mrp_cache()
+        _refresh_missing_mrp_analysis()
+        st.session_state.base_analysis_ready = True
+        st.session_state.base_analysis_at = now_local().isoformat(timespec="seconds")
+        st.session_state["_central_nfs_success"] = " · ".join(changed).upper()
+
+    if errors:
+        st.session_state["_central_nfs_error"] = " | ".join(errors)
+
+    return {"changed": bool(changed), "sources": changed, "errors": errors}
+
+
+_force_central_sync = bool(st.session_state.pop("_force_central_nfs_sync", False))
+try:
+    _central_sync_result = _sync_central_nfs_sources(force=_force_central_sync)
+    if _central_sync_result.get("changed"):
+        st.rerun()
+except Exception as _central_sync_exc:
+    st.session_state["_central_nfs_error"] = str(_central_sync_exc)
+
+
+def _render_nfs_sources_status():
+    section_band("04 · FONTES", "CENTRAL DE DADOS")
+    try:
+        bundle = central_data.load_bundle_state()
+        states = central_data.sync_state()
+    except Exception as exc:
+        st.warning(f"CENTRAL INDISPONÍVEL: {exc}")
+        bundle = {}
+        states = {}
+
+    api_status = _cached_materials_api_status() or {}
+    api_available = bool(api_status.get("disponivel"))
+
+    cards = [
+        (
+            "MATERIAIS",
+            "CONECTADA" if api_available else "INDISPONÍVEL",
+            "API GESTÃO DE ENTREGAS",
+            str(api_status.get("ultima_verificacao_em") or api_status.get("ativada_em") or ""),
+        ),
+        (
+            "MES PRÉ NOTAS",
+            str((states.get("mes_pre_notas") or {}).get("status") or "AGUARDANDO").upper(),
+            f"V{int((bundle.get('mes_pre_notas') or {}).get('version') or 0)}",
+            str((states.get("mes_pre_notas") or {}).get("synced_at") or (bundle.get("mes_pre_notas") or {}).get("last_update_at") or ""),
+        ),
+        (
+            "NF",
+            str((states.get("nf") or {}).get("status") or "AGUARDANDO").upper(),
+            f"V{int((bundle.get('nf') or {}).get('version') or 0)}",
+            str((states.get("nf") or {}).get("synced_at") or (bundle.get("nf") or {}).get("last_update_at") or ""),
+        ),
+    ]
+
+    cols = st.columns(3)
+    for col, (name, status, origin, when) in zip(cols, cards):
+        col.markdown(
+            f"""<div class="kpi-card">
+                <div class="kpi-label">{name}</div>
+                <div class="kpi-value" style="font-size:1rem">{status}</div>
+                <div class="kpi-delta">{origin} · {central_data.format_dt(when)}</div>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    if st.session_state.get("_central_nfs_success"):
+        st.success("FONTES ATUALIZADAS · " + str(st.session_state.pop("_central_nfs_success")))
+    if st.session_state.get("_central_nfs_error"):
+        st.warning(str(st.session_state.get("_central_nfs_error")))
+
+    if st.button(
+        "REPROCESSAR FONTES",
+        use_container_width=True,
+        key="force_central_nfs_reprocess",
+    ):
+        st.session_state["_force_central_nfs_sync"] = True
+        st.rerun()
+
 
 with st.sidebar:
     st.markdown(
@@ -7750,16 +8011,10 @@ with st.sidebar:
     else:
         st.session_state.operator = st.text_input("Nome do operador", value=st.session_state.operator, label_visibility="collapsed", placeholder="Cadastre um usuário em Configurações")
     st.divider()
-    st.markdown('<div class="sidebar-section-label">Identidade visual</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="sidebar-logo-preview">{logo_html()}</div>', unsafe_allow_html=True)
-    st.caption("Logo, títulos e cores ficam em Configurações.")
-    st.divider()
     status = db.db_status()
-    db_text = "Conectado" if status["configured"] else "Aguardando chave"
-    st.markdown('<div class="sidebar-section-label">Informações</div>', unsafe_allow_html=True)
-    _mode_text = "TESTES — sem gravação no Supabase" if not SAVE_NF_HISTORY else "Produção"
+    db_text = "CONECTADO" if status["configured"] else "AGUARDANDO CHAVE"
     st.markdown(
-        f'<div class="sidebar-info-card"><b>Data operacional</b><br>{now_local():%d/%m/%Y}<br><br><b>Banco de dados</b><br>{db_text}<br><br><b>Fluxo</b><br>NF-e / CT-e → conferência → ZIP<br><br><b>Modo</b><br>{_mode_text}<br><br><b>Versão</b><br>Protótipo 0.2</div>',
+        f'<div class="sidebar-info-card"><b>CENTRAL DE DADOS</b><br>ALIMENTAÇÃO AUTOMÁTICA<br><br><b>BANCO DE DADOS</b><br>{db_text}</div>',
         unsafe_allow_html=True,
     )
     if st.session_state.get("db_sync_error"):
@@ -9408,151 +9663,8 @@ elif page == "Pendências":
 
 
 elif page == "Configurações":
-    tab_personalizacao, tab_usuarios = st.tabs(["Personalização", "Usuários"])
-
-    with tab_personalizacao:
-        st.markdown("### Personalização do aplicativo")
-        cur = st.session_state.cfg.copy()
-        with st.form("cfg_form"):
-            title = st.text_input("Título principal", cur["title"])
-            sub = st.text_input("Subtítulo", cur["subtitle"])
-            side = st.text_input("Título do menu lateral", cur["sidebar_title"])
-            side_sub = st.text_input("Subtítulo do menu lateral", cur["sidebar_subtitle"])
-            control_docs_label = st.text_input(
-                "Nome da aba Controle de documentos",
-                str(cur.get("control_docs_label") or DEFAULT["control_docs_label"]),
-                help="Altera o nome exibido no menu lateral e no título da página que reúne pré-notas, MRP e processamento de arquivos.",
-            )
-            intro = st.text_area("Texto da tela principal", cur["intro"])
-            footer = st.text_input("Rodapé", cur["footer"])
-            button_color = st.color_picker("Cor principal dos botões", cur["button_color"])
-            save = st.form_submit_button("Salvar textos e cor", type="primary", use_container_width=True)
-        if save:
-            cur.update(
-                title=title or DEFAULT["title"],
-                subtitle=sub or DEFAULT["subtitle"],
-                sidebar_title=side or DEFAULT["sidebar_title"],
-                sidebar_subtitle=side_sub or DEFAULT["sidebar_subtitle"],
-                control_docs_label=control_docs_label or DEFAULT["control_docs_label"],
-                intro=intro or DEFAULT["intro"],
-                footer=footer or DEFAULT["footer"],
-                button_color=button_color.upper(),
-            )
-            try:
-                persisted, message = save_config_or_session(cur)
-                (st.success if persisted else st.warning)(message)
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Não foi possível salvar a configuração: {exc}")
-
-        st.markdown("#### Logo da empresa")
-        logo_upload = st.file_uploader("Selecionar nova logo", type=["png", "jpg", "jpeg", "svg"], key="logo")
-        if logo_upload:
-            raw = logo_upload.getvalue()
-            if len(raw) > 1_500_000:
-                st.error("Logo acima de 1,5 MB.")
-            else:
-                mime = logo_upload.type or ("image/svg+xml" if logo_upload.name.lower().endswith(".svg") else "image/png")
-                encoded = base64.b64encode(raw).decode()
-                st.markdown(f'<div class="logo-preview"><img src="data:{mime};base64,{encoded}"></div>', unsafe_allow_html=True)
-                if st.button("Salvar nova logo", type="primary", use_container_width=True):
-                    new_cfg = st.session_state.cfg.copy()
-                    new_cfg.update(logo_data=encoded, logo_mime=mime)
-                    try:
-                        persisted, message = save_config_or_session(new_cfg)
-                        (st.success if persisted else st.warning)(message)
-                        st.rerun()
-                    except Exception as exc:
-                        st.error(f"Não foi possível salvar a logo: {exc}")
-
-        st.markdown("#### Ícone do navegador")
-        st.caption("Personalize a pequena imagem exibida na aba do navegador (favicon). Recomendado: PNG ou ICO quadrado, de preferência 256×256 px.")
-
-        current_favicon = str(st.session_state.cfg.get("favicon_data") or "").strip()
-        if current_favicon:
-            try:
-                current_raw = base64.b64decode(current_favicon)
-                current_image = Image.open(io.BytesIO(current_raw))
-                st.image(current_image, caption="Favicon atual", width=72)
-            except Exception:
-                st.caption("O favicon atual não pôde ser pré-visualizado.")
-
-        favicon_upload = st.file_uploader(
-            "Selecionar ícone do navegador",
-            type=["png", "jpg", "jpeg", "ico"],
-            key="favicon_upload",
-            help="Use uma imagem quadrada. O sistema ajusta o arquivo para uso como favicon.",
-        )
-        if favicon_upload:
-            favicon_raw = favicon_upload.getvalue()
-            if len(favicon_raw) > 750_000:
-                st.error("O ícone deve ter no máximo 750 KB.")
-            else:
-                try:
-                    favicon_image = Image.open(io.BytesIO(favicon_raw))
-                    favicon_image.load()
-                    if favicon_image.mode not in ("RGB", "RGBA"):
-                        favicon_image = favicon_image.convert("RGBA")
-                    preview = favicon_image.copy()
-                    preview.thumbnail((128, 128))
-                    st.image(preview, caption="Prévia do novo favicon", width=72)
-
-                    # Normaliza para PNG para evitar incompatibilidades de navegador/Streamlit.
-                    favicon_buffer = io.BytesIO()
-                    favicon_image.save(favicon_buffer, format="PNG")
-                    favicon_encoded = base64.b64encode(favicon_buffer.getvalue()).decode()
-
-                    if st.button("Salvar ícone do navegador", type="primary", use_container_width=True):
-                        new_cfg = st.session_state.cfg.copy()
-                        new_cfg.update(favicon_data=favicon_encoded, favicon_mime="image/png")
-                        try:
-                            persisted, message = save_config_or_session(new_cfg)
-                            (st.success if persisted else st.warning)(message)
-                            st.rerun()
-                        except Exception as exc:
-                            st.error(f"Não foi possível salvar o ícone do navegador: {exc}")
-                except Exception as exc:
-                    st.error(f"Arquivo de ícone inválido: {exc}")
-
-        if current_favicon and st.button("Remover ícone personalizado", use_container_width=True):
-            new_cfg = st.session_state.cfg.copy()
-            new_cfg.update(favicon_data="", favicon_mime="image/png")
-            try:
-                persisted, message = save_config_or_session(new_cfg)
-                (st.success if persisted else st.warning)(message)
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Não foi possível remover o ícone: {exc}")
-
-        a, b = st.columns(2)
-        if a.button("Restaurar padrão visual", use_container_width=True):
-            logo_data, logo_mime = load_default_logo()
-            restored = {**DEFAULT, "logo_data": logo_data, "logo_mime": logo_mime}
-            try:
-                persisted, message = save_config_or_session(restored)
-                (st.success if persisted else st.warning)(message)
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Não foi possível restaurar o padrão: {exc}")
-        b.download_button("Baixar configuração textual", json.dumps({k: v for k, v in st.session_state.cfg.items() if k != "logo_data"}, ensure_ascii=False, indent=2).encode(), file_name="config_controle_nfs.json", mime="application/json", use_container_width=True)
-
-        st.markdown("#### Banco de dados")
-        status = db.db_status()
-        if status["configured"]:
-            st.success("Supabase configurado para este aplicativo.")
-            if st.button("Recarregar configurações e fornecedores do banco"):
-                st.session_state.db_synced = False
-                st.session_state.suppliers_db_loaded = False
-                st.session_state.pre_notes_db_loaded = False
-                st.session_state.mrp_db_loaded = False
-                _invalidate_suppliers_cache()
-                _invalidate_pre_notes_cache()
-                _invalidate_mrp_cache()
-                st.rerun()
-        else:
-            st.warning("Persistência ainda não está ativa neste deployment. Adicione SUPABASE_ANON_KEY nos Secrets do Streamlit. A URL do projeto já está configurada no código.")
-        if st.session_state.get("db_sync_error"):
-            st.error(st.session_state.db_sync_error)
+    section_band("01 · USUÁRIOS", "GESTÃO DE USUÁRIOS")
+    tab_usuarios = st.container()
 
     with tab_usuarios:
         st.markdown("### Usuários")
