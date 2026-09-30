@@ -5837,6 +5837,8 @@ def render_nf_treatment_center() -> None:
                                     f"Conferência do banco falhou: {len(manifest)} "
                                     f"registro(s) esperados e {_inserted} gravado(s)."
                                 )
+                            _invalidate_process_cache()
+                            st.session_state.nf_flow_stage = 4
                             st.success(
                                 f"ZIPs criados e {_inserted} registro(s) confirmados no Supabase. "
                                 "Nenhum PDF foi salvo no banco."
