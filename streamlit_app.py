@@ -10115,14 +10115,18 @@ elif page == "Pendências":
                 f"{len(filtered)} DE {len(pending_view)} PRÉ-NOTA(S) EXIBIDA(S)"
             )
 
-        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-        render_mrp_missing_pre_treatments()
-
         _missing_stage1 = st.session_state.get("base_analysis_missing_mrp")
         _has_missing_stage1 = (
             isinstance(_missing_stage1, pd.DataFrame)
             and not _missing_stage1.empty
         )
+        if _has_missing_stage1:
+            st.markdown(
+                '<div class="topic-divider"></div>',
+                unsafe_allow_html=True,
+            )
+            render_mrp_missing_pre_treatments()
+
         st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         if st.button(
             "CONTINUAR PARA DOCUMENTOS FISCAIS",
