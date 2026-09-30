@@ -6041,20 +6041,17 @@ def _refresh_missing_mrp_analysis() -> pd.DataFrame:
 
 
 def render_mrp_missing_pre_treatments() -> None:
-    section_band(
-        "02 · CONFERÊNCIA",
-        "MRP × PRÉ-NOTAS",
-    )
-
     if not st.session_state.get("base_analysis_ready"):
-        empty_state("AGUARDANDO ANÁLISE DOS RELATÓRIOS")
         return
 
     missing = _refresh_missing_mrp_analysis()
     if missing.empty:
-        empty_state("SEM DIVERGÊNCIAS ENTRE MRP E PRÉ-NOTAS")
         return
 
+    section_band(
+        "02 · CONFERÊNCIA",
+        "MRP × PRÉ-NOTAS",
+    )
     st.warning(
         f"{len(missing)} NF(s) EXIGEM REVISÃO DE VÍNCULO ENTRE MRP E PRÉ-NOTAS."
     )
@@ -6917,8 +6914,22 @@ def render_document_linking_stage() -> None:
     )
 
     if not st.session_state.get("base_analysis_ready"):
-        empty_state("AGUARDANDO ANÁLISE DOS RELATÓRIOS")
-        return
+        if (
+            st.session_state.get("pre_notes_db_loaded")
+            and st.session_state.get("mrp_db_loaded")
+        ):
+            _refresh_missing_mrp_analysis()
+            st.session_state.base_analysis_ready = True
+            st.session_state.base_analysis_at = now_local().isoformat(
+                timespec="seconds"
+            )
+        else:
+            st.warning(
+                "As bases necessárias ainda não estão disponíveis nesta sessão. "
+                "Volte às pré-notas ou use CONFIGURAÇÕES > ACOMPANHAMENTO DE API "
+                "para atualizar as fontes."
+            )
+            return
 
     missing = _refresh_missing_mrp_analysis()
     if not missing.empty:
@@ -9415,24 +9426,6 @@ if page == "Dashboard":
 
 
 elif page == "Pendências":
-    # Cargas externas somente sob comando do operador. Alterações de filtros,
-    # seleção e edição não disparam leitura/reprocessamento das bases.
-    _load_col1, _load_col2 = st.columns([4, 1])
-    with _load_col1:
-        st.caption(
-            "Os dados permanecem congelados durante a tratativa. "
-            "Use o botão ao lado somente quando desejar carregar uma nova atualização."
-        )
-    with _load_col2:
-        if st.button(
-            "CARREGAR / ATUALIZAR DADOS",
-            type="primary",
-            use_container_width=True,
-            key="manual_operational_data_refresh",
-        ):
-            st.session_state["_force_central_nfs_sync"] = True
-            st.rerun()
-
     _control_docs_title = str(cfg.get("control_docs_label") or DEFAULT["control_docs_label"]).strip()
     st.markdown(
         f'<div class="section-title">{_control_docs_title.upper()}</div>',
@@ -9442,6 +9435,17 @@ elif page == "Pendências":
     render_excluded_nf_manager()
 
     pending_records = current_process_records_for_tests()
+
+    # Bases recuperadas do banco já são uma análise válida. Isso evita o fluxo
+    # ficar preso em "aguardando análise" após trocar de computador/sessão.
+    if (
+        not st.session_state.get("base_analysis_ready")
+        and st.session_state.get("pre_notes_db_loaded")
+        and st.session_state.get("mrp_db_loaded")
+    ):
+        _refresh_missing_mrp_analysis()
+        st.session_state.base_analysis_ready = True
+        st.session_state.base_analysis_at = now_local().isoformat(timespec="seconds")
 
     # Se um lote foi gerado em outro computador e ainda não foi confirmado
     # como enviado, o fluxo abre diretamente na etapa de envio.
@@ -9456,8 +9460,6 @@ elif page == "Pendências":
     if _flow_stage not in {1, 2, 3, 4}:
         _flow_stage = 1
         st.session_state.nf_flow_stage = 1
-
-    _render_nf_flow_header(_flow_stage)
 
     if _flow_stage == 2:
         _nav1, _nav2 = st.columns([1, 3])
@@ -9816,95 +9818,8 @@ elif page == "Pendências":
                 )
 
 
-            # Barra de pesquisa no mesmo padrão visual do fluxo operacional.
-            if "pre_pending_search" not in st.session_state:
-                st.session_state.pre_pending_search = ""
-            if "pre_pending_date" not in st.session_state:
-                st.session_state.pre_pending_date = "Todas"
-            if "pre_pending_supplier" not in st.session_state:
-                st.session_state.pre_pending_supplier = "Todos"
-
-            date_values = sorted(
-                [
-                    d for d in pd.to_datetime(
-                        pending_view["data_pre_nota"], errors="coerce"
-                    ).dt.date.dropna().unique().tolist()
-                ],
-                reverse=True,
-            )
-            date_options = ["Todas"] + [d.strftime("%d/%m/%Y") for d in date_values]
-
-            supplier_options = ["Todos"] + sorted(
-                pending_view["fornecedor"].fillna("").astype(str).loc[
-                    lambda s: s.str.strip().ne("")
-                ].unique().tolist()
-            )
-
-            def _clear_pre_pending_filters():
-                st.session_state.pre_pending_search = ""
-                st.session_state.pre_pending_date = "Todas"
-                st.session_state.pre_pending_supplier = "Todos"
-
-            with st.form("pre_pending_filters", border=True):
-                f1, f2, f3 = st.columns([1.7, 1, 1.3])
-                f1.text_input(
-                    "Buscar NF / CNPJ / fornecedor",
-                    key="pre_pending_search",
-                )
-                f2.selectbox(
-                    "Data da pré-nota",
-                    date_options,
-                    key="pre_pending_date",
-                )
-                f3.selectbox(
-                    "FORNECEDOR",
-                    supplier_options,
-                    key="pre_pending_supplier",
-                )
-
-                b1, b2 = st.columns([9, 1])
-                b1.form_submit_button(
-                    "PESQUISAR",
-                    type="primary",
-                    use_container_width=True,
-                )
-                b2.form_submit_button(
-                    "LIMPAR",
-                    use_container_width=True,
-                    on_click=_clear_pre_pending_filters,
-                )
-
+            # Filtros ficam diretamente nos cabeçalhos da grade.
             filtered = pending_view.copy()
-
-            search_term = normalize_text(
-                st.session_state.get("pre_pending_search") or ""
-            )
-            if search_term:
-                search_mask = (
-                    filtered["numero_nf"].fillna("").astype(str).map(normalize_text).str.contains(search_term, na=False)
-                    | filtered["cnpj"].fillna("").astype(str).map(normalize_text).str.contains(search_term, na=False)
-                    | filtered["fornecedor"].fillna("").astype(str).map(normalize_text).str.contains(search_term, na=False)
-                )
-                filtered = filtered[search_mask].copy()
-
-            selected_date = st.session_state.get("pre_pending_date") or "Todas"
-            if selected_date != "Todas":
-                selected_date_obj = pd.to_datetime(
-                    selected_date, format="%d/%m/%Y", errors="coerce"
-                )
-                if not pd.isna(selected_date_obj):
-                    filtered_dates = pd.to_datetime(
-                        filtered["data_pre_nota"], errors="coerce"
-                    ).dt.date
-                    filtered = filtered[
-                        filtered_dates.eq(selected_date_obj.date())
-                    ].copy()
-
-            selected_supplier = st.session_state.get("pre_pending_supplier") or "Todos"
-            if selected_supplier != "Todos":
-                filtered = filtered[
-                    filtered["fornecedor"].fillna("").astype(str).eq(selected_supplier)
-                ].copy()
 
             priority_order = {
                 "ERRO": 0,
@@ -9927,21 +9842,14 @@ elif page == "Pendências":
                 flow_nf_key,
                 axis=1,
             )
-            pending_select_all = st.checkbox(
-                "MARCAR / DESMARCAR TODAS AS NFs EXIBIDAS",
-                value=True,
-                key=f"pending_select_all_{len(editor_view)}",
+            # Grade profissional: filtros por coluna no cabeçalho,
+            # seleção múltipla e edição somente dos campos operacionais.
+            editor_view = filtered.copy()
+            editor_view["_flow_key"] = editor_view.apply(
+                flow_nf_key,
+                axis=1,
             )
-            editor_view.insert(
-                0,
-                "Selecionar",
-                bool(pending_select_all),
-            )
-
-            # Tabela principal enxuta: somente o que o operador precisa
-            # para decidir e executar a etapa. Diagnósticos ficam recolhidos.
             table_cols = [
-                "Selecionar",
                 "_flow_key",
                 "data_pre_nota",
                 "numero_nf",
@@ -9951,154 +9859,89 @@ elif page == "Pendências":
                 "cte",
                 "tratativa",
             ]
+            _grid_response = render_filter_grid(
+                editor_view[table_cols],
+                "pending_pre_notes_grid",
+                selectable=True,
+                hidden_columns={"_flow_key"},
+                editable_columns={"recebedor", "data_pre_nota"},
+                column_headers={
+                    "data_pre_nota": "DATA DE RECEBIMENTO",
+                    "numero_nf": "NF",
+                    "fornecedor": "FORNECEDOR",
+                    "recebedor": "RECEBEDOR",
+                    "prioridade": "PRIORIDADE MRP",
+                    "cte": "CT-e",
+                    "tratativa": "TRATATIVA",
+                },
+                height=500,
+            )
 
-            with st.form("pending_pre_notes_actions"):
-                pending_editor = st.data_editor(
-                    editor_view[table_cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    num_rows="fixed",
-                    key="pending_pre_notes_editor",
-                    disabled=[
-                        col
-                        for col in table_cols
-                        if col not in {
-                            "Selecionar",
-                            "recebedor",
-                            "data_pre_nota",
-                        }
-                    ],
-                    column_config={
-                        "Selecionar": st.column_config.CheckboxColumn(
-                            "SELECIONAR"
-                        ),
-                        "_flow_key": None,
-                        "data_pre_nota": st.column_config.DateColumn(
-                            "DATA DE RECEBIMENTO",
-                            format="DD/MM/YYYY",
-                            help=(
-                                "Data usada no controle interno/carimbo. "
-                                "Pode ser corrigida manualmente antes da geração."
-                            ),
-                        ),
-                        "numero_nf": "NF",
-                        "cnpj": "CNPJ",
-                        "fornecedor": st.column_config.TextColumn(
-                            "FORNECEDOR",
-                            width="large",
-                        ),
-                        "recebedor": st.column_config.TextColumn(
-                            "RECEBEDOR",
-                            width="medium",
-                            help=(
-                                "Obrigatório para seguir para geração. "
-                                "Pode ser preenchido diretamente nesta tabela."
-                            ),
-                        ),
-                        "prioridade": "PRIORIDADE MRP",
-                        "data_cm": st.column_config.DateColumn(
-                            "DATA CM",
-                            format="DD/MM/YYYY",
-                        ),
-                        "ops_mrp": st.column_config.TextColumn(
-                            "OPs IMPACTADAS",
-                            width="medium",
-                        ),
-                        "situacao_mrp": st.column_config.TextColumn(
-                            "SITUAÇÃO MRP",
-                            width="large",
-                        ),
-                        "aderencia_fornecedor": st.column_config.NumberColumn(
-                            "ADERÊNCIA FORNECEDOR",
-                            format="%d%%",
-                        ),
-                        "cte": st.column_config.TextColumn(
-                            "CT-e",
-                            width="medium",
-                        ),
-                        "tratativa": st.column_config.TextColumn(
-                            "TRATATIVA",
-                            width="medium",
-                        ),
-                        "validacao_documento": st.column_config.TextColumn(
-                            "VALIDAÇÃO DOCUMENTO",
-                            width="medium",
-                        ),
-                    },
-                )
+            _grid_data = _grid_response.get("data")
+            pending_editor = (
+                _grid_data.copy()
+                if isinstance(_grid_data, pd.DataFrame)
+                else pd.DataFrame(_grid_data or [])
+            )
+            _selected_raw = _grid_response.get("selected_rows")
+            selected_pending = (
+                _selected_raw.copy()
+                if isinstance(_selected_raw, pd.DataFrame)
+                else pd.DataFrame(_selected_raw or [])
+            )
+            st.caption(
+                f"SELECIONADAS: {len(selected_pending)} X {len(editor_view)}"
+            )
 
-                _selected_count = int(
-                    pending_editor["Selecionar"].fillna(False).astype(bool).sum()
-                )
-                st.caption(
-                    f"SELECIONADAS: {_selected_count} X {len(editor_view)}"
-                )
-
-                with st.expander(
-                    "DETALHES TÉCNICOS DA CARGA",
-                    expanded=False,
-                ):
-                    _technical_cols = [
-                        col for col in [
-                            "numero_nf",
-                            "cnpj",
-                            "data_cm",
-                            "ops_mrp",
-                            "situacao_mrp",
-                            "aderencia_fornecedor",
-                            "validacao_documento",
-                        ]
-                        if col in filtered.columns
+            with st.expander(
+                "DETALHES TÉCNICOS DA CARGA",
+                expanded=False,
+            ):
+                _technical_cols = [
+                    col for col in [
+                        "numero_nf",
+                        "cnpj",
+                        "data_cm",
+                        "ops_mrp",
+                        "situacao_mrp",
+                        "aderencia_fornecedor",
+                        "validacao_documento",
                     ]
-                    if _technical_cols:
-                        _technical_view = filtered[_technical_cols].copy()
-                        for _col in _technical_view.columns:
-                            if _col != "aderencia_fornecedor":
-                                _technical_view[_col] = (
-                                    _technical_view[_col]
-                                    .astype(object)
-                                    .where(pd.notna(_technical_view[_col]), "NÃO INFORMADO")
-                                )
-                        st.dataframe(
-                            _technical_view,
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "numero_nf": "NF",
-                                "cnpj": "CNPJ",
-                                "data_cm": st.column_config.DateColumn(
-                                    "DATA CM",
-                                    format="DD/MM/YYYY",
-                                ),
-                                "ops_mrp": st.column_config.TextColumn(
-                                    "OPs IMPACTADAS",
-                                    width="medium",
-                                ),
-                                "situacao_mrp": st.column_config.TextColumn(
-                                    "SITUAÇÃO MRP",
-                                    width="large",
-                                ),
-                                "aderencia_fornecedor": st.column_config.NumberColumn(
-                                    "ADERÊNCIA",
-                                    format="%d%%",
-                                ),
-                                "validacao_documento": st.column_config.TextColumn(
-                                    "DOCUMENTO",
-                                    width="medium",
-                                ),
-                            },
-                        )
+                    if col in filtered.columns
+                ]
+                if _technical_cols:
+                    _technical_view = filtered[_technical_cols].copy()
+                    _technical_view = _technical_view.fillna(
+                        "NÃO INFORMADO"
+                    ).replace("", "NÃO INFORMADO")
+                    render_filter_grid(
+                        _technical_view,
+                        "pending_technical_grid",
+                        column_headers={
+                            "numero_nf": "NF",
+                            "cnpj": "CNPJ",
+                            "data_cm": "DATA CM",
+                            "ops_mrp": "OPs IMPACTADAS",
+                            "situacao_mrp": "SITUAÇÃO MRP",
+                            "aderencia_fornecedor": "ADERÊNCIA",
+                            "validacao_documento": "DOCUMENTO",
+                        },
+                        height=360,
+                    )
 
-                a1, a2 = st.columns([1, 1])
-                save_receivers = a1.form_submit_button(
-                    "SALVAR DADOS DE RECEBIMENTO",
-                    use_container_width=True,
-                )
-                exclude_selected = a2.form_submit_button(
-                    "EXCLUIR SELECIONADAS DO FLUXO",
-                    type="primary",
-                    use_container_width=True,
-                )
+            a1, a2 = st.columns([1, 1])
+            save_receivers = a1.button(
+                "SALVAR DADOS DE RECEBIMENTO",
+                use_container_width=True,
+                key="save_pending_receivers",
+            )
+            exclude_selected = a2.button(
+                "EXCLUIR SELECIONADAS DO FLUXO",
+                type="primary",
+                use_container_width=True,
+                disabled=selected_pending.empty,
+                key="exclude_selected_pending",
+            )
 
             if save_receivers:
                 receiver_map = {
@@ -10167,17 +10010,14 @@ elif page == "Pendências":
                         apply_cross_checks(analysis)
                     )
 
-                st.session_state.pop("pending_pre_notes_editor", None)
                 st.rerun()
 
             if exclude_selected:
                 selected_keys = set(
-                    pending_editor.loc[
-                        pending_editor["Selecionar"]
-                        .fillna(False)
-                        .astype(bool),
+                    selected_pending.get(
                         "_flow_key",
-                    ]
+                        pd.Series(dtype=str),
+                    )
                     .fillna("")
                     .astype(str)
                     .loc[lambda values: values.ne("")]
@@ -10190,10 +10030,10 @@ elif page == "Pendências":
                     )
                 else:
                     selected_nfs = (
-                        pending_editor.loc[
-                            pending_editor["Selecionar"].fillna(False).astype(bool),
+                        selected_pending.get(
                             "numero_nf",
-                        ]
+                            pd.Series(dtype=str),
+                        )
                         .map(normalized_nf)
                         .loc[lambda values: values.ne("")]
                         .tolist()
@@ -10282,10 +10122,6 @@ elif page == "Pendências":
                         st.session_state.cte_links = kept_ctes
 
                     _refresh_missing_mrp_analysis()
-                    st.session_state.pop(
-                        "pending_pre_notes_editor",
-                        None,
-                    )
                     st.rerun()
 
             st.caption(
@@ -10305,7 +10141,7 @@ elif page == "Pendências":
             "CONTINUAR PARA DOCUMENTOS FISCAIS",
             type="primary",
             use_container_width=True,
-            disabled=_has_missing_stage1 or pending_pre.empty,
+            disabled=(not st.session_state.get("base_analysis_ready")) or _has_missing_stage1 or pending_pre.empty,
             key="flow_to_documents",
         ):
             _set_nf_flow_stage(2)
