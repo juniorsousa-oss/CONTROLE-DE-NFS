@@ -815,7 +815,7 @@ def _last_update_info(kind: str) -> tuple[str, str]:
             )
 
         if kind == "mrp":
-            row = db.load_mrp_load()
+            row = _cached_db_mrp_load()
             if not row:
                 return "Ainda não atualizada", ""
             files = row.get("arquivos") or []
@@ -1088,7 +1088,7 @@ def reconcile_launch_report(launch_report: pd.DataFrame) -> dict:
 
     if SAVE_NF_HISTORY and db.configured():
         try:
-            records = pd.DataFrame(db.list_process_records())
+            records = pd.DataFrame(_cached_db_process_records())
         except Exception:
             records = pd.DataFrame()
     else:
