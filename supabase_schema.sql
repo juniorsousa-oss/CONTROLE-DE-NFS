@@ -1357,3 +1357,35 @@ revoke all on function public.nf_materiais_api_atual() from public;
 grant execute on function public.nf_materiais_api_status() to anon, authenticated;
 grant execute on function public.nf_materiais_api_atual() to anon, authenticated;
 grant execute on function public.nf_sincronizar_materiais_entregas() to service_role;
+
+
+-- EVOLUCAO V9 - SNAPSHOT RAPIDO DE FORNECEDORES
+create or replace function public.nf_fornecedores_snapshot()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    jsonb_agg(
+      jsonb_build_object(
+        'cnpj', cnpj,
+        'nome_padrao', nome_padrao,
+        'aliases', aliases,
+        'ativo', ativo,
+        'codigo', codigo,
+        'loja', loja,
+        'nome_fantasia', nome_fantasia,
+        'tipo', tipo,
+        'atualizado_em', atualizado_em
+      )
+      order by nome_padrao
+    ),
+    '[]'::jsonb
+  )
+  from public.nf_fornecedores;
+$$;
+
+revoke all on function public.nf_fornecedores_snapshot() from public;
+grant execute on function public.nf_fornecedores_snapshot() to anon, authenticated;
