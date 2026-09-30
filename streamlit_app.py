@@ -185,6 +185,39 @@ def cte_pdf_tomador_is_setta(text: object) -> bool:
     return bool(scope and is_setta_party(scope))
 
 
+def cte_tomador_confirmed_setta(
+    name: object,
+    cnpj: object,
+    linked_rows: list[dict] | None = None,
+    scope: object = "",
+) -> bool:
+    """Confirma SETTA pelo nome ou pelo CNPJ do destinatário da NF vinculada."""
+    if is_setta_party(name, cnpj) or is_setta_party(scope):
+        return True
+
+    tomador_cnpj = digits_only(cnpj)
+    scope_text = str(scope or "")
+    if not tomador_cnpj and scope_text:
+        cnpj_match = re.search(
+            r"\b\d{2}[\. ]?\d{3}[\. ]?\d{3}[/ ]?\d{4}[- ]?\d{2}\b",
+            scope_text,
+        )
+        if cnpj_match:
+            tomador_cnpj = digits_only(cnpj_match.group(0))
+
+    if not tomador_cnpj:
+        return False
+
+    valid_setta_cnpjs = {
+        digits_only(row.get("cnpj_destinatario"))
+        for row in (linked_rows or [])
+        if str(row.get("empresa_sigla") or "").upper().strip()
+        in {"SEN", "SEE", "STA"}
+        and digits_only(row.get("cnpj_destinatario"))
+    }
+    return tomador_cnpj in valid_setta_cnpjs
+
+
 def dataframe_records_for_db(frame: pd.DataFrame) -> list[dict]:
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         return []
@@ -6061,21 +6094,6 @@ def render_document_linking_stage() -> None:
                 # CT-e primeiro: o parser valida explicitamente a raiz do modelo 57.
                 try:
                     meta = extract_cte_metadata(raw)
-                    if not is_setta_party(
-                        meta.tomador_nome,
-                        meta.cnpj_tomador,
-                    ):
-                        cte_non_setta.append({
-                            "arquivo": file.name,
-                            "cte": meta.numero,
-                            "tomador": meta.tomador_nome or "NÃO IDENTIFICADO",
-                            "cnpj_tomador": meta.cnpj_tomador,
-                        })
-                        progress.progress(
-                            idx / max(1, len(uploaded)),
-                            text=f"Classificando {idx}/{len(uploaded)} — {file.name}",
-                        )
-                        continue
                     cte_candidates.append({
                         "file_id": file_id,
                         "name": file.name,
@@ -6128,25 +6146,26 @@ def render_document_linking_stage() -> None:
                 )
                 if is_cte:
                     tomador_scope = cte_pdf_tomador_scope(text)
-                    if not cte_pdf_tomador_is_setta(text):
-                        cte_non_setta.append({
-                            "arquivo": file.name,
-                            "cte": "",
-                            "tomador": tomador_scope[:220] or "NÃO IDENTIFICADO",
-                            "cnpj_tomador": "",
-                        })
-                    else:
-                        cte_candidates.append({
-                            "file_id": file_id,
-                            "name": file.name,
-                            "ext": ext,
-                            "raw": raw,
-                            "source": "PDF",
-                            "text": text,
-                            "reading_method": reading_method,
-                            "tomador_servico": "SETTA (identificado no DACTE)",
-                            "cnpj_tomador": "",
-                        })
+                    cnpj_tomador_pdf = ""
+                    cnpj_match = re.search(
+                        r"\b\d{2}[\. ]?\d{3}[\. ]?\d{3}[/ ]?\d{4}[- ]?\d{2}\b",
+                        tomador_scope,
+                    )
+                    if cnpj_match:
+                        cnpj_tomador_pdf = digits_only(
+                            cnpj_match.group(0)
+                        )
+                    cte_candidates.append({
+                        "file_id": file_id,
+                        "name": file.name,
+                        "ext": ext,
+                        "raw": raw,
+                        "source": "PDF",
+                        "text": text,
+                        "reading_method": reading_method,
+                        "tomador_servico": tomador_scope[:220],
+                        "cnpj_tomador": cnpj_tomador_pdf,
+                    })
                 else:
                     nf_candidates.append({
                         "file_id": file_id,
@@ -6398,6 +6417,22 @@ def render_document_linking_stage() -> None:
                     })
                     continue
 
+                if not cte_tomador_confirmed_setta(
+                    meta.tomador_nome,
+                    meta.cnpj_tomador,
+                    linked_rows,
+                ):
+                    cte_non_setta.append({
+                        "arquivo": item["name"],
+                        "cte": meta.numero,
+                        "tomador": (
+                            meta.tomador_nome
+                            or "NÃO IDENTIFICADO COMO SETTA"
+                        ),
+                        "cnpj_tomador": meta.cnpj_tomador,
+                    })
+                    continue
+
                 try:
                     if meta.status_codigo and meta.status_codigo != "100":
                         raise ValueError(
@@ -6456,6 +6491,26 @@ def render_document_linking_stage() -> None:
                         "motivo": (
                             "DACTE identificado, mas nenhuma NF-e referenciada "
                             "foi localizada entre as NFs vinculadas desta carga."
+                        ),
+                    })
+                    continue
+
+                tomador_scope = cte_pdf_tomador_scope(text)
+                if not cte_tomador_confirmed_setta(
+                    item.get("tomador_servico"),
+                    item.get("cnpj_tomador"),
+                    linked_rows,
+                    tomador_scope,
+                ):
+                    cte_non_setta.append({
+                        "arquivo": item["name"],
+                        "cte": "",
+                        "tomador": (
+                            tomador_scope[:220]
+                            or "NÃO IDENTIFICADO COMO SETTA"
+                        ),
+                        "cnpj_tomador": str(
+                            item.get("cnpj_tomador") or ""
                         ),
                     })
                     continue
@@ -6779,7 +6834,7 @@ def render_document_linking_stage() -> None:
     if non_setta_ctes:
         st.info(
             f"{len(non_setta_ctes)} CT-e(s) foram desconsiderados porque o "
-            "tomador do serviço não é SETTA."
+            "tomador do serviço não foi confirmado como SETTA."
         )
         with st.expander("Ver CT-es desconsiderados por tomador", expanded=False):
             st.dataframe(
