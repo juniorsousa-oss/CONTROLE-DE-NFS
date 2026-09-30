@@ -9141,73 +9141,16 @@ if page == "Dashboard":
 
     st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
     section_band(
-        "02 · PRAZO",
-        "ACOMPANHAMENTO DE LANÇAMENTOS",
-        "PRAZO OPERACIONAL: 24 HORAS",
+        "02 · DOCUMENTOS",
+        "DOCUMENTOS FINALIZADOS",
+        "ACOMPANHAMENTO DE LANÇAMENTOS INTEGRADO À MESMA TABELA",
     )
-    render_launch_tracking_panel()
-
     if not db.configured():
         st.caption("SUPABASE NÃO CONECTADO.")
 
-    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-    section_band(
-        "03 · DOCUMENTOS",
-        "DOCUMENTOS FINALIZADOS",
-    )
     if finalized_records.empty:
         st.caption("NENHUM DOCUMENTO FINALIZADO.")
     else:
-        ref_date = (
-            pd.to_datetime(
-                finalized_records.get("enviado_em"),
-                errors="coerce",
-            ).dt.date
-            if "enviado_em" in finalized_records.columns
-            else pd.to_datetime(
-                finalized_records.get("processado_em"),
-                errors="coerce",
-            ).dt.date
-        )
-        min_d = min([d for d in ref_date.dropna().tolist()] or [date.today()])
-        max_d = max([d for d in ref_date.dropna().tolist()] or [date.today()])
-
-        f1, f2, f3, f4 = st.columns(4)
-        start_date = f1.date_input("DE", value=min_d)
-        end_date = f2.date_input("ATÉ", value=max_d)
-
-        types = sorted(
-            finalized_records.get(
-                "tipo_documento",
-                pd.Series("NF-e", index=finalized_records.index),
-            )
-            .fillna("NF-e")
-            .astype(str)
-            .unique()
-            .tolist()
-        )
-        type_filter = f3.multiselect(
-            "TIPO",
-            types,
-            default=types,
-        )
-        companies = sorted(
-            finalized_records.get(
-                "empresa_sigla",
-                pd.Series(dtype=str),
-            )
-            .fillna("")
-            .astype(str)
-            .loc[lambda x: x.ne("")]
-            .unique()
-            .tolist()
-        )
-        company_filter = f4.multiselect(
-            "EMPRESA",
-            companies,
-            default=companies,
-        )
-
         finalized_records["parte"] = finalized_records.apply(
             lambda row: (
                 str(row.get("transportadora") or "").strip()
@@ -9225,75 +9168,68 @@ if page == "Dashboard":
             axis=1,
         )
 
-        f5, f6 = st.columns(2)
-        natures = sorted(
+        # O acompanhamento de lançamento passa a ser uma coluna da própria
+        # grade de documentos finalizados, eliminando a segunda tabela.
+        _sent = pd.to_datetime(
             finalized_records.get(
-                "natureza",
-                pd.Series(dtype=str),
+                "enviado_em",
+                pd.Series(pd.NaT, index=finalized_records.index),
+            ),
+            errors="coerce",
+        )
+        _launched = pd.to_datetime(
+            finalized_records.get(
+                "lancado_em",
+                pd.Series(pd.NaT, index=finalized_records.index),
+            ),
+            errors="coerce",
+        )
+        _checked = pd.to_datetime(
+            finalized_records.get(
+                "lancamento_verificado_em",
+                pd.Series(pd.NaT, index=finalized_records.index),
+            ),
+            errors="coerce",
+        )
+        _deadline = _sent + pd.Timedelta(hours=24)
+        _now = pd.Timestamp(now_local().replace(tzinfo=None))
+        _is_cte_final = (
+            finalized_records.get(
+                "tipo_documento",
+                pd.Series("NF-e", index=finalized_records.index),
             )
-            .fillna("")
-            .astype(str)
-            .loc[lambda x: x.ne("")]
-            .unique()
-            .tolist()
+            .fillna("NF-e")
+            .map(is_cte_document_type)
         )
-        nature_filter = f5.multiselect(
-            "NATUREZA",
-            natures,
-            default=natures,
+
+        _launch_status = []
+        for idx in finalized_records.index:
+            if bool(_is_cte_final.loc[idx]):
+                _launch_status.append("NÃO SE APLICA")
+            elif pd.notna(_launched.loc[idx]):
+                _launch_status.append("LANÇAMENTO CONFIRMADO")
+            elif pd.notna(_checked.loc[idx]) and _checked.loc[idx] > _deadline.loc[idx]:
+                _launch_status.append("ATRASADO - COBRAR LANÇAMENTO")
+            elif pd.notna(_deadline.loc[idx]) and _now > _deadline.loc[idx]:
+                _launch_status.append("AGUARDANDO NOVO RELATÓRIO")
+            else:
+                _launch_status.append("DENTRO DO PRAZO")
+
+        finalized_records["acompanhamento_lancamento"] = _launch_status
+        finalized_records["prazo_lancamento"] = _deadline
+
+        _overdue_count = int(
+            finalized_records["acompanhamento_lancamento"]
+            .eq("ATRASADO - COBRAR LANÇAMENTO")
+            .sum()
         )
-        parties = sorted(
-            finalized_records["parte"]
-            .fillna("")
-            .astype(str)
-            .loc[lambda x: x.ne("")]
-            .unique()
-            .tolist()
-        )
-        party_filter = f6.multiselect(
-            "FORNECEDOR / TRANSPORTADORA",
-            parties,
-        )
+        if _overdue_count:
+            st.error(
+                f"{_overdue_count} NF(s) ultrapassaram 24 horas sem confirmação "
+                "de lançamento no último STSUP01."
+            )
 
         view = finalized_records.copy()
-        mask_date = (ref_date >= start_date) & (ref_date <= end_date)
-        view = view[mask_date]
-
-        if type_filter:
-            view = view[
-                view["tipo_documento"]
-                .fillna("NF-e")
-                .astype(str)
-                .isin(type_filter)
-            ]
-        if company_filter and "empresa_sigla" in view.columns:
-            view = view[
-                view["empresa_sigla"]
-                .fillna("")
-                .astype(str)
-                .isin(company_filter)
-            ]
-        if nature_filter and "natureza" in view.columns:
-            cte_mask = (
-                view["tipo_documento"]
-                .fillna("NF-e")
-                .map(is_cte_document_type)
-            )
-            view = view[
-                cte_mask
-                | view["natureza"].fillna("").astype(str).isin(nature_filter)
-            ]
-        if party_filter:
-            view = view[view["parte"].isin(party_filter)]
-
-        priority_only = st.checkbox("EXIBIR SOMENTE PRIORIDADE")
-        if priority_only and "prioridade_mrp" in view.columns:
-            view = view[
-                view["prioridade_mrp"]
-                .fillna(False)
-                .astype(bool)
-            ]
-
         display_cols = [
             x for x in [
                 "id",
@@ -9308,6 +9244,8 @@ if page == "Dashboard":
                 "status",
                 "pdf_criado_em",
                 "enviado_em",
+                "prazo_lancamento",
+                "acompanhamento_lancamento",
                 "lancado_em",
                 "lancamento_verificado_em",
                 "arquivo_final",
@@ -9316,47 +9254,49 @@ if page == "Dashboard":
         ]
         table = view[display_cols].copy().reset_index(drop=True)
 
-        st.dataframe(
-            table.drop(columns=["id"], errors="ignore"),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
+        for _dt_col in [
+            "pdf_criado_em",
+            "enviado_em",
+            "prazo_lancamento",
+            "lancado_em",
+            "lancamento_verificado_em",
+        ]:
+            if _dt_col in table.columns:
+                _parsed = pd.to_datetime(table[_dt_col], errors="coerce")
+                table[_dt_col] = _parsed.dt.strftime("%d/%m/%Y %H:%M")
+        if "vencimento" in table.columns:
+            _due = pd.to_datetime(table["vencimento"], errors="coerce")
+            table["vencimento"] = _due.dt.strftime("%d/%m/%Y")
+        if "prioridade_mrp" in table.columns:
+            table["prioridade_mrp"] = table["prioridade_mrp"].fillna(False).map(
+                {True: "SIM", False: "NÃO"}
+            )
+
+        table = table.fillna("NÃO INFORMADO").replace("", "NÃO INFORMADO")
+
+        render_filter_grid(
+            table,
+            "dashboard_documentos_finalizados",
+            hidden_columns={"id"},
+            column_headers={
                 "tipo_documento": "TIPO",
                 "documento": "NF / CT-e",
-                "parte": st.column_config.TextColumn(
-                    "FORNECEDOR / TRANSPORTADORA",
-                    width="large",
-                ),
-                "nfs_vinculadas": st.column_config.TextColumn(
-                    "NFs VINCULADAS",
-                    width="medium",
-                ),
+                "parte": "FORNECEDOR / TRANSPORTADORA",
+                "nfs_vinculadas": "NFs VINCULADAS",
                 "empresa_sigla": "EMPRESA",
                 "natureza": "NATUREZA",
-                "prioridade_mrp": st.column_config.CheckboxColumn(
-                    "PRIORIDADE"
-                ),
-                "pdf_criado_em": st.column_config.DatetimeColumn(
-                    "PDF CRIADO EM",
-                    format="DD/MM/YYYY HH:mm",
-                ),
-                "enviado_em": st.column_config.DatetimeColumn(
-                    "ENVIADO EM",
-                    format="DD/MM/YYYY HH:mm",
-                ),
-                "lancado_em": st.column_config.DatetimeColumn(
-                    "LANÇAMENTO CONFIRMADO",
-                    format="DD/MM/YYYY HH:mm",
-                ),
-                "lancamento_verificado_em": st.column_config.DatetimeColumn(
-                    "ÚLTIMA CONFERÊNCIA STSUP01",
-                    format="DD/MM/YYYY HH:mm",
-                ),
-                "arquivo_final": st.column_config.TextColumn(
-                    "Arquivo",
-                    width="large",
-                ),
+                "vencimento": "VENCIMENTO",
+                "prioridade_mrp": "PRIORIDADE",
+                "status": "STATUS",
+                "pdf_criado_em": "PDF CRIADO EM",
+                "enviado_em": "ENVIADO EM",
+                "prazo_lancamento": "PRAZO 24H",
+                "acompanhamento_lancamento": "ACOMPANHAMENTO",
+                "lancado_em": "LANÇAMENTO CONFIRMADO",
+                "lancamento_verificado_em": "ÚLTIMA CONFERÊNCIA STSUP01",
+                "arquivo_final": "ARQUIVO",
             },
+            height=520,
         )
 
         export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
