@@ -8163,16 +8163,27 @@ elif page == "Pendências":
                     errors="coerce",
                 )
 
-            sel1, sel2 = st.columns(2)
+            sel0, sel1, sel2 = st.columns(3)
+            select_all_send = sel0.checkbox(
+                "Marcar / desmarcar tudo",
+                value=True,
+                key="select_all_send",
+            )
             select_all_nf_send = sel1.checkbox(
                 "Selecionar todas as NFs",
-                value=False,
-                key="select_all_nf_send",
+                value=bool(select_all_send),
+                key=(
+                    "select_all_nf_send_"
+                    f"{int(bool(select_all_send))}"
+                ),
             )
             select_all_cte_send = sel2.checkbox(
                 "Selecionar todos os CT-es",
-                value=False,
-                key="select_all_cte_send",
+                value=bool(select_all_send),
+                key=(
+                    "select_all_cte_send_"
+                    f"{int(bool(select_all_send))}"
+                ),
             )
 
             send_view.insert(
@@ -8211,11 +8222,22 @@ elif page == "Pendências":
                     "Selecione o operador no menu lateral para confirmar o envio."
                 )
 
+            send_id_signature = "-".join(
+                send_view.get(
+                    "id",
+                    pd.Series("", index=send_view.index),
+                )
+                .fillna("")
+                .astype(str)
+                .str[-8:]
+                .tolist()
+            )
             editor_key = (
                 "document_send_confirmation_"
+                f"{int(bool(select_all_send))}_"
                 f"{'nf' if select_all_nf_send else 'n'}_"
                 f"{'cte' if select_all_cte_send else 'c'}_"
-                f"{len(send_view)}"
+                f"{len(send_view)}_{send_id_signature}"
             )
             with st.form("send_confirmation_form"):
                 send_editor = st.data_editor(
@@ -8271,14 +8293,19 @@ elif page == "Pendências":
                         ),
                     },
                 )
-                confirm_send = st.form_submit_button(
+                sb1, sb2 = st.columns(2)
+                confirm_send = sb1.form_submit_button(
                     "CONFIRMAR ENVIO DOS DOCUMENTOS SELECIONADOS",
                     type="primary",
                     use_container_width=True,
                     disabled=not operator_ready,
                 )
+                delete_send = sb2.form_submit_button(
+                    "EXCLUIR REGISTROS SELECIONADOS",
+                    use_container_width=True,
+                )
 
-            if confirm_send:
+            if confirm_send or delete_send:
                 selected_send_ids = (
                     send_editor.loc[
                         send_editor["Confirmar"].fillna(False).astype(bool),
@@ -8292,7 +8319,51 @@ elif page == "Pendências":
                 )
 
                 if not selected_send_ids:
-                    st.warning("Selecione pelo menos um documento para confirmar o envio.")
+                    st.warning(
+                        "Selecione pelo menos um documento para executar a ação."
+                    )
+                elif delete_send:
+                    try:
+                        if SAVE_NF_HISTORY and db.configured():
+                            result = db.delete_process_records(
+                                selected_send_ids
+                            )
+                            deleted_count = int(
+                                result.get("excluidos", 0)
+                            )
+                        else:
+                            selected_set = set(selected_send_ids)
+                            manifest = list(
+                                st.session_state.get(
+                                    "current_test_manifest"
+                                )
+                                or []
+                            )
+                            before = len(manifest)
+                            manifest = [
+                                row
+                                for row in manifest
+                                if str(
+                                    row.get("id")
+                                    or row.get("file_id")
+                                    or ""
+                                )
+                                not in selected_set
+                            ]
+                            st.session_state.current_test_manifest = (
+                                manifest
+                            )
+                            deleted_count = before - len(manifest)
+
+                        st.success(
+                            f"{deleted_count} registro(s) excluído(s) "
+                            "do fluxo."
+                        )
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(
+                            f"Falha ao excluir os registros: {exc}"
+                        )
                 else:
                     try:
                         if SAVE_NF_HISTORY and db.configured():
@@ -8300,30 +8371,46 @@ elif page == "Pendências":
                                 selected_send_ids,
                                 st.session_state.operator,
                             )
-                            updated_count = int(result.get("atualizados", 0))
+                            updated_count = int(
+                                result.get("atualizados", 0)
+                            )
                         else:
                             now_sent = now_local().isoformat()
                             updated_count = 0
                             manifest = list(
-                                st.session_state.get("current_test_manifest") or []
+                                st.session_state.get(
+                                    "current_test_manifest"
+                                )
+                                or []
                             )
                             selected_set = set(selected_send_ids)
                             for row in manifest:
-                                row_id = str(row.get("id") or row.get("file_id") or "")
+                                row_id = str(
+                                    row.get("id")
+                                    or row.get("file_id")
+                                    or ""
+                                )
                                 if row_id in selected_set:
                                     row["status"] = "ENVIADO"
                                     row["enviado_em"] = now_sent
-                                    row["operador"] = st.session_state.operator
+                                    row["operador"] = (
+                                        st.session_state.operator
+                                    )
                                     updated_count += 1
-                            st.session_state.current_test_manifest = manifest
+                            st.session_state.current_test_manifest = (
+                                manifest
+                            )
 
                         st.success(
-                            f"{updated_count} documento(s) confirmado(s) como enviado(s). "
-                            "Eles já estão disponíveis no Dashboard de finalizados."
+                            f"{updated_count} documento(s) confirmado(s) "
+                            "como enviado(s). O prazo de 24 horas para "
+                            "lançamento começa nesta confirmação."
                         )
                         st.rerun()
                     except Exception as exc:
-                        st.error(f"Falha ao confirmar envio: {exc}")
+                        st.error(
+                            f"Falha ao confirmar envio: {exc}"
+                        )
 
     with pend_process_tab:
         render_file_processing()
