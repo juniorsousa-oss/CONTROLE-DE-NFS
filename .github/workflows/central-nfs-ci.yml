@@ -1,0 +1,38 @@
+name: Validar Central Controle de NFs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'streamlit_app.py'
+      - 'central_nfs_data.py'
+      - '.github/workflows/central-nfs-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+      - name: Compilar
+        run: python -m py_compile streamlit_app.py central_nfs_data.py db.py nf_processor.py
+      - name: Validar integração
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          app = Path("streamlit_app.py").read_text(encoding="utf-8")
+          central = Path("central_nfs_data.py").read_text(encoding="utf-8")
+          assert "def _sync_central_nfs_sources" in app
+          assert '"mes_pre_notas"' in app
+          assert '"nf"' in app
+          assert 'CONTINGÊNCIA MANUAL' in app
+          assert '04 · FONTES' in app
+          assert 'consumer_sync_status' in central
+          assert 'visual_get' in central
+          print("CENTRAL_NFS_OK")
+          PY
