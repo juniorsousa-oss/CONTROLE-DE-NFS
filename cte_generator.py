@@ -23,6 +23,8 @@ class CteMetadata:
     chave: str
     emitente: str
     cnpj_emitente: str
+    tomador_nome: str
+    cnpj_tomador: str
     protocolo: str
     status_codigo: str
     status_motivo: str
@@ -292,6 +294,8 @@ def extract_cte_metadata(raw_xml: bytes) -> CteMetadata:
         chave=data["chave"],
         emitente=data["emit"].get("nome", ""),
         cnpj_emitente=_digits(data["emit"].get("cnpj", "")),
+        tomador_nome=str(data.get("tomador", {}).get("nome", "") or "").strip(),
+        cnpj_tomador=_digits(data.get("tomador", {}).get("cnpj", "")),
         protocolo=data["protocolo"],
         status_codigo=data["status_codigo"],
         status_motivo=data["status_motivo"],
