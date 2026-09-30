@@ -1551,6 +1551,32 @@ def refresh_mrp_from_materials_api(force: bool = False) -> dict:
     current_detail = st.session_state.get("mrp_impact_detail")
 
     if (
+        (not isinstance(current_detail, pd.DataFrame) or current_detail.empty)
+        and db.configured()
+    ):
+        try:
+            remote_mrp = db.load_mrp_load() or {}
+        except Exception:
+            remote_mrp = {}
+        if remote_mrp:
+            current_detail = pd.DataFrame(remote_mrp.get("detalhe") or [])
+            remote_summary = pd.DataFrame(remote_mrp.get("resumo") or [])
+            for frame in (current_detail, remote_summary):
+                for column in ("data_pre_nota", "data_cm"):
+                    if column in frame.columns:
+                        frame[column] = pd.to_datetime(
+                            frame[column],
+                            errors="coerce",
+                        ).dt.date
+            st.session_state.mrp_impact_detail = current_detail
+            st.session_state.mrp_priority_summary = remote_summary
+            st.session_state.mrp_priority_files = tuple(
+                remote_mrp.get("arquivos") or []
+            )
+            current_stats = remote_mrp.get("stats") or {}
+            st.session_state.mrp_priority_stats = current_stats
+
+    if (
         not force
         and carga_id is not None
         and str(current_stats.get("carga_materiais_id") or "") == str(carga_id)
@@ -8260,6 +8286,13 @@ elif page == "Pendências":
                         else None
                     )
                 )
+                pending_view["ops_mrp"] = match_results.map(
+                    lambda result: (
+                        str(result["row"].get("ops") or "")
+                        if result.get("matched") and result.get("row")
+                        else ""
+                    )
+                )
                 pending_view["situacao_mrp"] = match_results.map(
                     lambda result: (
                         str(result.get("situacao") or "ERRO")
@@ -8284,6 +8317,7 @@ elif page == "Pendências":
                     else "AGUARDANDO CARGA MRP"
                 )
                 pending_view["data_cm"] = None
+                pending_view["ops_mrp"] = ""
                 pending_view["situacao_mrp"] = (
                     "MATERIAIS API CONECTADA — AGUARDANDO BASE NF/STSUP01"
                     if api_live
@@ -8299,6 +8333,11 @@ elif page == "Pendências":
                 ).strip().upper()
 
                 mrp_ok = situacao.startswith("OK")
+                mrp_waiting = situacao.startswith(
+                    "MATERIAIS API CONECTADA"
+                )
+                if mrp_waiting:
+                    return "AGUARDANDO NF/STSUP01"
                 if not mrp_ok and situacao != "IMPACTO MRP NÃO CARREGADO":
                     return "REVISAR VÍNCULO NF"
                 if documento == "NF-E VINCULADA":
@@ -8324,6 +8363,7 @@ elif page == "Pendências":
             mrp_errors = int(
                 (
                     ~mrp_status.str.startswith("OK")
+                    & ~mrp_status.str.startswith("MATERIAIS API CONECTADA")
                     & ~mrp_status.eq("IMPACTO MRP NÃO CARREGADO")
                 ).sum()
             )
@@ -8486,6 +8526,8 @@ elif page == "Pendências":
                 "fornecedor",
                 "recebedor",
                 "prioridade",
+                "data_cm",
+                "ops_mrp",
                 "situacao_mrp",
                 "aderencia_fornecedor",
                 "cte",
@@ -8536,10 +8578,18 @@ elif page == "Pendências":
                                 "Pode ser preenchido diretamente nesta tabela."
                             ),
                         ),
-                        "prioridade": "Prioridade",
-                        "situacao_mrp": st.column_config.TextColumn(
-                            "Vínculo NF",
+                        "prioridade": "Prioridade MRP",
+                        "data_cm": st.column_config.DateColumn(
+                            "Data CM",
+                            format="DD/MM/YYYY",
+                        ),
+                        "ops_mrp": st.column_config.TextColumn(
+                            "OPs impactadas",
                             width="medium",
+                        ),
+                        "situacao_mrp": st.column_config.TextColumn(
+                            "Situação MRP",
+                            width="large",
                         ),
                         "aderencia_fornecedor": st.column_config.NumberColumn(
                             "Aderência fornecedor",
