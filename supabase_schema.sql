@@ -1374,11 +1374,7 @@ as $$
         'nome_padrao', nome_padrao,
         'aliases', aliases,
         'ativo', ativo,
-        'codigo', codigo,
-        'loja', loja,
-        'nome_fantasia', nome_fantasia,
-        'tipo', tipo,
-        'atualizado_em', atualizado_em
+        'codigo', codigo
       )
       order by nome_padrao
     ),
