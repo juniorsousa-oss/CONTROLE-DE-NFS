@@ -9520,6 +9520,7 @@ elif page == "Pendências":
             temp["chave_validacao"].ne("") & ~temp["chave_validacao"].isin(pre_keys)
         ].copy()
 
+    selected_pending = pd.DataFrame()
     pend_pre_tab = st.container()
 
     with pend_pre_tab:
@@ -9788,8 +9789,6 @@ elif page == "Pendências":
                 "fornecedor",
                 "recebedor",
                 "prioridade",
-                "cte",
-                "tratativa",
             ]
 
             pending_editor = st.data_editor(
@@ -9827,11 +9826,6 @@ elif page == "Pendências":
                         width="medium",
                     ),
                     "prioridade": "PRIORIDADE MRP",
-                    "cte": "CT-e",
-                    "tratativa": st.column_config.TextColumn(
-                        "TRATATIVA",
-                        width="medium",
-                    ),
                 },
             )
 
@@ -9841,57 +9835,6 @@ elif page == "Pendências":
             st.caption(
                 f"SELECIONADAS: {len(selected_pending)} X {len(editor_view)}"
             )
-
-            with st.expander(
-                "DETALHES TÉCNICOS DA CARGA",
-                expanded=False,
-            ):
-                _technical_cols = [
-                    col for col in [
-                        "numero_nf",
-                        "cnpj",
-                        "data_cm",
-                        "ops_mrp",
-                        "situacao_mrp",
-                        "aderencia_fornecedor",
-                        "validacao_documento",
-                    ]
-                    if col in filtered.columns
-                ]
-                if _technical_cols:
-                    _technical_view = filtered[_technical_cols].copy()
-                    _technical_view = _technical_view.fillna(
-                        "NÃO INFORMADO"
-                    ).replace("", "NÃO INFORMADO")
-                    st.dataframe(
-                        _technical_view,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "numero_nf": "NF",
-                            "cnpj": "CNPJ",
-                            "data_cm": st.column_config.DateColumn(
-                                "DATA CM",
-                                format="DD/MM/YYYY",
-                            ),
-                            "ops_mrp": st.column_config.TextColumn(
-                                "OPs IMPACTADAS",
-                                width="medium",
-                            ),
-                            "situacao_mrp": st.column_config.TextColumn(
-                                "SITUAÇÃO MRP",
-                                width="large",
-                            ),
-                            "aderencia_fornecedor": st.column_config.NumberColumn(
-                                "ADERÊNCIA",
-                                format="%d%%",
-                            ),
-                            "validacao_documento": st.column_config.TextColumn(
-                                "DOCUMENTO",
-                                width="medium",
-                            ),
-                        },
-                    )
 
             a1, a2 = st.columns([1, 1])
             save_receivers = a1.button(
@@ -10092,26 +10035,79 @@ elif page == "Pendências":
                 f"{len(filtered)} DE {len(pending_view)} PRÉ-NOTA(S) EXIBIDA(S)"
             )
 
-        _missing_stage1 = st.session_state.get("base_analysis_missing_mrp")
-        _has_missing_stage1 = (
-            isinstance(_missing_stage1, pd.DataFrame)
-            and not _missing_stage1.empty
-        )
-        if _has_missing_stage1:
-            st.markdown(
-                '<div class="topic-divider"></div>',
-                unsafe_allow_html=True,
-            )
-            render_mrp_missing_pre_treatments()
+        _missing_stage1 = _refresh_missing_mrp_analysis()
+        if isinstance(_missing_stage1, pd.DataFrame) and not _missing_stage1.empty:
+            with st.expander(
+                f"NFs SEM VINCULAÇÃO AUTOMÁTICA ({len(_missing_stage1)})",
+                expanded=False,
+            ):
+                _missing_cols = [
+                    col for col in [
+                        "data_pre_nota",
+                        "numero_nf",
+                        "fornecedor",
+                        "prioridade",
+                        "data_cm",
+                        "situacao_vinculo",
+                        "score_fornecedor",
+                    ]
+                    if col in _missing_stage1.columns
+                ]
+                st.dataframe(
+                    _missing_stage1[_missing_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "data_pre_nota": st.column_config.DateColumn(
+                            "DATA",
+                            format="DD/MM/YYYY",
+                        ),
+                        "numero_nf": "NF",
+                        "fornecedor": st.column_config.TextColumn(
+                            "FORNECEDOR",
+                            width="large",
+                        ),
+                        "prioridade": "PRIORIDADE",
+                        "data_cm": st.column_config.DateColumn(
+                            "DATA CM",
+                            format="DD/MM/YYYY",
+                        ),
+                        "situacao_vinculo": st.column_config.TextColumn(
+                            "MOTIVO",
+                            width="large",
+                        ),
+                        "score_fornecedor": st.column_config.NumberColumn(
+                            "ADERÊNCIA",
+                            format="%d%%",
+                        ),
+                    },
+                )
+                st.caption(
+                    "Essas NFs não bloqueiam o fluxo. Consulte somente se precisar "
+                    "tratar alguma associação manualmente."
+                )
 
         st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         if st.button(
-            "CONTINUAR PARA DOCUMENTOS FISCAIS",
+            "VALIDAR BASE E CONTINUAR",
             type="primary",
             use_container_width=True,
-            disabled=(not st.session_state.get("base_analysis_ready")) or _has_missing_stage1 or pending_pre.empty,
+            disabled=(
+                not st.session_state.get("base_analysis_ready")
+                or selected_pending.empty
+            ),
             key="flow_to_documents",
         ):
+            st.session_state.nf_selected_flow_keys = set(
+                selected_pending.get(
+                    "_flow_key",
+                    pd.Series(dtype=str),
+                )
+                .fillna("")
+                .astype(str)
+                .loc[lambda values: values.ne("")]
+                .tolist()
+            )
             _set_nf_flow_stage(2)
             st.rerun()
 
