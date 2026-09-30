@@ -7882,13 +7882,22 @@ def render_document_linking_stage() -> None:
 
 def render_ready_file_stage() -> None:
     section_band(
-        "03 · ARQUIVOS",
-        "ARQUIVOS PRONTOS",
+        "03 · FINALIZAÇÃO",
+        "ARQUIVO PRONTO PARA IMPORTAÇÃO",
         "GERAÇÃO, DOWNLOAD E CONFIRMAÇÃO FINAL",
     )
 
+    current_records = current_process_records_for_tests()
+    awaiting_remote = _awaiting_send_records(current_records)
     frame = st.session_state.get("analysis")
     if not isinstance(frame, pd.DataFrame) or frame.empty:
+        if not awaiting_remote.empty:
+            st.info(
+                "Este lote já foi gerado em outra sessão. "
+                "A etapa de confirmação de envio foi recuperada pelo banco."
+            )
+            render_send_and_tracking_stage(current_records)
+            return
         st.warning(
             "Nenhuma NF validada está disponível. Volte à etapa de documentos."
         )
@@ -7952,7 +7961,7 @@ def render_ready_file_stage() -> None:
 
     if not st.session_state.get("zip_outputs"):
         if st.button(
-            "GERAR ARQUIVOS PRONTOS",
+            "GERAR ARQUIVO PRONTO PARA IMPORTAÇÃO",
             type="primary",
             use_container_width=True,
             key="stage3_generate_ready_files",
