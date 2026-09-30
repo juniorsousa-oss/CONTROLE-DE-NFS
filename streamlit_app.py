@@ -5135,7 +5135,16 @@ def render_mrp_missing_pre_treatments() -> None:
     view = missing[visible_cols].copy()
     if "recebedor" not in view.columns:
         view["recebedor"] = ""
-    view.insert(0, "Selecionar", False)
+    base_missing_select_all = st.checkbox(
+        "Marcar / desmarcar todas as NFs pendentes desta conferência",
+        value=True,
+        key="base_missing_mrp_select_all",
+    )
+    view.insert(
+        0,
+        "Selecionar",
+        bool(base_missing_select_all),
+    )
 
     edited = st.data_editor(
         view,
