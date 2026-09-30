@@ -734,6 +734,44 @@ def render_filter_grid(
     if not isinstance(frame, pd.DataFrame):
         frame = pd.DataFrame()
     data = frame.copy()
+
+    # AgGrid recebe os dados via JSON. Objetos Python como date/datetime
+    # chegam ao navegador como objetos e são exibidos como "[object Object]".
+    # Convertemos esses valores para texto operacional antes da serialização.
+    def _grid_safe_value(value):
+        if value is None:
+            return ""
+        try:
+            if pd.isna(value):
+                return ""
+        except Exception:
+            pass
+        if isinstance(value, pd.Timestamp):
+            if pd.isna(value):
+                return ""
+            if value.hour or value.minute or value.second:
+                return value.strftime("%d/%m/%Y %H:%M")
+            return value.strftime("%d/%m/%Y")
+        if isinstance(value, datetime):
+            if value.hour or value.minute or value.second:
+                return value.strftime("%d/%m/%Y %H:%M")
+            return value.strftime("%d/%m/%Y")
+        if isinstance(value, date):
+            return value.strftime("%d/%m/%Y")
+        if isinstance(value, (dict, list, tuple, set)):
+            try:
+                return json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    default=str,
+                )
+            except Exception:
+                return str(value)
+        return value
+
+    for _grid_col in data.columns:
+        data[_grid_col] = data[_grid_col].map(_grid_safe_value)
+
     headers = column_headers or {}
     editable = editable_columns or set()
     hidden = hidden_columns or set()
@@ -9824,11 +9862,6 @@ elif page == "Pendências":
                 na_position="last",
             ).drop(columns="_priority_order")
 
-            editor_view = filtered.copy()
-            editor_view["_flow_key"] = editor_view.apply(
-                flow_nf_key,
-                axis=1,
-            )
             # Grade profissional: filtros por coluna no cabeçalho,
             # seleção múltipla e edição somente dos campos operacionais.
             editor_view = filtered.copy()
