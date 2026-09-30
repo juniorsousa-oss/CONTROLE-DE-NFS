@@ -375,30 +375,19 @@ init()
 # configurações, que não fazem parte do reset solicitado.
 _reset_marker = "_nf_mrp_operational_reset_20260919_v1"
 if not st.session_state.get(_reset_marker):
-    for _key in (
-        "analysis",
-        "mrp_priority_summary",
-        "mrp_impact_detail",
-        "mrp_import_preview_detail",
-        "mrp_import_preview_summary",
-    ):
-        st.session_state[_key] = pd.DataFrame()
+    # O reset de homologação não pode mais apagar a carga MRP persistida:
+    # a base de Materiais agora é sincronizada automaticamente pela API.
+    st.session_state["analysis"] = pd.DataFrame()
     for _key in (
         "pdfs", "zip_outputs", "prefilter_stats", "prefilter_files",
-        "mrp_priority_stats", "danfe_outputs",
+        "danfe_outputs",
     ):
         st.session_state[_key] = {}
     for _key in (
         "prefilter_rejected", "prefilter_resolved", "danfe_results", "danfe_errors",
-        "history", "current_test_manifest", "mrp_ignored_records",
+        "current_test_manifest",
     ):
         st.session_state[_key] = []
-    st.session_state["mrp_priority_files"] = ()
-    for _key in (
-        "priority_nf_numbers", "priority_nf_keys",
-        "priority_nf_doc_keys", "priority_date_nf_keys",
-    ):
-        st.session_state[_key] = set()
 
     # Também desmarca arquivos previamente enviados para que a análise não
     # reaproveite silenciosamente o lote anterior após atualizar a página.
@@ -1542,6 +1531,115 @@ def _load_materials_api_current_cached() -> dict:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def refresh_mrp_from_materials_api(force: bool = False) -> dict:
+    """Recalcula o impacto MRP com a carga atual da API e o último STSUP01 já persistido."""
+    if force:
+        try:
+            _load_materials_api_current_cached.clear()
+        except Exception:
+            pass
+
+    payload = _load_materials_api_current_cached()
+    carga = payload.get("carga") or {}
+    if not bool(payload.get("disponivel") and isinstance(carga, dict)):
+        return {"ok": False, "recalculado": False, "motivo": "API_SEM_CARGA"}
+
+    carga_id = carga.get("carga_id")
+    current_stats = st.session_state.get("mrp_priority_stats") or {}
+    current_detail = st.session_state.get("mrp_impact_detail")
+
+    if (
+        not force
+        and carga_id is not None
+        and str(current_stats.get("carga_materiais_id") or "") == str(carga_id)
+    ):
+        return {
+            "ok": True,
+            "recalculado": False,
+            "motivo": "ATUALIZADO",
+            "carga_id": carga_id,
+        }
+
+    if not isinstance(current_detail, pd.DataFrame) or current_detail.empty:
+        return {
+            "ok": True,
+            "recalculado": False,
+            "motivo": "SEM_BASE_STSUP01",
+            "carga_id": carga_id,
+        }
+
+    entry_cols = [
+        "data_pre_nota",
+        "numero_nf",
+        "fornecedor_codigo",
+        "fornecedor",
+        "cr",
+        "desc_cr",
+        "natureza",
+        "produto",
+        "descricao",
+        "tes",
+    ]
+    entries = current_detail.copy()
+    for col in entry_cols:
+        if col not in entries.columns:
+            entries[col] = ""
+    entries = entries[entry_cols].copy()
+
+    materials, mat_stats = _clean_mrp_materials_api_snapshot(payload)
+    detail, summary, impact_stats = _build_mrp_impact(materials, entries)
+
+    old_stats = dict(current_stats)
+    old_files = tuple(st.session_state.get("mrp_priority_files") or ())
+    nf_source = old_files[1] if len(old_files) > 1 else "Último STSUP01 persistido"
+
+    st.session_state.mrp_impact_detail = detail.copy()
+    st.session_state.mrp_priority_summary = summary.copy()
+    st.session_state.mrp_priority_stats = {
+        **old_stats,
+        **mat_stats,
+        **impact_stats,
+    }
+    st.session_state.mrp_priority_files = (
+        f"API Gestão de Entregas · carga {carga_id or '-'}",
+        nf_source,
+    )
+
+    high = (
+        summary[
+            summary["prioridade"]
+            .fillna("")
+            .astype(str)
+            .str.upper()
+            .eq("ALTA")
+        ].copy()
+        if isinstance(summary, pd.DataFrame) and not summary.empty
+        else pd.DataFrame()
+    )
+    st.session_state.priority_date_nf_keys = set(
+        high.get("data_nf", pd.Series(dtype=str))
+        .dropna().astype(str).tolist()
+    )
+    st.session_state.priority_nf_numbers = set(
+        high.get("numero_nf", pd.Series(dtype=str))
+        .dropna().astype(str).tolist()
+    )
+    st.session_state.priority_nf_doc_keys = set()
+    st.session_state.priority_nf_keys = set()
+
+    persisted = persist_mrp_current()
+    return {
+        "ok": True,
+        "recalculado": True,
+        "carga_id": carga_id,
+        "nfs": len(summary),
+        "nfs_alta": int(
+            summary["prioridade"].eq("ALTA").sum()
+        ) if not summary.empty else 0,
+        "persistido": persisted,
+    }
 
 
 @st.cache_data(show_spinner=False, max_entries=8)
@@ -6978,9 +7076,8 @@ def render_file_processing():
         else {}
     )
 
+    st.markdown("#### Integração de Materiais")
     with st.container(border=True):
-        st.markdown("#### Relatórios-base")
-
         if api_material_available:
             api_when = pd.to_datetime(
                 api_material_carga.get("ultima_verificacao_em")
@@ -6996,48 +7093,104 @@ def render_file_processing():
                     pass
                 api_when_txt = api_when.strftime("%d/%m/%Y %H:%M")
             else:
-                api_when_txt = "data não informada"
+                api_when_txt = "—"
 
-            st.success(
-                "Materiais conectados automaticamente ao Gestão de Entregas — "
-                f"filtro {api_material_carga.get('filtro') or 'PENDÊNCIA SEM ESTOQUE'}; "
-                f"{int(api_material_carga.get('total_itens') or 0)} item(ns), "
-                f"{int(api_material_carga.get('total_produtos') or 0)} produto(s); "
-                f"última sincronização {api_when_txt}."
+            st.markdown(
+                f"""
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap;">
+                    <div>
+                        <div style="font-size:1.05rem;font-weight:800;color:#0f172a;">API Gestão de Entregas</div>
+                        <div style="margin-top:.22rem;color:#64748b;font-size:.83rem;">
+                            Fonte automática do relatório de Materiais · filtro <b>{api_material_carga.get('filtro') or 'PENDÊNCIA SEM ESTOQUE'}</b>
+                        </div>
+                    </div>
+                    <div style="padding:.35rem .65rem;border-radius:999px;background:#dcfce7;color:#166534;font-weight:800;font-size:.76rem;">
+                        CONECTADA
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Itens ativos", int(api_material_carga.get("total_itens") or 0))
+            k2.metric("Produtos", int(api_material_carga.get("total_produtos") or 0))
+            k3.metric("Carga", str(api_material_carga.get("carga_id") or "—"))
+            k4.metric("Última verificação", api_when_txt)
         else:
-            st.warning(
-                "A API de Materiais ainda não possui carga ativa. "
-                "O arquivo manual permanece disponível como contingência."
+            st.error(
+                "API de Materiais sem carga ativa. "
+                "Use a contingência manual até a conexão ser restabelecida."
             )
 
-        r1, r2, r3 = st.columns(3)
+        refresh_api = st.button(
+            "FORÇAR ATUALIZAÇÃO DA API",
+            use_container_width=True,
+            key="force_materials_api_refresh",
+        )
+        if refresh_api:
+            try:
+                with st.spinner("Atualizando Materiais a partir do Gestão de Entregas..."):
+                    sync_result = db.force_materials_api_sync()
+                    try:
+                        _load_materials_api_current_cached.clear()
+                    except Exception:
+                        pass
+                    live_result = refresh_mrp_from_materials_api(force=True)
+                st.success(
+                    "API atualizada. "
+                    f"Carga {sync_result.get('carga_id') or '—'} · "
+                    f"{int(sync_result.get('total_itens') or 0)} item(ns). "
+                    + (
+                        "Prioridades MRP recalculadas com o último STSUP01."
+                        if live_result.get("recalculado")
+                        else "Aguardando uma base NF/STSUP01 para calcular as prioridades."
+                    )
+                )
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Não foi possível atualizar a API de Materiais: {exc}")
+
+    with st.container(border=True):
+        st.markdown("#### Relatórios-base")
+        r1, r2 = st.columns(2)
         pre_file = r1.file_uploader(
             "Pré-notas",
             type=["csv", "xlsx", "xls", "xlt", "xltx"],
             key="base_pre_file",
         )
-        material_file = r2.file_uploader(
-            "Materiais — contingência manual",
-            type=["xlsx", "xltx", "xls", "csv"],
-            key="base_material_file",
-            help=(
-                "A API do Gestão de Entregas é a fonte principal. "
-                "Se um arquivo for enviado aqui, ele substitui a API somente nesta análise."
-            ),
-        )
-        nf_file = r3.file_uploader(
+        nf_file = r2.file_uploader(
             "NFs / STSUP01",
             type=["xlsx", "xltx", "xls", "csv"],
             key="base_nf_file",
         )
 
-        supplier_file = st.file_uploader(
-            "Fornecedores — opcional",
-            type=["csv", "xlsx", "xls", "xlt", "xltx"],
-            key="base_supplier_file",
-            help="Se não selecionar, será usada a base de fornecedores já cadastrada.",
-        )
+        material_file = None
+        supplier_file = None
+        with st.expander(
+            "Contingência manual — Materiais e Fornecedores",
+            expanded=False,
+        ):
+            st.caption(
+                "Use somente se a integração automática estiver indisponível "
+                "ou se for necessário substituir a fonte nesta análise."
+            )
+            c1, c2 = st.columns(2)
+            material_file = c1.file_uploader(
+                "Materiais — contingência",
+                type=["xlsx", "xltx", "xls", "csv"],
+                key="base_material_file",
+                help=(
+                    "Substitui a API somente nesta análise."
+                ),
+            )
+            supplier_file = c2.file_uploader(
+                "Fornecedores — contingência",
+                type=["csv", "xlsx", "xls", "xlt", "xltx"],
+                key="base_supplier_file",
+                help=(
+                    "Se não selecionar, será usada a base de fornecedores já cadastrada."
+                ),
+            )
 
     ready = bool(
         pre_file
@@ -7922,6 +8075,16 @@ if page == "Dashboard":
 
 
 elif page == "Pendências":
+    # Mantém as prioridades sincronizadas com a carga atual de Materiais.
+    try:
+        _mrp_live_sync = refresh_mrp_from_materials_api()
+    except Exception as _mrp_live_exc:
+        _mrp_live_sync = {
+            "ok": False,
+            "recalculado": False,
+            "motivo": str(_mrp_live_exc),
+        }
+
     _control_docs_title = str(cfg.get("control_docs_label") or DEFAULT["control_docs_label"]).strip()
     st.markdown(
         f'<div class="section-title">{_control_docs_title}</div>',
@@ -8076,11 +8239,18 @@ elif page == "Pendências":
                     axis=1,
                 )
 
+                api_live = bool(
+                    (_load_materials_api_current_cached() or {}).get("disponivel")
+                )
                 pending_view["prioridade"] = match_results.map(
                     lambda result: (
                         str(result["row"].get("prioridade") or "ERRO")
                         if result.get("matched") and result.get("row")
-                        else "ERRO"
+                        else (
+                            "AGUARDANDO NF/STSUP01"
+                            if api_live
+                            else "ERRO"
+                        )
                     )
                 )
                 pending_view["data_cm"] = match_results.map(
@@ -8091,15 +8261,34 @@ elif page == "Pendências":
                     )
                 )
                 pending_view["situacao_mrp"] = match_results.map(
-                    lambda result: str(result.get("situacao") or "ERRO")
+                    lambda result: (
+                        str(result.get("situacao") or "ERRO")
+                        if result.get("matched")
+                        else (
+                            "MATERIAIS API CONECTADA — NF NÃO LOCALIZADA NO STSUP01 ATUAL"
+                            if api_live
+                            else str(result.get("situacao") or "ERRO")
+                        )
+                    )
                 )
                 pending_view["aderencia_fornecedor"] = match_results.map(
                     lambda result: int(result.get("score_fornecedor") or 0)
                 )
             else:
-                pending_view["prioridade"] = "AGUARDANDO CARGA MRP"
+                api_live = bool(
+                    (_load_materials_api_current_cached() or {}).get("disponivel")
+                )
+                pending_view["prioridade"] = (
+                    "AGUARDANDO NF/STSUP01"
+                    if api_live
+                    else "AGUARDANDO CARGA MRP"
+                )
                 pending_view["data_cm"] = None
-                pending_view["situacao_mrp"] = "IMPACTO MRP NÃO CARREGADO"
+                pending_view["situacao_mrp"] = (
+                    "MATERIAIS API CONECTADA — AGUARDANDO BASE NF/STSUP01"
+                    if api_live
+                    else "IMPACTO MRP NÃO CARREGADO"
+                )
                 pending_view["aderencia_fornecedor"] = 0
 
             def _pending_treatment_label(row):
@@ -8260,7 +8449,8 @@ elif page == "Pendências":
                 "ERRO": 0,
                 "ALTA": 1,
                 "BAIXA": 2,
-                "AGUARDANDO CARGA MRP": 3,
+                "AGUARDANDO NF/STSUP01": 3,
+                "AGUARDANDO CARGA MRP": 4,
             }
             filtered["_priority_order"] = (
                 filtered["prioridade"].map(priority_order).fillna(9)
