@@ -3675,11 +3675,20 @@ def make_zip_outputs(df: pd.DataFrame):
             f"mas {cte_manifest_count} registrado(s) na saída."
         )
 
+    _link_stats = st.session_state.get("document_link_stats") or {}
     st.session_state.last_generation_audit = {
-        "nf_esperadas": expected_nf_count,
+        "nf_recebidas": int(_link_stats.get("nf_classificados") or expected_nf_count),
+        "nf_vinculadas": expected_nf_count,
         "nf_geradas": nf_manifest_count,
-        "cte_esperados": expected_cte_count,
+        "cte_recebidos": int(_link_stats.get("cte_classificados") or expected_cte_count),
+        "cte_vinculados": expected_cte_count,
         "cte_gerados": cte_manifest_count,
+        "nf_erros_vinculo": int(_link_stats.get("erros_nf_vinculados") or 0),
+        "cte_erros_vinculo": int(_link_stats.get("erros_cte_vinculados") or 0),
+        "cte_desconsiderados_tomador": int(
+            _link_stats.get("cte_desconsiderados_tomador") or 0
+        ),
+        "ignorados": int(_link_stats.get("ignorados") or 0),
         "lote_id": batch,
     }
 
@@ -5821,8 +5830,17 @@ def render_nf_treatment_center() -> None:
                     st.session_state.history.extend(manifest)
                     if db.configured():
                         try:
-                            db.save_process_records(manifest)
-                            st.success("ZIPs criados e registros gravados no Supabase. Nenhum PDF foi salvo no banco.")
+                            _save_result = db.save_process_records(manifest)
+                            _inserted = int((_save_result or {}).get("inseridos", 0))
+                            if _inserted != len(manifest):
+                                raise RuntimeError(
+                                    f"Conferência do banco falhou: {len(manifest)} "
+                                    f"registro(s) esperados e {_inserted} gravado(s)."
+                                )
+                            st.success(
+                                f"ZIPs criados e {_inserted} registro(s) confirmados no Supabase. "
+                                "Nenhum PDF foi salvo no banco."
+                            )
                         except Exception as exc:
                             st.warning(f"ZIPs criados, mas o histórico não pôde ser gravado no Supabase: {exc}")
                     else:
@@ -5847,9 +5865,25 @@ def render_nf_treatment_center() -> None:
             if _audit:
                 st.success(
                     "CONFERÊNCIA DA GERAÇÃO · "
-                    f"NF: {_audit.get('nf_geradas', 0)} / {_audit.get('nf_esperadas', 0)} · "
-                    f"CT-e: {_audit.get('cte_gerados', 0)} / {_audit.get('cte_esperados', 0)}"
+                    f"NF: {_audit.get('nf_recebidas', 0)} recebidas → "
+                    f"{_audit.get('nf_vinculadas', 0)} vinculadas → "
+                    f"{_audit.get('nf_geradas', 0)} geradas · "
+                    f"CT-e: {_audit.get('cte_recebidos', 0)} recebidos → "
+                    f"{_audit.get('cte_vinculados', 0)} vinculados → "
+                    f"{_audit.get('cte_gerados', 0)} gerados"
                 )
+                _audit_gaps = (
+                    int(_audit.get("nf_erros_vinculo", 0))
+                    + int(_audit.get("cte_erros_vinculo", 0))
+                    + int(_audit.get("cte_desconsiderados_tomador", 0))
+                    + int(_audit.get("ignorados", 0))
+                )
+                if _audit_gaps:
+                    st.info(
+                        f"{_audit_gaps} documento(s) não chegaram à geração final. "
+                        "Consulte o quadro recolhido de documentos não associados "
+                        "e as tratativas da etapa de documentos."
+                    )
             all_zips_buffer = io.BytesIO()
             with zipfile.ZipFile(
                 all_zips_buffer,
