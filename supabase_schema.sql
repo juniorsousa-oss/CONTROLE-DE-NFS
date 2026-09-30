@@ -1024,3 +1024,336 @@ $$;
 
 revoke all on function public.nf_atualizar_datas_recebimento(jsonb) from public;
 grant execute on function public.nf_atualizar_datas_recebimento(jsonb) to anon, authenticated;
+
+
+-- EVOLUCAO V8 - API DE MATERIAIS DO GESTAO DE ENTREGAS
+create table if not exists public.nf_materiais_api_cargas (
+  id bigserial primary key,
+  origem text not null default 'GESTAO_DE_ENTREGAS',
+  filtro text not null default 'PENDÊNCIA SEM ESTOQUE',
+  hash_carga text not null,
+  total_origem integer not null default 0,
+  total_validos integer not null default 0,
+  total_itens integer not null default 0,
+  total_produtos integer not null default 0,
+  ativa boolean not null default true,
+  status text not null default 'ATIVA',
+  criada_em timestamptz not null default now(),
+  ativada_em timestamptz not null default now(),
+  ultima_verificacao_em timestamptz not null default now()
+);
+
+create unique index if not exists nf_materiais_api_carga_ativa_uidx
+  on public.nf_materiais_api_cargas ((ativa))
+  where ativa = true;
+
+create index if not exists nf_materiais_api_cargas_criada_idx
+  on public.nf_materiais_api_cargas (criada_em desc);
+
+create table if not exists public.nf_materiais_api_itens (
+  id bigserial primary key,
+  carga_id bigint not null references public.nf_materiais_api_cargas(id) on delete cascade,
+  projeto text not null,
+  produto text not null,
+  data_cm date not null,
+  criado_em timestamptz not null default now(),
+  unique (carga_id, projeto, produto, data_cm)
+);
+
+create index if not exists nf_materiais_api_itens_carga_idx
+  on public.nf_materiais_api_itens (carga_id);
+create index if not exists nf_materiais_api_itens_produto_data_idx
+  on public.nf_materiais_api_itens (produto, data_cm);
+
+create or replace function public.nf_sincronizar_materiais_entregas()
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_items jsonb := '[]'::jsonb;
+  v_total_origem integer := 0;
+  v_total_validos integer := 0;
+  v_total_itens integer := 0;
+  v_total_produtos integer := 0;
+  v_hash text := md5('[]');
+  v_carga_id bigint;
+  v_carga_hash text;
+  v_now timestamptz := now();
+begin
+  with project_context as (
+    select
+      c.op as projeto,
+      c.data_separacao,
+      coalesce(c.status, '') as status_cronograma,
+      coalesce(r.qtd_itens_pendentes, 0) as qtd_itens_pendentes,
+      upper(trim(coalesce(r.status_projeto, ''))) as status_projeto,
+      upper(trim(coalesce(r.situacao_entrega, ''))) as situacao_entrega,
+      coalesce(r.possui_entrega, false) as possui_entrega,
+      nullif(trim(coalesce(r.contexto_raw, '')), '') as contexto_raw,
+      (
+        nullif(trim(coalesce(r.status_projeto, '')), '') is not null
+        or nullif(trim(coalesce(r.situacao_entrega, '')), '') is not null
+        or nullif(trim(coalesce(r.contexto_raw, '')), '') is not null
+      ) as contexto_conhecido
+    from public.entrega_cronograma_atual c
+    left join public.entrega_mrp_resumo r
+      on trim(r.projeto) = trim(c.op)
+  ),
+  pending_ops as (
+    select distinct projeto
+    from project_context
+    where qtd_itens_pendentes > 0
+      and status_projeto not in ('SUSPENSO', 'CANCELADO', 'RESÍDUO')
+      and (
+        (
+          contexto_conhecido
+          and (
+            possui_entrega
+            or situacao_entrega = 'POSSUI SEPARAÇÃO'
+          )
+        )
+        or (
+          not contexto_conhecido
+          and lower(trim(status_cronograma)) <> lower('Prioridade solicitada')
+          and data_separacao is not null
+          and data_separacao < (now() at time zone 'America/Sao_Paulo')::date
+        )
+      )
+  ),
+  filtered as (
+    select
+      trim(coalesce(m.projeto, '')) as projeto,
+      trim(coalesce(m.produto, '')) as produto,
+      m.data_cm,
+      m.id as origem_id
+    from public.entrega_mrp_itens_cache m
+    join pending_ops p on p.projeto = trim(m.projeto)
+    where trim(coalesce(m.item->>'Ação', '')) not ilike '%estoque%'
+  ),
+  valid as (
+    select projeto, produto, data_cm, origem_id
+    from filtered
+    where projeto <> ''
+      and produto <> ''
+      and data_cm is not null
+  ),
+  distinct_valid as (
+    select distinct projeto, produto, data_cm
+    from valid
+  )
+  select
+    (select count(*)::integer from filtered),
+    (select count(*)::integer from valid),
+    (select count(*)::integer from distinct_valid),
+    (select count(distinct produto)::integer from distinct_valid),
+    coalesce(
+      (
+        select jsonb_agg(
+          jsonb_build_object(
+            'projeto', projeto,
+            'produto', produto,
+            'data_cm', to_char(data_cm, 'YYYY-MM-DD')
+          )
+          order by projeto, produto, data_cm
+        )
+        from distinct_valid
+      ),
+      '[]'::jsonb
+    )
+  into
+    v_total_origem,
+    v_total_validos,
+    v_total_itens,
+    v_total_produtos,
+    v_items;
+
+  v_hash := md5(coalesce(v_items::text, '[]'));
+
+  select id, hash_carga
+    into v_carga_id, v_carga_hash
+  from public.nf_materiais_api_cargas
+  where ativa = true
+  order by id desc
+  limit 1
+  for update;
+
+  if v_carga_id is not null and v_carga_hash = v_hash then
+    update public.nf_materiais_api_cargas
+       set ultima_verificacao_em = v_now,
+           total_origem = v_total_origem,
+           total_validos = v_total_validos,
+           total_itens = v_total_itens,
+           total_produtos = v_total_produtos,
+           status = 'ATIVA'
+     where id = v_carga_id;
+
+    return jsonb_build_object(
+      'ok', true,
+      'alterada', false,
+      'carga_id', v_carga_id,
+      'origem', 'GESTAO_DE_ENTREGAS',
+      'filtro', 'PENDÊNCIA SEM ESTOQUE',
+      'total_origem', v_total_origem,
+      'total_validos', v_total_validos,
+      'total_itens', v_total_itens,
+      'total_produtos', v_total_produtos,
+      'sincronizado_em', v_now
+    );
+  end if;
+
+  update public.nf_materiais_api_cargas
+     set ativa = false,
+         status = 'SUBSTITUÍDA'
+   where ativa = true;
+
+  insert into public.nf_materiais_api_cargas (
+    origem, filtro, hash_carga, total_origem, total_validos,
+    total_itens, total_produtos, ativa, status,
+    criada_em, ativada_em, ultima_verificacao_em
+  )
+  values (
+    'GESTAO_DE_ENTREGAS',
+    'PENDÊNCIA SEM ESTOQUE',
+    v_hash,
+    v_total_origem,
+    v_total_validos,
+    v_total_itens,
+    v_total_produtos,
+    true,
+    'ATIVA',
+    v_now,
+    v_now,
+    v_now
+  )
+  returning id into v_carga_id;
+
+  insert into public.nf_materiais_api_itens (
+    carga_id, projeto, produto, data_cm
+  )
+  select
+    v_carga_id,
+    x.projeto,
+    x.produto,
+    x.data_cm::date
+  from jsonb_to_recordset(v_items) as x(
+    projeto text,
+    produto text,
+    data_cm text
+  );
+
+  return jsonb_build_object(
+    'ok', true,
+    'alterada', true,
+    'carga_id', v_carga_id,
+    'origem', 'GESTAO_DE_ENTREGAS',
+    'filtro', 'PENDÊNCIA SEM ESTOQUE',
+    'total_origem', v_total_origem,
+    'total_validos', v_total_validos,
+    'total_itens', v_total_itens,
+    'total_produtos', v_total_produtos,
+    'sincronizado_em', v_now
+  );
+end;
+$$;
+
+create or replace function public.nf_materiais_api_status()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select coalesce(
+    (
+      select jsonb_build_object(
+        'ok', true,
+        'disponivel', true,
+        'carga_id', c.id,
+        'origem', c.origem,
+        'filtro', c.filtro,
+        'status', c.status,
+        'total_origem', c.total_origem,
+        'total_validos', c.total_validos,
+        'total_itens', c.total_itens,
+        'total_produtos', c.total_produtos,
+        'criada_em', c.criada_em,
+        'ativada_em', c.ativada_em,
+        'ultima_verificacao_em', c.ultima_verificacao_em
+      )
+      from public.nf_materiais_api_cargas c
+      where c.ativa = true
+      order by c.id desc
+      limit 1
+    ),
+    jsonb_build_object('ok', true, 'disponivel', false, 'status', 'SEM CARGA')
+  );
+$$;
+
+create or replace function public.nf_materiais_api_atual()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with current_load as (
+    select *
+    from public.nf_materiais_api_cargas
+    where ativa = true
+    order by id desc
+    limit 1
+  )
+  select case
+    when not exists (select 1 from current_load)
+      then jsonb_build_object(
+        'ok', true,
+        'disponivel', false,
+        'itens', '[]'::jsonb
+      )
+    else jsonb_build_object(
+      'ok', true,
+      'disponivel', true,
+      'carga', (
+        select jsonb_build_object(
+          'carga_id', c.id,
+          'origem', c.origem,
+          'filtro', c.filtro,
+          'status', c.status,
+          'total_origem', c.total_origem,
+          'total_validos', c.total_validos,
+          'total_itens', c.total_itens,
+          'total_produtos', c.total_produtos,
+          'criada_em', c.criada_em,
+          'ativada_em', c.ativada_em,
+          'ultima_verificacao_em', c.ultima_verificacao_em
+        )
+        from current_load c
+      ),
+      'itens', coalesce(
+        (
+          select jsonb_agg(
+            jsonb_build_object(
+              'projeto', i.projeto,
+              'produto', i.produto,
+              'data_cm', to_char(i.data_cm, 'YYYY-MM-DD')
+            )
+            order by i.projeto, i.produto, i.data_cm
+          )
+          from public.nf_materiais_api_itens i
+          join current_load c on c.id = i.carga_id
+        ),
+        '[]'::jsonb
+      )
+    )
+  end;
+$$;
+
+revoke all on function public.nf_sincronizar_materiais_entregas() from public;
+revoke all on function public.nf_materiais_api_status() from public;
+revoke all on function public.nf_materiais_api_atual() from public;
+
+grant execute on function public.nf_materiais_api_status() to anon, authenticated;
+grant execute on function public.nf_materiais_api_atual() to anon, authenticated;
+grant execute on function public.nf_sincronizar_materiais_entregas() to service_role;
