@@ -961,3 +961,66 @@ revoke all on function public.nf_conciliar_lancamentos(text[], text[]) from publ
 revoke all on function public.nf_excluir_processamentos(text[]) from public;
 grant execute on function public.nf_conciliar_lancamentos(text[], text[]) to anon, authenticated;
 grant execute on function public.nf_excluir_processamentos(text[]) to anon, authenticated;
+
+
+-- EVOLUCAO V7 - CORRECAO DE DATA DE RECEBIMENTO
+create or replace function public.nf_atualizar_datas_recebimento(
+  p_updates jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_item jsonb;
+  v_id text;
+  v_data date;
+  v_nf text;
+  v_cnpj text;
+  v_count integer := 0;
+begin
+  if p_updates is null or jsonb_typeof(p_updates) <> 'array' then
+    raise exception 'p_updates deve ser um array JSON';
+  end if;
+
+  for v_item in select value from jsonb_array_elements(p_updates)
+  loop
+    v_id := nullif(trim(coalesce(v_item->>'id','')), '');
+    v_data := nullif(v_item->>'data_recebimento','')::date;
+    v_nf := null;
+    v_cnpj := null;
+
+    if v_id is null or v_data is null then
+      continue;
+    end if;
+
+    update public.nf_processamentos
+       set pre_nota_em = v_data,
+           data_chegada = v_data
+     where id::text = v_id
+       and upper(coalesce(tipo_documento,'NF-e')) = 'NF-E'
+    returning numero_nf, cnpj_fornecedor
+         into v_nf, v_cnpj;
+
+    if found then
+      v_count := v_count + 1;
+
+      update public.nf_pre_notas_atual
+         set data_pre_nota = v_data,
+             atualizado_em = now()
+       where numero_nf = v_nf
+         and (
+           regexp_replace(coalesce(cnpj,''), '\\D', '', 'g')
+             = regexp_replace(coalesce(v_cnpj,''), '\\D', '', 'g')
+           or trim(coalesce(v_cnpj,'')) = ''
+         );
+    end if;
+  end loop;
+
+  return jsonb_build_object('ok', true, 'atualizados', v_count);
+end;
+$$;
+
+revoke all on function public.nf_atualizar_datas_recebimento(jsonb) from public;
+grant execute on function public.nf_atualizar_datas_recebimento(jsonb) to anon, authenticated;
