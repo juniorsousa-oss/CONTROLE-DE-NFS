@@ -7767,7 +7767,16 @@ elif page == "Pendências":
                 flow_nf_key,
                 axis=1,
             )
-            editor_view.insert(0, "Selecionar", False)
+            pending_select_all = st.checkbox(
+                "Marcar / desmarcar todas as NFs exibidas",
+                value=True,
+                key=f"pending_select_all_{len(editor_view)}",
+            )
+            editor_view.insert(
+                0,
+                "Selecionar",
+                bool(pending_select_all),
+            )
 
             table_cols = [
                 "Selecionar",
@@ -7795,7 +7804,11 @@ elif page == "Pendências":
                     disabled=[
                         col
                         for col in table_cols
-                        if col not in {"Selecionar", "recebedor"}
+                        if col not in {
+                            "Selecionar",
+                            "recebedor",
+                            "data_pre_nota",
+                        }
                     ],
                     column_config={
                         "Selecionar": st.column_config.CheckboxColumn(
@@ -7803,8 +7816,12 @@ elif page == "Pendências":
                         ),
                         "_flow_key": None,
                         "data_pre_nota": st.column_config.DateColumn(
-                            "Data da pré-nota",
+                            "Data de recebimento",
                             format="DD/MM/YYYY",
+                            help=(
+                                "Data usada no controle interno/carimbo. "
+                                "Pode ser corrigida manualmente antes da geração."
+                            ),
                         ),
                         "numero_nf": "NF",
                         "cnpj": "CNPJ",
@@ -7846,7 +7863,7 @@ elif page == "Pendências":
 
                 a1, a2 = st.columns([1, 1])
                 save_receivers = a1.form_submit_button(
-                    "SALVAR RECEBEDORES",
+                    "SALVAR DADOS DE RECEBIMENTO",
                     use_container_width=True,
                 )
                 exclude_selected = a2.form_submit_button(
@@ -7863,6 +7880,13 @@ elif page == "Pendências":
                     for _, row in pending_editor.iterrows()
                     if str(row.get("_flow_key") or "").strip()
                 }
+                date_map = {
+                    str(row.get("_flow_key") or ""): normalized_business_date(
+                        row.get("data_pre_nota")
+                    )
+                    for _, row in pending_editor.iterrows()
+                    if str(row.get("_flow_key") or "").strip()
+                }
 
                 updated_pre = st.session_state.pre_notes.copy()
                 updated_pre["recebedor"] = updated_pre.apply(
@@ -7872,8 +7896,19 @@ elif page == "Pendências":
                     ),
                     axis=1,
                 )
+                updated_pre["data_pre_nota"] = updated_pre.apply(
+                    lambda row: (
+                        date_map.get(flow_nf_key(row))
+                        or normalized_business_date(
+                            row.get("data_pre_nota")
+                        )
+                    ),
+                    axis=1,
+                )
                 st.session_state.pre_notes = updated_pre
-                persist_pre_notes_current("Ajuste manual de recebedor")
+                persist_pre_notes_current(
+                    "Ajuste manual de dados de recebimento"
+                )
 
                 analysis = st.session_state.analysis.copy()
                 if isinstance(analysis, pd.DataFrame) and not analysis.empty:
@@ -7887,6 +7922,16 @@ elif page == "Pendências":
                                 or row.get("recebedor")
                                 or ""
                             ).strip(),
+                        ),
+                        axis=1,
+                    )
+                    analysis["pre_nota_data"] = analysis.apply(
+                        lambda row: (
+                            date_map.get(flow_nf_key(row))
+                            or normalized_business_date(
+                                row.get("pre_nota_data")
+                                or row.get("pre_nota_em")
+                            )
                         ),
                         axis=1,
                     )
