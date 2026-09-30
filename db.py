@@ -293,6 +293,24 @@ def delete_process_records(ids: Iterable[str]) -> dict:
     ) or {}
 
 
+def update_receipt_dates(updates: Iterable[dict]) -> dict:
+    updates = [
+        dict(item)
+        for item in updates
+        if str(item.get("id") or "").strip()
+        and str(item.get("data_recebimento") or "").strip()
+    ]
+    if not updates:
+        return {"atualizados": 0}
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    return rpc(
+        "nf_atualizar_datas_recebimento",
+        {"p_updates": updates},
+        timeout=60,
+    ) or {}
+
+
 def replace_pre_notes(rows: Iterable[dict], file_name: str) -> dict:
     rows = list(rows)
     if not configured():
