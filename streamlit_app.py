@@ -8557,7 +8557,10 @@ elif page == "Pendências":
                     send_view,
                     use_container_width=True,
                     hide_index=True,
-                    disabled=[x for x in send_view.columns if x != "Confirmar"],
+                    disabled=[
+                        x for x in send_view.columns
+                        if x not in {"Confirmar", "pre_nota_em"}
+                    ],
                     key=editor_key,
                     column_config={
                         "id": None,
@@ -8606,19 +8609,23 @@ elif page == "Pendências":
                         ),
                     },
                 )
-                sb1, sb2 = st.columns(2)
+                sb1, sb2, sb3 = st.columns(3)
                 confirm_send = sb1.form_submit_button(
-                    "CONFIRMAR ENVIO DOS DOCUMENTOS SELECIONADOS",
+                    "CONFIRMAR ENVIO DOS SELECIONADOS",
                     type="primary",
                     use_container_width=True,
                     disabled=not operator_ready,
                 )
-                delete_send = sb2.form_submit_button(
+                save_receipt_dates = sb2.form_submit_button(
+                    "SALVAR DATAS DE RECEBIMENTO",
+                    use_container_width=True,
+                )
+                delete_send = sb3.form_submit_button(
                     "EXCLUIR REGISTROS SELECIONADOS",
                     use_container_width=True,
                 )
 
-            if confirm_send or delete_send:
+            if confirm_send or delete_send or save_receipt_dates:
                 selected_send_ids = (
                     send_editor.loc[
                         send_editor["Confirmar"].fillna(False).astype(bool),
@@ -8679,6 +8686,80 @@ elif page == "Pendências":
                         )
                 else:
                     try:
+                        selected_rows = send_editor[
+                            send_editor["Confirmar"]
+                            .fillna(False)
+                            .astype(bool)
+                        ].copy()
+
+                        receipt_updates = []
+                        for _, selected_row in selected_rows.iterrows():
+                            if is_cte_document_type(
+                                selected_row.get("tipo_documento")
+                            ):
+                                continue
+                            business_date = normalized_business_date(
+                                selected_row.get("pre_nota_em")
+                            )
+                            record_id = str(
+                                selected_row.get("id") or ""
+                            ).strip()
+                            if record_id and business_date:
+                                receipt_updates.append({
+                                    "id": record_id,
+                                    "data_recebimento": (
+                                        business_date.isoformat()
+                                    ),
+                                })
+
+                        date_updated_count = 0
+                        if SAVE_NF_HISTORY and db.configured():
+                            if receipt_updates:
+                                date_result = db.update_receipt_dates(
+                                    receipt_updates
+                                )
+                                date_updated_count = int(
+                                    date_result.get(
+                                        "atualizados",
+                                        0,
+                                    )
+                                )
+                        else:
+                            update_by_id = {
+                                item["id"]: item["data_recebimento"]
+                                for item in receipt_updates
+                            }
+                            manifest = list(
+                                st.session_state.get(
+                                    "current_test_manifest"
+                                )
+                                or []
+                            )
+                            for row in manifest:
+                                row_id = str(
+                                    row.get("id")
+                                    or row.get("file_id")
+                                    or ""
+                                )
+                                if row_id in update_by_id:
+                                    row["pre_nota_em"] = (
+                                        update_by_id[row_id]
+                                    )
+                                    row["data_chegada"] = (
+                                        update_by_id[row_id]
+                                    )
+                                    date_updated_count += 1
+                            st.session_state.current_test_manifest = (
+                                manifest
+                            )
+
+                        if save_receipt_dates:
+                            st.success(
+                                f"{date_updated_count} data(s) de "
+                                "recebimento salva(s)."
+                            )
+                            st.rerun()
+
                         if SAVE_NF_HISTORY and db.configured():
                             result = db.mark_sent(
                                 selected_send_ids,
@@ -8721,8 +8802,13 @@ elif page == "Pendências":
                         )
                         st.rerun()
                     except Exception as exc:
+                        action_name = (
+                            "salvar as datas de recebimento"
+                            if save_receipt_dates
+                            else "confirmar o envio"
+                        )
                         st.error(
-                            f"Falha ao confirmar envio: {exc}"
+                            f"Falha ao {action_name}: {exc}"
                         )
 
         st.divider()
