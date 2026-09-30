@@ -106,7 +106,7 @@ st.set_page_config(
 
 DEFAULT = {
     "title": "CONTROLE DE NOTAS FISCAIS",
-    "subtitle": "Processamento • Pré-notas • Prioridade MRP • Fornecedores • Dashboard",
+    "subtitle": "NF-e • CT-e • MRP • ENVIO",
     "sidebar_title": "CONTROLE DE NFs",
     "sidebar_subtitle": "Automação do fluxo fiscal",
     "control_docs_label": "CONTROLE DE DOC.",
