@@ -98,10 +98,15 @@ def cte_output_name(meta, linked_nf_numbers, supplier_name: str = "") -> str:
     return _impl(meta, linked_nf_numbers, supplier_name)
 
 
-try:
-    _GLOBAL_VISUAL_CONFIG = central_data.load_visual_config()
-except Exception:
-    _GLOBAL_VISUAL_CONFIG = {}
+@st.cache_data(show_spinner=False, ttl=300, max_entries=2)
+def _cached_global_visual_config():
+    try:
+        return central_data.load_visual_config()
+    except Exception:
+        return {}
+
+
+_GLOBAL_VISUAL_CONFIG = _cached_global_visual_config()
 
 def _global_page_icon():
     try:
@@ -782,6 +787,87 @@ section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sett
   background:#ef4444!important;
   transform:translateY(-50%)!important;
 }
+
+/* Navegação sem reload de página: um único st.radio estilizado como SIDEBAR SETTA V1. */
+section[data-testid="stSidebar"] div[data-testid="stRadio"]{
+  width:100%!important;
+  margin:0!important;
+  padding:0!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] > label{
+  display:none!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"]{
+  display:flex!important;
+  flex-direction:column!important;
+  width:100%!important;
+  gap:2px!important;
+  row-gap:2px!important;
+  margin:0!important;
+  padding:0!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label{
+  position:relative!important;
+  display:flex!important;
+  align-items:center!important;
+  width:100%!important;
+  height:42px!important;
+  min-height:42px!important;
+  max-height:42px!important;
+  margin:0!important;
+  padding:0 12px 0 24px!important;
+  border:1px solid transparent!important;
+  border-radius:10px!important;
+  background:transparent!important;
+  color:#374151!important;
+  cursor:pointer!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label > div:first-child{
+  position:absolute!important;
+  width:1px!important;
+  height:1px!important;
+  opacity:0!important;
+  pointer-events:none!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label p{
+  margin:0!important;
+  padding:0!important;
+  font-size:13px!important;
+  line-height:16px!important;
+  font-weight:500!important;
+  color:#374151!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:hover{
+  background:#f8fafc!important;
+  border-color:#e5e7eb!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked){
+  background:#111827!important;
+  border-color:#111827!important;
+  color:#fff!important;
+  box-shadow:0 5px 14px rgba(17,24,39,.14)!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) p{
+  color:#fff!important;
+  font-weight:700!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked)::before{
+  content:""!important;
+  position:absolute!important;
+  left:7px!important;
+  top:50%!important;
+  width:4px!important;
+  height:20px!important;
+  border-radius:999px!important;
+  background:#ef4444!important;
+  transform:translateY(-50%)!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar-head),
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar-tail){
+  margin:0!important;
+  padding:0!important;
+}
+
 .sidebar-divider{
   display:block!important;
   width:100%!important;
@@ -9291,6 +9377,14 @@ if ENABLE_PENDING_REPORT:
 _NF_NAV_PAGES.append("Configurações")
 
 
+@st.cache_data(show_spinner=False, ttl=30, max_entries=2)
+def _cached_nf_sidebar_central_state():
+    try:
+        return central_data.load_bundle_state(), central_data.sync_state()
+    except Exception:
+        return {}, {}
+
+
 def _set_nf_page(target: str) -> None:
     if target in _NF_NAV_PAGES:
         st.session_state["_nf_sidebar_page"] = target
@@ -9304,127 +9398,124 @@ def _current_nf_page() -> str:
     return value
 
 
-_NF_NAV_SLUGS = {
-    "dashboard": "Dashboard",
-    "arquivos": "Pendências",
-    "configuracoes": "Configurações",
-}
-if not ENABLE_PENDING_REPORT:
-    _NF_NAV_SLUGS.pop("arquivos", None)
-
-_nf_nav_param = str(st.query_params.get("nav") or "").strip().lower()
-if _nf_nav_param in _NF_NAV_SLUGS:
-    st.session_state["_nf_sidebar_page"] = _NF_NAV_SLUGS[_nf_nav_param]
-
-page = _current_nf_page()
 _control_docs_label = str(
     cfg.get("control_docs_label") or DEFAULT["control_docs_label"]
 ).strip()
 
-_nf_sidebar_links = []
-for _slug, _nav_page in _NF_NAV_SLUGS.items():
-    _nav_label = (
+def _nf_sidebar_label(_page: str) -> str:
+    return (
         _control_docs_label.upper()
-        if _nav_page == "Pendências"
-        else _nav_page.upper()
-    )
-    _active = " active" if _nav_page == page else ""
-    _nf_sidebar_links.append(
-        f'<a class="sidebar-nav-link{_active}" href="?nav={_slug}" target="_self">{_nav_label}</a>'
+        if _page == "Pendências"
+        else str(_page).upper()
     )
 
-# STATUS GERAL — padrão SETTA: última atualização + documentos X/X.
-try:
-    _status_bundle = central_data.load_bundle_state()
-    _status_states = central_data.sync_state()
-except Exception:
-    _status_bundle = {}
-    _status_states = {}
-
-try:
-    _status_materials = _cached_materials_api_status() or {}
-except Exception:
-    _status_materials = {}
-
-_status_documents = [
-    {
-        "ok": bool(_status_materials.get("disponivel")),
-        "error": not bool(_status_materials.get("disponivel")),
-        "when": (
-            _status_materials.get("ultima_verificacao_em")
-            or _status_materials.get("ativada_em")
-            or ""
-        ),
-    },
-]
-for _source_key in ("mes_pre_notas", "nf"):
-    _meta = _status_bundle.get(_source_key) or {}
-    _state = _status_states.get(_source_key) or {}
-    _state_status = str(_state.get("status") or "").upper()
-    _status_documents.append(
-        {
-            "ok": bool(_meta.get("available")) and _state_status == "ATUALIZADO",
-            "error": _state_status == "ERRO",
-            "when": _state.get("synced_at") or _meta.get("last_update_at") or "",
-        }
-    )
-
-_sidebar_docs_total = len(_status_documents)
-_sidebar_docs_ok = sum(1 for _doc in _status_documents if _doc["ok"])
-_sidebar_has_error = any(bool(_doc["error"]) for _doc in _status_documents)
-
-_sidebar_latest = None
-for _doc in _status_documents:
-    _raw_when = str(_doc.get("when") or "").strip()
-    if not _raw_when:
-        continue
-    _stamp = pd.to_datetime(_raw_when, errors="coerce", utc=True)
-    if pd.isna(_stamp):
-        continue
-    if _sidebar_latest is None or _stamp > _sidebar_latest:
-        _sidebar_latest = _stamp
-
-_sidebar_last_update = (
-    central_data.format_dt(_sidebar_latest.isoformat())
-    if _sidebar_latest is not None
-    else "—"
-)
-
-if _sidebar_has_error:
-    _sidebar_value = "ERRO"
-    _sidebar_status_class = "status-error"
-elif _sidebar_docs_ok == _sidebar_docs_total:
-    _sidebar_value = "ATUALIZADO"
-    _sidebar_status_class = "status-ok"
-else:
-    _sidebar_value = "ATENÇÃO"
-    _sidebar_status_class = "status-warning"
-
-_sidebar_meta = (
-    f'<div>ÚLTIMA ATUALIZAÇÃO: {_sidebar_last_update}</div>'
-    f'<div>QNT DE DOCUMENTOS: {_sidebar_docs_ok}/{_sidebar_docs_total}</div>'
-)
-
-_nf_sidebar_html = (
-    '<div class="setta-sidebar">'
-    '<div class="sidebar-brand">'
-      f'<div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>'
-      f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
-    '</div>'
-    '<div class="sidebar-section-label">NAVEGAÇÃO</div>'
-    '<div class="sidebar-nav">' + "".join(_nf_sidebar_links) + '</div>'
-    '<div class="sidebar-divider"></div>'
-    '<div class="sidebar-section-label">STATUS GERAL</div>'
-    '<div class="sidebar-status-card">'
-      '<div class="sidebar-status-name">CONTROLE DE NFs</div>'
-      f'<div class="sidebar-status-value {_sidebar_status_class}">{_sidebar_value}</div>'
-      f'<div class="sidebar-status-meta">{_sidebar_meta}</div>'
-    '</div>'
-    '</div>'
-)
+_current_page = _current_nf_page()
+if (
+    "_nf_sidebar_radio" not in st.session_state
+    or st.session_state.get("_nf_sidebar_radio") not in _NF_NAV_PAGES
+):
+    st.session_state["_nf_sidebar_radio"] = _current_page
 
 with st.sidebar:
-    st.markdown(_nf_sidebar_html, unsafe_allow_html=True)
+    st.markdown(
+        (
+            '<div class="setta-sidebar-head">'
+            '<div class="sidebar-brand">'
+            f'<div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>'
+            f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
+            '</div>'
+            '<div class="sidebar-section-label">NAVEGAÇÃO</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+    page = st.radio(
+        "NAVEGAÇÃO",
+        options=_NF_NAV_PAGES,
+        key="_nf_sidebar_radio",
+        format_func=_nf_sidebar_label,
+        label_visibility="collapsed",
+    )
+    st.session_state["_nf_sidebar_page"] = page
+
+    _status_bundle, _status_states = _cached_nf_sidebar_central_state()
+    try:
+        _status_materials = _cached_materials_api_status() or {}
+    except Exception:
+        _status_materials = {}
+
+    _status_documents = [
+        {
+            "ok": bool(_status_materials.get("disponivel")),
+            "error": not bool(_status_materials.get("disponivel")),
+            "when": (
+                _status_materials.get("ultima_verificacao_em")
+                or _status_materials.get("ativada_em")
+                or ""
+            ),
+        },
+    ]
+    for _source_key in ("mes_pre_notas", "nf"):
+        _meta = _status_bundle.get(_source_key) or {}
+        _state = _status_states.get(_source_key) or {}
+        _state_status = str(_state.get("status") or "").upper()
+        _status_documents.append(
+            {
+                "ok": bool(_meta.get("available")) and _state_status == "ATUALIZADO",
+                "error": _state_status == "ERRO",
+                "when": _state.get("synced_at") or _meta.get("last_update_at") or "",
+            }
+        )
+
+    _sidebar_docs_total = len(_status_documents)
+    _sidebar_docs_ok = sum(1 for _doc in _status_documents if _doc["ok"])
+    _sidebar_has_error = any(bool(_doc["error"]) for _doc in _status_documents)
+
+    _sidebar_latest = None
+    for _doc in _status_documents:
+        _raw_when = str(_doc.get("when") or "").strip()
+        if not _raw_when:
+            continue
+        _stamp = pd.to_datetime(_raw_when, errors="coerce", utc=True)
+        if pd.isna(_stamp):
+            continue
+        if _sidebar_latest is None or _stamp > _sidebar_latest:
+            _sidebar_latest = _stamp
+
+    _sidebar_last_update = (
+        central_data.format_dt(_sidebar_latest.isoformat())
+        if _sidebar_latest is not None
+        else "—"
+    )
+
+    if _sidebar_has_error:
+        _sidebar_value = "ERRO"
+        _sidebar_status_class = "status-error"
+    elif _sidebar_docs_ok == _sidebar_docs_total:
+        _sidebar_value = "ATUALIZADO"
+        _sidebar_status_class = "status-ok"
+    else:
+        _sidebar_value = "ATENÇÃO"
+        _sidebar_status_class = "status-warning"
+
+    st.markdown(
+        (
+            '<div class="setta-sidebar-tail">'
+            '<div class="sidebar-divider"></div>'
+            '<div class="sidebar-section-label">STATUS GERAL</div>'
+            '<div class="sidebar-status-card">'
+            '<div class="sidebar-status-name">CONTROLE DE NFs</div>'
+            f'<div class="sidebar-status-value {_sidebar_status_class}">{_sidebar_value}</div>'
+            '<div class="sidebar-status-meta">'
+            f'<div>ÚLTIMA ATUALIZAÇÃO: {_sidebar_last_update}</div>'
+            f'<div>QNT DE DOCUMENTOS: {_sidebar_docs_ok}/{_sidebar_docs_total}</div>'
+            '</div>'
+            '</div>'
+            '</div>'
+        ),
+        unsafe_allow_html=True,
+    )
 
 
 if page == "Pendências":
