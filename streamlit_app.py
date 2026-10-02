@@ -9413,6 +9413,151 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
 
 
 
+def _central_pre_notes_from_pack(pack: dict) -> pd.DataFrame:
+    temp = central_data.source_raw_frame(pack, 0)
+    if temp.shape[1] < 6:
+        raise ValueError("MES PRÉ NOTAS precisa conter pelo menos as colunas A até F.")
+
+    normalized = pd.DataFrame({
+        "data_pre_nota": pd.to_datetime(
+            temp.iloc[:, 0], errors="coerce", dayfirst=True
+        ).dt.date,
+        "recebedor": temp.iloc[:, 1].fillna("").astype(str).str.strip(),
+        "numero_nf": temp.iloc[:, 2].map(normalized_nf),
+        "fornecedor": temp.iloc[:, 3].fillna("").astype(str).str.strip(),
+        "cnpj": temp.iloc[:, 4].map(digits_only),
+        "status": temp.iloc[:, 5].fillna("").astype(str).str.strip(),
+    })
+    normalized["status_normalizado"] = normalized["status"].map(normalize_text)
+    valid = normalized[
+        normalized["status_normalizado"].eq("PRE-NOTA LANCADA")
+        & normalized["numero_nf"].ne("")
+        & normalized["fornecedor"].ne("")
+        & normalized["data_pre_nota"].notna()
+    ].copy()
+    return (
+        valid.sort_values(
+            ["data_pre_nota", "numero_nf"],
+            ascending=[False, True],
+            na_position="last",
+        )
+        .drop_duplicates(
+            ["data_pre_nota", "numero_nf", "fornecedor"],
+            keep="last",
+        )
+        .drop(columns=["status_normalizado"], errors="ignore")
+        .reset_index(drop=True)
+    )
+
+
+def _clean_mrp_nf_pack(
+    pack: dict,
+    reference_date_iso: str,
+) -> tuple[pd.DataFrame, dict]:
+    reference_date = date.fromisoformat(reference_date_iso)
+    cutoff = reference_date - timedelta(days=29)
+    raw_frame = central_data.source_raw_frame(pack, 0)
+
+    columns = [
+        "data_pre_nota", "numero_nf", "fornecedor_codigo", "fornecedor",
+        "cr", "desc_cr", "natureza", "produto", "descricao", "tes",
+    ]
+    rows = []
+    total_raw = 0
+    dropped_tes = 0
+    dropped_date = 0
+    invalid_date = 0
+
+    for idx, row in enumerate(
+        raw_frame.itertuples(index=False, name=None),
+        start=1,
+    ):
+        if idx <= 2 or len(row) < 31:
+            continue
+        total_raw += 1
+
+        tes = str(row[30] or "").strip()
+        if re.fullmatch(r"\d{3}", tes):
+            dropped_tes += 1
+            continue
+
+        parsed = pd.to_datetime(row[0], errors="coerce", dayfirst=True)
+        if pd.isna(parsed):
+            invalid_date += 1
+            continue
+
+        op_date = parsed.date()
+        if op_date < cutoff or op_date > reference_date:
+            dropped_date += 1
+            continue
+
+        numero_nf = normalized_nf(row[3])
+        produto = normalized_material_code(row[11])
+        fornecedor_codigo = _supplier_code_norm(row[4])
+        fornecedor = str(row[5] or "").strip()
+
+        if not numero_nf or not produto or not fornecedor_codigo:
+            continue
+
+        rows.append({
+            "data_pre_nota": op_date,
+            "numero_nf": numero_nf,
+            "fornecedor_codigo": fornecedor_codigo,
+            "fornecedor": fornecedor,
+            "cr": re.sub(r"\.0$", "", str(row[6] or "").strip()),
+            "desc_cr": str(row[7] or "").strip(),
+            "natureza": str(row[8] or "").strip(),
+            "produto": produto,
+            "descricao": str(row[12] or "").strip(),
+            "tes": tes,
+        })
+
+    base = pd.DataFrame(rows, columns=columns)
+    stats = {
+        "linhas_origem": total_raw,
+        "linhas_30_dias_tes": len(base),
+        "descartadas_tes": dropped_tes,
+        "descartadas_data": dropped_date,
+        "datas_invalidas": invalid_date,
+        "inicio_periodo": cutoff,
+        "fim_periodo": reference_date,
+    }
+    return base, stats
+
+
+def _extract_launch_report_pack(pack: dict) -> pd.DataFrame:
+    raw_frame = central_data.source_raw_frame(pack, 0)
+    rows = []
+    for idx, row in enumerate(
+        raw_frame.itertuples(index=False, name=None),
+        start=1,
+    ):
+        if idx <= 2 or len(row) < 6:
+            continue
+        nf = normalized_nf(row[3])
+        supplier_code = _supplier_code_norm(row[4])
+        supplier = str(row[5] or "").strip()
+        if nf:
+            rows.append({
+                "numero_nf": nf,
+                "fornecedor_codigo": supplier_code,
+                "fornecedor": supplier,
+            })
+
+    if not rows:
+        return pd.DataFrame(
+            columns=["numero_nf", "fornecedor_codigo", "fornecedor"]
+        )
+    return (
+        pd.DataFrame(rows)
+        .drop_duplicates(
+            ["numero_nf", "fornecedor_codigo", "fornecedor"],
+            keep="last",
+        )
+        .reset_index(drop=True)
+    )
+
+
 def _central_pre_notes_from_bytes(raw: bytes, name: str) -> pd.DataFrame:
     temp, _ = _read_uploaded_table_cached(raw, name, None, None)
     if temp.shape[1] < 6:
@@ -9474,7 +9619,7 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
             continue
 
         try:
-            raw, remote_meta = central_data.download_source_bytes(source_key)
+            source, remote_meta = central_data.download_preferred_source(source_key)
             filename = str(
                 remote_meta.get("last_file_name")
                 or meta.get("last_file_name")
@@ -9482,7 +9627,10 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
             )
 
             if source_key == "mes_pre_notas":
-                pre_valid = _central_pre_notes_from_bytes(raw, filename)
+                if source.get("normalized"):
+                    pre_valid = _central_pre_notes_from_pack(source["pack"])
+                else:
+                    pre_valid = _central_pre_notes_from_bytes(source["raw"], filename)
                 pre_valid = _filter_excluded_nfs(pre_valid)
                 st.session_state.pre_notes = pre_valid
                 st.session_state.pre_notes_db_loaded = True
@@ -9490,12 +9638,19 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
                 rows_count = len(pre_valid)
 
             else:
-                entries, nf_stats = _clean_mrp_nf_cached(
-                    raw,
-                    filename,
-                    now_local().date().isoformat(),
-                )
-                launch_report = _extract_launch_report_cached(raw, filename)
+                if source.get("normalized"):
+                    entries, nf_stats = _clean_mrp_nf_pack(
+                        source["pack"],
+                        now_local().date().isoformat(),
+                    )
+                    launch_report = _extract_launch_report_pack(source["pack"])
+                else:
+                    entries, nf_stats = _clean_mrp_nf_cached(
+                        source["raw"],
+                        filename,
+                        now_local().date().isoformat(),
+                    )
+                    launch_report = _extract_launch_report_cached(source["raw"], filename)
 
                 api_payload = _load_materials_api_current_cached()
                 if not bool(
