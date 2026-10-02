@@ -1033,6 +1033,11 @@ section[data-testid="stSidebar"] div[data-testid="stElementContainer"]{
 section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-brand){
   margin:0 0 20px 0!important;
 }
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-brand){
+  margin:0 0 20px 0!important;
+  padding:0!important;
+}
+
 section[data-testid="stSidebar"] .sidebar-brand{
   width:100%!important;
   margin:0!important;
