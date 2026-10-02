@@ -9140,56 +9140,65 @@ def _current_nf_page() -> str:
     return value
 
 
+_NF_NAV_SLUGS = {
+    "dashboard": "Dashboard",
+    "arquivos": "Pendências",
+    "configuracoes": "Configurações",
+}
+if not ENABLE_PENDING_REPORT:
+    _NF_NAV_SLUGS.pop("arquivos", None)
+
+_nf_nav_param = str(st.query_params.get("nav") or "").strip().lower()
+if _nf_nav_param in _NF_NAV_SLUGS:
+    st.session_state["_nf_sidebar_page"] = _NF_NAV_SLUGS[_nf_nav_param]
+
+page = _current_nf_page()
+_control_docs_label = str(
+    cfg.get("control_docs_label") or DEFAULT["control_docs_label"]
+).strip()
+
+_nf_sidebar_links = []
+for _slug, _nav_page in _NF_NAV_SLUGS.items():
+    _nav_label = (
+        _control_docs_label.upper()
+        if _nav_page == "Pendências"
+        else _nav_page.upper()
+    )
+    _active = " active" if _nav_page == page else ""
+    _nf_sidebar_links.append(
+        f'<a class="sidebar-nav-link{_active}" href="?nav={_slug}" target="_self">{_nav_label}</a>'
+    )
+
+_db_state = db.db_status()
+if _db_state.get("configured"):
+    _sidebar_value = "ATUALIZADO"
+    _sidebar_status_class = "status-ok"
+    _sidebar_meta = "BANCO DE DADOS CONECTADO"
+else:
+    _sidebar_value = "ATENÇÃO"
+    _sidebar_status_class = "status-warning"
+    _sidebar_meta = "BANCO DE DADOS NÃO CONFIGURADO"
+
+_nf_sidebar_html = (
+    '<div class="setta-sidebar">'
+    '<div class="sidebar-brand">'
+      f'<div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>'
+      f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
+    '</div>'
+    '<div class="sidebar-section-label">NAVEGAÇÃO</div>'
+    '<div class="sidebar-nav">' + "".join(_nf_sidebar_links) + '</div>'
+    '<div class="sidebar-divider"></div>'
+    '<div class="sidebar-section-label">STATUS GERAL</div>'
+    '<div class="sidebar-status-card">'
+      '<div class="sidebar-status-name">CONTROLE DE NFs</div>'
+      f'<div class="sidebar-status-value {_sidebar_status_class}">{_sidebar_value}</div>'
+      f'<div class="sidebar-status-meta">{_sidebar_meta}</div>'
+    '</div>'
+    '</div>'
+)
+
 with st.sidebar:
-    st.markdown(
-        f'''<div class="sidebar-brand">
-            <div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>
-            <div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>
-        </div>
-        <div class="sidebar-section-label">NAVEGAÇÃO</div>''',
-        unsafe_allow_html=True,
-    )
-
-    page = _current_nf_page()
-    _control_docs_label = str(
-        cfg.get("control_docs_label") or DEFAULT["control_docs_label"]
-    ).strip()
-    for _nav_page in _NF_NAV_PAGES:
-        _nav_label = (
-            _control_docs_label.upper()
-            if _nav_page == "Pendências"
-            else _nav_page.upper()
-        )
-        st.button(
-            _nav_label,
-            key=f"nf_sidebar_nav_{_nav_page.lower().replace(' ', '_')}",
-            type="primary" if _nav_page == page else "secondary",
-            use_container_width=True,
-            on_click=_set_nf_page,
-            args=(_nav_page,),
-        )
-
-    st.divider()
-    st.markdown(
-        '<div class="sidebar-status-spacer"></div>'
-        '<div class="sidebar-section-label">STATUS GERAL</div>',
-        unsafe_allow_html=True,
-    )
-    _db_state = db.db_status()
-    _sidebar_value = "ATUALIZADO" if _db_state.get("configured") else "AGUARDANDO"
-    _sidebar_meta = (
-        "BANCO DE DADOS CONECTADO"
-        if _db_state.get("configured")
-        else "BANCO DE DADOS NÃO CONFIGURADO"
-    )
-    st.markdown(
-        f'''<div class="sidebar-status-card">
-            <div class="sidebar-status-name">CONTROLE DE NFs</div>
-            <div class="sidebar-status-value">{_sidebar_value}</div>
-            <div class="sidebar-status-meta">{_sidebar_meta}</div>
-        </div>''',
-        unsafe_allow_html=True,
-    )
+    st.markdown(_nf_sidebar_html, unsafe_allow_html=True)
 
 
 if page == "Pendências":
