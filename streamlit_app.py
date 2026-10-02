@@ -885,6 +885,20 @@ section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sett
   padding:0!important;
 }
 
+/* Geometria exata igual ao Conversor:
+   NAVEGAÇÃO -> 1º botão = 8 px */
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar-head)
++ div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]){
+  margin-top:8px!important;
+}
+
+/* Entre botões = 2 px; após o último botão = 0 px.
+   A divisória seguinte fornece sozinha os 20 px. */
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]):
+has(+ div[data-testid="stElementContainer"]:has(.setta-sidebar-tail)){
+  margin-bottom:0!important;
+}
+
 .sidebar-divider{
   display:block!important;
   width:100%!important;
@@ -9436,8 +9450,7 @@ with st.sidebar:
             f'<div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>'
             f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
             '</div>'
-            '<div class="sidebar-section-label">NAVEGAÇÃO</div>'
-            '<div class="sidebar-section-gap"></div>'
+            '<div class="sidebar-section-label sidebar-nav-label">NAVEGAÇÃO</div>'
             '</div>'
         ),
         unsafe_allow_html=True,
