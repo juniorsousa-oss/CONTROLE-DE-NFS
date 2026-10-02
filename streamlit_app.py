@@ -725,7 +725,7 @@ section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sett
 }
 .sidebar-section-label{
   display:block!important;
-  margin:0 0 8px 0!important;
+  margin:0!important;
   padding:0!important;
   color:#374151!important;
   font-size:12px!important;
@@ -733,6 +733,15 @@ section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sett
   font-weight:800!important;
   text-transform:uppercase!important;
   letter-spacing:.055em!important;
+}
+.sidebar-section-gap{
+  display:block!important;
+  width:100%!important;
+  height:8px!important;
+  min-height:8px!important;
+  max-height:8px!important;
+  margin:0!important;
+  padding:0!important;
 }
 .sidebar-nav{
   display:flex!important;
@@ -9428,6 +9437,7 @@ with st.sidebar:
             f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
             '</div>'
             '<div class="sidebar-section-label">NAVEGAÇÃO</div>'
+            '<div class="sidebar-section-gap"></div>'
             '</div>'
         ),
         unsafe_allow_html=True,
@@ -9508,6 +9518,7 @@ with st.sidebar:
             '<div class="setta-sidebar-tail">'
             '<div class="sidebar-divider"></div>'
             '<div class="sidebar-section-label">STATUS GERAL</div>'
+            '<div class="sidebar-section-gap"></div>'
             '<div class="sidebar-status-card">'
             '<div class="sidebar-status-name">CONTROLE DE NFs</div>'
             f'<div class="sidebar-status-value {_sidebar_status_class}">{_sidebar_value}</div>'
