@@ -892,11 +892,10 @@ section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sett
   margin-top:8px!important;
 }
 
-/* Entre botões = 2 px; após o último botão = 0 px.
-   A divisória seguinte fornece sozinha os 20 px. */
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]):
-has(+ div[data-testid="stElementContainer"]:has(.setta-sidebar-tail)){
-  margin-bottom:0!important;
+/* Entre botões = 2 px. O último também deixa 2 px pelo widget;
+   o bloco de status compensa esses 2 px para manter 20 px reais até a linha. */
+.setta-sidebar-tail{
+  margin-top:-2px!important;
 }
 
 .sidebar-divider{
