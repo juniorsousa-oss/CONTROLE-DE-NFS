@@ -788,28 +788,22 @@ section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sett
   transform:translateY(-50%)!important;
 }
 
-/* Navegação sem reload de página: um único st.radio estilizado como SIDEBAR SETTA V1. */
-section[data-testid="stSidebar"] div[data-testid="stRadio"]{
+/* Navegação interna sem reload do navegador.
+   Os botões mantêm exatamente a geometria SIDEBAR SETTA V1. */
+section[data-testid="stSidebar"] div[data-testid="stButton"]{
   width:100%!important;
+  margin:0 0 2px 0!important;
+  padding:0!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]){
   margin:0!important;
   padding:0!important;
 }
-section[data-testid="stSidebar"] div[data-testid="stRadio"] > label{
-  display:none!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"]{
-  display:flex!important;
-  flex-direction:column!important;
-  width:100%!important;
-  gap:2px!important;
-  row-gap:2px!important;
-  margin:0!important;
-  padding:0!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label{
+section[data-testid="stSidebar"] div[data-testid="stButton"] button{
   position:relative!important;
   display:flex!important;
   align-items:center!important;
+  justify-content:flex-start!important;
   width:100%!important;
   height:42px!important;
   min-height:42px!important;
@@ -819,39 +813,52 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] 
   border:1px solid transparent!important;
   border-radius:10px!important;
   background:transparent!important;
+  box-shadow:none!important;
   color:#374151!important;
-  cursor:pointer!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label > div:first-child{
-  position:absolute!important;
-  width:1px!important;
-  height:1px!important;
-  opacity:0!important;
-  pointer-events:none!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label p{
-  margin:0!important;
-  padding:0!important;
   font-size:13px!important;
   line-height:16px!important;
   font-weight:500!important;
+  text-align:left!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button > div{
+  width:100%!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  text-align:left!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button p{
+  width:100%!important;
+  margin:0!important;
+  padding:0!important;
+  color:#374151!important;
+  font-size:13px!important;
+  line-height:16px!important;
+  font-weight:500!important;
+  text-align:left!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]{
+  background:transparent!important;
+  border-color:transparent!important;
   color:#374151!important;
 }
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:hover{
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]:hover{
   background:#f8fafc!important;
   border-color:#e5e7eb!important;
+  color:#111827!important;
 }
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked){
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]{
   background:#111827!important;
   border-color:#111827!important;
   color:#fff!important;
+  font-weight:700!important;
   box-shadow:0 5px 14px rgba(17,24,39,.14)!important;
 }
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked) p{
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] p{
   color:#fff!important;
   font-weight:700!important;
 }
-section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] > label:has(input:checked)::before{
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]::before{
   content:""!important;
   position:absolute!important;
   left:7px!important;
@@ -862,6 +869,7 @@ section[data-testid="stSidebar"] div[data-testid="stRadio"] [role="radiogroup"] 
   background:#ef4444!important;
   transform:translateY(-50%)!important;
 }
+
 section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar-head),
 section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar-tail){
   margin:0!important;
@@ -9409,12 +9417,7 @@ def _nf_sidebar_label(_page: str) -> str:
         else str(_page).upper()
     )
 
-_current_page = _current_nf_page()
-if (
-    "_nf_sidebar_radio" not in st.session_state
-    or st.session_state.get("_nf_sidebar_radio") not in _NF_NAV_PAGES
-):
-    st.session_state["_nf_sidebar_radio"] = _current_page
+page = _current_nf_page()
 
 with st.sidebar:
     st.markdown(
@@ -9430,14 +9433,15 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    page = st.radio(
-        "NAVEGAÇÃO",
-        options=_NF_NAV_PAGES,
-        key="_nf_sidebar_radio",
-        format_func=_nf_sidebar_label,
-        label_visibility="collapsed",
-    )
-    st.session_state["_nf_sidebar_page"] = page
+    for _nav_page in _NF_NAV_PAGES:
+        st.button(
+            _nf_sidebar_label(_nav_page),
+            key=f"nf_sidebar_nav_{_nav_page.lower().replace(' ', '_').replace('ç','c').replace('ã','a')}",
+            type="primary" if _nav_page == page else "secondary",
+            use_container_width=True,
+            on_click=_set_nf_page,
+            args=(_nav_page,),
+        )
 
     _status_bundle, _status_states = _cached_nf_sidebar_central_state()
     try:
