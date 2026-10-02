@@ -1008,6 +1008,245 @@ div[data-testid="stMarkdownContainer"] h3,
 div[data-testid="stMarkdownContainer"] h4{text-transform:uppercase}
 [data-testid="stAlert"]{border-radius:12px!important;box-shadow:0 3px 12px rgba(15,23,42,.035)}
 button[kind="primary"],button[data-testid="stBaseButton-primary"]{background:var(--p)!important;border-color:var(--p)!important;color:#fff!important}.footer{text-align:center;color:#9298a1;font-size:.72rem;padding-top:1.2rem}
+/* ============================================================
+   SIDEBAR SETTA V1 — GEOMETRIA FIXA, SEM ESPAÇAMENTO AUTOMÁTICO
+   26 / 20 / 8 / 42 / 2 / 20 / 20 / 8 px
+   ============================================================ */
+section[data-testid="stSidebar"] .block-container{
+  width:260px!important;
+  min-width:260px!important;
+  max-width:260px!important;
+  box-sizing:border-box!important;
+  padding:26px 16px 0 16px!important;
+}
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{
+  gap:0!important;
+  row-gap:0!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]{
+  margin:0!important;
+  padding:0!important;
+  min-height:0!important;
+}
+
+/* CARTÃO SUPERIOR */
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-brand){
+  margin:0 0 20px 0!important;
+}
+section[data-testid="stSidebar"] .sidebar-brand{
+  width:100%!important;
+  margin:0!important;
+  padding:14px 16px!important;
+  background:#f8fafc!important;
+  border:1px solid #e5e8ee!important;
+  border-radius:12px!important;
+  box-sizing:border-box!important;
+}
+section[data-testid="stSidebar"] .sidebar-brand-title{
+  margin:0!important;
+  padding:0!important;
+  font-size:15px!important;
+  line-height:18px!important;
+  font-weight:800!important;
+  color:#111827!important;
+}
+section[data-testid="stSidebar"] .sidebar-brand-sub{
+  margin:3px 0 0 0!important;
+  padding:0!important;
+  font-size:12px!important;
+  line-height:16px!important;
+  font-weight:400!important;
+  color:#6b7280!important;
+}
+
+/* TÍTULOS DAS SEÇÕES */
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-section-label){
+  height:15px!important;
+  min-height:15px!important;
+  max-height:15px!important;
+}
+section[data-testid="stSidebar"] .sidebar-section-label{
+  display:block!important;
+  height:15px!important;
+  margin:0!important;
+  padding:0!important;
+  font-size:12px!important;
+  line-height:15px!important;
+  font-weight:800!important;
+  color:#374151!important;
+  text-transform:uppercase!important;
+  letter-spacing:.055em!important;
+}
+
+/* NAVEGAÇÃO -> PRIMEIRO BOTÃO = 8 PX */
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-nav-gap-fixed){
+  display:block!important;
+  height:8px!important;
+  min-height:8px!important;
+  max-height:8px!important;
+}
+section[data-testid="stSidebar"] .sidebar-nav-gap-fixed{
+  display:block!important;
+  width:100%!important;
+  height:8px!important;
+  min-height:8px!important;
+  max-height:8px!important;
+  margin:0!important;
+  padding:0!important;
+}
+
+/* BOTÕES: 42 PX / GAP REAL 2 PX */
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]){
+  height:44px!important;
+  min-height:44px!important;
+  max-height:44px!important;
+  margin:0!important;
+  padding:0 0 2px 0!important;
+  box-sizing:border-box!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"]{
+  width:100%!important;
+  height:42px!important;
+  min-height:42px!important;
+  max-height:42px!important;
+  margin:0!important;
+  padding:0!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button{
+  position:relative!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:flex-start!important;
+  width:100%!important;
+  height:42px!important;
+  min-height:42px!important;
+  max-height:42px!important;
+  margin:0!important;
+  padding:0 12px 0 24px!important;
+  border:1px solid transparent!important;
+  border-radius:10px!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  color:#374151!important;
+  font-size:13px!important;
+  line-height:16px!important;
+  font-weight:500!important;
+  text-align:left!important;
+  box-sizing:border-box!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button > div,
+section[data-testid="stSidebar"] div[data-testid="stButton"] button p{
+  width:100%!important;
+  margin:0!important;
+  padding:0!important;
+  text-align:left!important;
+  line-height:16px!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]{
+  background:transparent!important;
+  border-color:transparent!important;
+  color:#374151!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]{
+  background:#111827!important;
+  border-color:#111827!important;
+  color:#fff!important;
+  box-shadow:0 5px 14px rgba(17,24,39,.14)!important;
+  font-weight:700!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] p{
+  color:#fff!important;
+  font-weight:700!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]::before{
+  content:""!important;
+  position:absolute!important;
+  left:7px!important;
+  top:50%!important;
+  width:4px!important;
+  height:20px!important;
+  border-radius:999px!important;
+  background:#ef4444!important;
+  transform:translateY(-50%)!important;
+}
+
+/* ÚLTIMO BOTÃO -> DIVISÓRIA = 20 PX
+   Cada botão fecha com 2px; a divisória compensa para totalizar 20px. */
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-divider){
+  height:39px!important;
+  min-height:39px!important;
+  max-height:39px!important;
+  padding:18px 0 20px 0!important;
+  box-sizing:border-box!important;
+}
+section[data-testid="stSidebar"] .sidebar-divider{
+  display:block!important;
+  width:100%!important;
+  height:1px!important;
+  min-height:1px!important;
+  max-height:1px!important;
+  margin:0!important;
+  padding:0!important;
+  background:#d1d5db!important;
+}
+
+/* STATUS GERAL -> CARTÃO = 8 PX */
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-status-gap-fixed){
+  display:block!important;
+  height:8px!important;
+  min-height:8px!important;
+  max-height:8px!important;
+}
+section[data-testid="stSidebar"] .sidebar-status-gap-fixed{
+  display:block!important;
+  width:100%!important;
+  height:8px!important;
+  min-height:8px!important;
+  max-height:8px!important;
+  margin:0!important;
+  padding:0!important;
+}
+
+/* CARTÃO STATUS */
+section[data-testid="stSidebar"] .sidebar-status-card{
+  width:100%!important;
+  margin:0!important;
+  padding:12px 14px!important;
+  background:#f8fafc!important;
+  border:1px solid #e5e8ee!important;
+  border-radius:10px!important;
+  box-sizing:border-box!important;
+}
+section[data-testid="stSidebar"] .sidebar-status-name{
+  margin:0!important;
+  padding:0!important;
+  font-size:11px!important;
+  line-height:14px!important;
+  font-weight:800!important;
+  color:#64748b!important;
+  text-transform:uppercase!important;
+}
+section[data-testid="stSidebar"] .sidebar-status-value{
+  margin:4px 0 0 0!important;
+  padding:0!important;
+  font-size:13px!important;
+  line-height:16px!important;
+  font-weight:900!important;
+  text-transform:uppercase!important;
+}
+section[data-testid="stSidebar"] .sidebar-status-value.status-ok{color:#16a34a!important}
+section[data-testid="stSidebar"] .sidebar-status-value.status-warning{color:#f59e0b!important}
+section[data-testid="stSidebar"] .sidebar-status-value.status-error{color:#ef4444!important}
+section[data-testid="stSidebar"] .sidebar-status-meta{
+  margin:6px 0 0 0!important;
+  padding:0!important;
+  font-size:11px!important;
+  line-height:15px!important;
+  font-weight:400!important;
+  color:#6b7280!important;
+  text-transform:uppercase!important;
+}
+
 @media (max-width:900px){.block-container{padding-top:2rem!important;padding-left:1rem!important;padding-right:1rem!important;padding-bottom:2rem!important}.setta-logo-card{min-height:105px;margin-bottom:1.8rem;padding:.9rem 1rem}.setta-logo-card img{max-width:170px;max-height:72px}.app-title{font-size:2rem!important;line-height:1.12!important}.app-sub{font-size:.86rem!important;margin-bottom:1.35rem!important}.section-title{font-size:1.14rem!important}div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="stColumn"]{min-width:100%!important;width:100%!important;flex:1 1 100%!important}.kpi-card{min-height:112px;margin-bottom:.12rem}.api-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 """.replace("__COLOR__", color),
@@ -9459,14 +9698,15 @@ page = _current_nf_page()
 with st.sidebar:
     st.markdown(
         (
-            '<div class="setta-sidebar-head">'
             '<div class="sidebar-brand">'
             f'<div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>'
             f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
             '</div>'
-            '<div class="sidebar-section-label sidebar-nav-label">NAVEGAÇÃO</div>'
-            '</div>'
         ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sidebar-section-label sidebar-nav-label">NAVEGAÇÃO</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -9545,18 +9785,25 @@ with st.sidebar:
         _sidebar_status_class = "status-warning"
 
     st.markdown(
+        '<div class="sidebar-divider"></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sidebar-section-label sidebar-status-label">STATUS GERAL</div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sidebar-status-gap-fixed"></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
         (
-            '<div class="setta-sidebar-tail">'
-            '<div class="sidebar-divider"></div>'
-            '<div class="sidebar-section-label">STATUS GERAL</div>'
-            '<div class="sidebar-section-gap"></div>'
             '<div class="sidebar-status-card">'
             '<div class="sidebar-status-name">CONTROLE DE NFs</div>'
             f'<div class="sidebar-status-value {_sidebar_status_class}">{_sidebar_value}</div>'
             '<div class="sidebar-status-meta">'
             f'<div>ÚLTIMA ATUALIZAÇÃO: {_sidebar_last_update}</div>'
             f'<div>QNT DE DOCUMENTOS: {_sidebar_docs_ok}/{_sidebar_docs_total}</div>'
-            '</div>'
             '</div>'
             '</div>'
         ),
