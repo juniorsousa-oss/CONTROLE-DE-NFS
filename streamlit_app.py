@@ -9333,15 +9333,77 @@ for _slug, _nav_page in _NF_NAV_SLUGS.items():
         f'<a class="sidebar-nav-link{_active}" href="?nav={_slug}" target="_self">{_nav_label}</a>'
     )
 
-_db_state = db.db_status()
-if _db_state.get("configured"):
+# STATUS GERAL — padrão SETTA: última atualização + documentos X/X.
+try:
+    _status_bundle = central_data.load_bundle_state()
+    _status_states = central_data.sync_state()
+except Exception:
+    _status_bundle = {}
+    _status_states = {}
+
+try:
+    _status_materials = _cached_materials_api_status() or {}
+except Exception:
+    _status_materials = {}
+
+_status_documents = [
+    {
+        "ok": bool(_status_materials.get("disponivel")),
+        "error": not bool(_status_materials.get("disponivel")),
+        "when": (
+            _status_materials.get("ultima_verificacao_em")
+            or _status_materials.get("ativada_em")
+            or ""
+        ),
+    },
+]
+for _source_key in ("mes_pre_notas", "nf"):
+    _meta = _status_bundle.get(_source_key) or {}
+    _state = _status_states.get(_source_key) or {}
+    _state_status = str(_state.get("status") or "").upper()
+    _status_documents.append(
+        {
+            "ok": bool(_meta.get("available")) and _state_status == "ATUALIZADO",
+            "error": _state_status == "ERRO",
+            "when": _state.get("synced_at") or _meta.get("last_update_at") or "",
+        }
+    )
+
+_sidebar_docs_total = len(_status_documents)
+_sidebar_docs_ok = sum(1 for _doc in _status_documents if _doc["ok"])
+_sidebar_has_error = any(bool(_doc["error"]) for _doc in _status_documents)
+
+_sidebar_latest = None
+for _doc in _status_documents:
+    _raw_when = str(_doc.get("when") or "").strip()
+    if not _raw_when:
+        continue
+    _stamp = pd.to_datetime(_raw_when, errors="coerce", utc=True)
+    if pd.isna(_stamp):
+        continue
+    if _sidebar_latest is None or _stamp > _sidebar_latest:
+        _sidebar_latest = _stamp
+
+_sidebar_last_update = (
+    central_data.format_dt(_sidebar_latest.isoformat())
+    if _sidebar_latest is not None
+    else "—"
+)
+
+if _sidebar_has_error:
+    _sidebar_value = "ERRO"
+    _sidebar_status_class = "status-error"
+elif _sidebar_docs_ok == _sidebar_docs_total:
     _sidebar_value = "ATUALIZADO"
     _sidebar_status_class = "status-ok"
-    _sidebar_meta = "BANCO DE DADOS CONECTADO"
 else:
     _sidebar_value = "ATENÇÃO"
     _sidebar_status_class = "status-warning"
-    _sidebar_meta = "BANCO DE DADOS NÃO CONFIGURADO"
+
+_sidebar_meta = (
+    f'<div>ÚLTIMA ATUALIZAÇÃO: {_sidebar_last_update}</div>'
+    f'<div>QNT DE DOCUMENTOS: {_sidebar_docs_ok}/{_sidebar_docs_total}</div>'
+)
 
 _nf_sidebar_html = (
     '<div class="setta-sidebar">'
