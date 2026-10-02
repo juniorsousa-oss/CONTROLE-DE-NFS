@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import base64
+import gzip
+import json
 import os
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 import requests
 
 DEFAULT_SUPABASE_URL = "https://cuixazpxkvniqldmmnth.supabase.co"
@@ -87,6 +90,62 @@ def download_source_bytes(source_key: str) -> tuple[bytes, dict]:
     response = SESSION.get(signed_url, timeout=120)
     response.raise_for_status()
     return response.content, meta
+
+
+def download_normalized_source(source_key: str) -> tuple[dict, dict]:
+    meta = api_call(
+        "source_normalized_download",
+        {"source_key": source_key},
+        timeout=30,
+    ).get("data") or {}
+    signed_url = str(meta.get("signed_url") or "")
+    if not signed_url:
+        raise RuntimeError(f"Fonte normalizada {source_key} sem URL de leitura.")
+    response = SESSION.get(signed_url, timeout=120)
+    response.raise_for_status()
+    pack = json.loads(gzip.decompress(response.content).decode("utf-8"))
+    if str(pack.get("format") or "") != "SETTA_SOURCE_V1":
+        raise RuntimeError(f"Formato normalizado inválido para {source_key}.")
+    return pack, meta
+
+
+def source_sheet_names(pack: dict) -> list[str]:
+    return [
+        str(item.get("name") or "")
+        for item in (pack.get("sheets") or [])
+        if isinstance(item, dict)
+    ]
+
+
+def source_raw_frame(pack: dict, sheet_name: str | int = 0) -> pd.DataFrame:
+    sheets = [
+        item for item in (pack.get("sheets") or [])
+        if isinstance(item, dict)
+    ]
+    if not sheets:
+        raise ValueError("Pacote normalizado sem planilhas.")
+    if isinstance(sheet_name, str):
+        selected = next(
+            (item for item in sheets if str(item.get("name") or "") == sheet_name),
+            None,
+        )
+        if selected is None:
+            raise ValueError(f"A planilha '{sheet_name}' não foi encontrada.")
+    else:
+        index = int(sheet_name)
+        if index < 0 or index >= len(sheets):
+            raise ValueError(f"Índice de planilha inválido: {index}.")
+        selected = sheets[index]
+    return pd.DataFrame(selected.get("rows") or [])
+
+
+def download_preferred_source(source_key: str) -> tuple[dict, dict]:
+    try:
+        pack, meta = download_normalized_source(source_key)
+        return {"normalized": True, "pack": pack}, meta
+    except Exception:
+        raw, meta = download_source_bytes(source_key)
+        return {"normalized": False, "raw": raw}, meta
 
 
 def load_visual_config() -> dict:
