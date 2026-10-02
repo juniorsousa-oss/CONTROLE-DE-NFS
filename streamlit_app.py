@@ -886,10 +886,25 @@ section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sett
 }
 
 /* Geometria exata igual ao Conversor:
-   NAVEGAÇÃO -> 1º botão = 8 px */
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar-head)
-+ div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]){
-  margin-top:8px!important;
+   NAVEGAÇÃO -> 1º botão = 8 px reais, em um elemento próprio. */
+.sidebar-nav-gap-fixed{
+  display:block!important;
+  width:100%!important;
+  height:8px!important;
+  min-height:8px!important;
+  max-height:8px!important;
+  margin:0!important;
+  padding:0!important;
+}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-nav-gap-fixed){
+  display:block!important;
+  width:100%!important;
+  height:8px!important;
+  min-height:8px!important;
+  max-height:8px!important;
+  margin:0!important;
+  padding:0!important;
+  overflow:hidden!important;
 }
 
 /* Entre botões = 2 px. O último também deixa 2 px pelo widget;
@@ -9452,6 +9467,10 @@ with st.sidebar:
             '<div class="sidebar-section-label sidebar-nav-label">NAVEGAÇÃO</div>'
             '</div>'
         ),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="sidebar-nav-gap-fixed"></div>',
         unsafe_allow_html=True,
     )
 
