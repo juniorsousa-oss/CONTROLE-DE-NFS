@@ -376,6 +376,78 @@ button[kind="primary"],button[data-testid="stBaseButton-primary"]{{background:#1
         unsafe_allow_html=True,
     )
 
+    # Compatibilidade com apps que ainda possuem CSS legado de sidebar.
+    # Neutraliza alturas/margens impostas aos wrappers do Streamlit para que
+    # somente a geometria canônica acima controle Marca, Navegação e Status.
+    st.markdown(
+        """
+        <style>
+        section[data-testid="stSidebar"] div[data-testid="stElementContainer"]{
+          height:auto!important;
+          min-height:0!important;
+          max-height:none!important;
+          margin:0!important;
+          padding:0!important;
+          overflow:visible!important;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-brand),
+        section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-section-label),
+        section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-divider),
+        section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-status-card){
+          height:auto!important;
+          min-height:0!important;
+          max-height:none!important;
+          margin:0!important;
+          padding:0!important;
+          overflow:visible!important;
+        }
+        section[data-testid="stSidebar"] .sidebar-brand{
+          width:100%!important;
+          margin:0 0 20px 0!important;
+          padding:14px 16px!important;
+        }
+        section[data-testid="stSidebar"] .sidebar-section-label{
+          display:block!important;
+          height:auto!important;
+          min-height:0!important;
+          max-height:none!important;
+          margin:0 0 8px 0!important;
+          padding:0!important;
+        }
+        section[data-testid="stSidebar"] [class*="st-key-setta_nav_"]{
+          height:auto!important;
+          min-height:0!important;
+          max-height:none!important;
+          margin:0 0 2px 0!important;
+          padding:0!important;
+        }
+        section[data-testid="stSidebar"] [class*="st-key-setta_nav_"] button{
+          width:100%!important;
+          height:42px!important;
+          min-height:42px!important;
+          max-height:42px!important;
+          margin:0!important;
+          padding:0 12px 0 24px!important;
+        }
+        section[data-testid="stSidebar"] .sidebar-divider{
+          height:1px!important;
+          min-height:1px!important;
+          max-height:1px!important;
+          margin:18px 0 20px 0!important;
+          padding:0!important;
+        }
+        section[data-testid="stSidebar"] .sidebar-status-card{
+          height:auto!important;
+          min-height:0!important;
+          max-height:none!important;
+          margin:0!important;
+          padding:12px 14px!important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     # O estado visual do drawer é controlado pelo app. O Streamlit pode manter
     # aria-expanded="false" no DOM mesmo após o callback do botão ☰; quando o
     # app pediu abertura, este override final vence a regra nativa de colapso.
