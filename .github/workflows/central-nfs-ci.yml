@@ -37,6 +37,9 @@ jobs:
           assert "SETTA UI — Layout padrão Streamlit" in shell
           assert "width:260px!important" in shell
           assert "max-width:none!important" in shell
+          assert "sidebar-section-gap" in app
+          assert "height:8px!important" in shell
+          assert ".st-key-setta_nav_0" in shell
           assert "SETTA UI — App Shell Rounded V1" not in shell
           assert '"mes_pre_notas"' in app
           assert '"nf"' in app
