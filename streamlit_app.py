@@ -39,7 +39,7 @@ TZ = ZoneInfo("America/Sao_Paulo")
 # Persistência operacional reativada para homologação integrada.
 SAVE_NF_HISTORY = True
 ENABLE_PENDING_REPORT = True
-NFS_UI_BUILD = "setta-shell-20261007-C"
+NFS_UI_BUILD = "setta-shell-20261007-D"
 
 FAVICON_FILE = ROOT / "config" / "favicon_setta.b64"
 
@@ -583,32 +583,6 @@ cfg["button_color"] = "#111111"
 st.session_state.cfg = cfg
 
 
-def browser_icon():
-    """Retorna o favicon salvo pelo usuário ou o favicon padrão do repositório."""
-    data = str(cfg.get("favicon_data") or "").strip()
-    try:
-        if data:
-            raw = base64.b64decode(data, validate=True)
-        elif FAVICON_FILE.exists():
-            raw = base64.b64decode(FAVICON_FILE.read_text(encoding="utf-8").strip(), validate=True)
-        else:
-            return "📄"
-        image = Image.open(io.BytesIO(raw))
-        image.load()
-        return image
-    except Exception:
-        return "📄"
-
-
-# Streamlit 1.49+ permite atualizar a configuração da página ao longo do script.
-# Assim, o favicon salvo no Supabase passa a valer após salvar/recarregar o app.
-st.set_page_config(
-    page_title="Controle de NFs | Setta",
-    page_icon=browser_icon(),
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 color = str(cfg.get("button_color") or "#111111").upper()
 if not re.fullmatch(r"#[0-9A-F]{6}", color):
     color = "#111111"
@@ -651,626 +625,49 @@ def empty_state(message: str) -> None:
 
 st.markdown(
     """
-<style>
-:root{--p:__COLOR__}
-[data-testid="stAppViewContainer"]{background:#f4f7fb!important}
-[data-testid="stHeader"]{background:rgba(255,255,255,.96)!important}
-.block-container{max-width:1780px!important;padding-top:3.2rem!important;padding-left:2.7rem!important;padding-right:2.7rem!important;padding-bottom:3rem!important;width:100%!important}
-section[data-testid="stSidebar"]{background:#fff!important;border-right:1px solid #e8ebf0!important;width:260px!important;min-width:260px!important;max-width:260px!important;flex-basis:260px!important}
-section[data-testid="stSidebar"] .block-container{padding-top:1.6rem!important;padding-left:1rem!important;padding-right:1rem!important}
-.intro,.setta-logo-card,.kpi-card,.panel{background:#fff;border:1px solid #e5e8ee;border-radius:14px}
-
-.sidebar-brand{background:#f8fafc;border:1px solid #e5e8ee;border-radius:12px;padding:.9rem 1rem;margin:0 0 1.05rem 0}
-.sidebar-brand-title{font-size:.92rem;font-weight:800;color:#111827;letter-spacing:-.01em}
-.sidebar-brand-sub{margin-top:.18rem;font-size:.75rem;color:#6b7280}
-.sidebar-section-label{margin:.25rem 0 .45rem 0;color:#374151;font-size:.76rem;font-weight:800;text-transform:uppercase;letter-spacing:.055em}
-.sidebar-logo-preview{width:100%;min-height:82px;display:flex;justify-content:center;align-items:center;margin:.65rem 0 .5rem 0;padding:.65rem .8rem;background:#fff;border:1px dashed #d1d5db;border-radius:10px;box-sizing:border-box;overflow:hidden}
-.sidebar-logo-preview img{display:block;width:auto;height:auto;max-width:140px;max-height:62px;object-fit:contain}
-.sidebar-info-card{background:#f8fafc;border:1px solid #e5e8ee;border-radius:10px;padding:.75rem .85rem;color:#6b7280;font-size:.76rem;line-height:1.55}
-
-section[data-testid="stSidebar"] div[data-testid="stButton"]{margin:0!important}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button{position:relative!important;min-height:42px!important;justify-content:flex-start!important;text-align:left!important;padding:.56rem .72rem .56rem calc(.88rem + 10px)!important;border-radius:10px!important;font-size:.83rem!important;font-weight:600!important;line-height:1.2!important;width:100%!important}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button > div{width:100%!important;text-align:left!important;justify-content:flex-start!important}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button p{width:100%!important;margin:0!important;text-align:left!important}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]{background:transparent!important;border:1px solid transparent!important;color:#374151!important;box-shadow:none!important}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]:hover{background:#f8fafc!important;border-color:#e5e7eb!important;color:#111827!important}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]{background:#111827!important;border:1px solid #111827!important;color:#fff!important;box-shadow:0 5px 14px rgba(17,24,39,.14)!important;font-weight:700!important}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]::before{content:"";position:absolute;left:.42rem;top:50%;width:4px;height:20px;border-radius:999px;background:#ef4444;transform:translateY(-50%)}
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]){margin-bottom:-.45rem!important}
-.sidebar-status-spacer{height:.6rem!important;min-height:.6rem!important}
-.sidebar-status-card{background:#f8fafc;border:1px solid #e5e8ee;border-radius:10px;padding:.75rem .85rem;color:#6b7280;font-size:.72rem;line-height:1.5}
-.sidebar-status-name{font-size:.68rem;font-weight:900;color:#64748b;text-transform:uppercase;letter-spacing:.025em}
-.sidebar-status-value{margin-top:.16rem;font-size:.8rem;font-weight:900;color:#111827;text-transform:uppercase}
-.sidebar-status-meta{margin-top:.24rem;color:#6b7280;font-size:.66rem;line-height:1.45;text-transform:uppercase}
-section[data-testid="stSidebar"] hr{margin:.85rem 0!important}
-
-/* SIDEBAR SETTA V1 — PADRÃO VALIDADO
-   26 / 20 / 8 / 42 / 2 / 20 / 20 / 8 px */
-section[data-testid="stSidebar"] .block-container{
-  width:260px!important;
-  min-width:260px!important;
-  max-width:260px!important;
-  box-sizing:border-box!important;
-  padding-top:26px!important;
-  padding-left:16px!important;
-  padding-right:16px!important;
-}
-section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{
-  gap:0!important;
-  row-gap:0!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar){
-  margin:0!important;
-  padding:0!important;
-}
-.setta-sidebar{
-  width:100%!important;
-  margin:0!important;
-  padding:0!important;
-  box-sizing:border-box!important;
-  font-family:inherit!important;
-}
-.setta-sidebar *{box-sizing:border-box!important}
-.sidebar-brand{
-  width:100%!important;
-  background:#f8fafc!important;
-  border:1px solid #e5e8ee!important;
-  border-radius:12px!important;
-  padding:14px 16px!important;
-  margin:0 0 20px 0!important;
-}
-.sidebar-brand-title{
-  margin:0!important;
-  padding:0!important;
-  font-size:15px!important;
-  font-weight:800!important;
-  line-height:18px!important;
-  color:#111827!important;
-  letter-spacing:-.01em!important;
-}
-.sidebar-brand-sub{
-  margin:3px 0 0 0!important;
-  padding:0!important;
-  font-size:12px!important;
-  font-weight:400!important;
-  line-height:16px!important;
-  color:#6b7280!important;
-}
-.sidebar-section-label{
-  display:block!important;
-  margin:0!important;
-  padding:0!important;
-  color:#374151!important;
-  font-size:12px!important;
-  line-height:15px!important;
-  font-weight:800!important;
-  text-transform:uppercase!important;
-  letter-spacing:.055em!important;
-}
-.sidebar-section-gap{
-  display:block!important;
-  width:100%!important;
-  height:8px!important;
-  min-height:8px!important;
-  max-height:8px!important;
-  margin:0!important;
-  padding:0!important;
-}
-.sidebar-nav{
-  display:flex!important;
-  flex-direction:column!important;
-  width:100%!important;
-  gap:2px!important;
-  margin:0!important;
-  padding:0!important;
-}
-.sidebar-nav-link{
-  position:relative!important;
-  display:flex!important;
-  align-items:center!important;
-  justify-content:flex-start!important;
-  width:100%!important;
-  height:42px!important;
-  min-height:42px!important;
-  max-height:42px!important;
-  margin:0!important;
-  padding:0 12px 0 24px!important;
-  border:1px solid transparent!important;
-  border-radius:10px!important;
-  background:transparent!important;
-  color:#374151!important;
-  text-decoration:none!important;
-  font-size:13px!important;
-  line-height:16px!important;
-  font-weight:500!important;
-  text-align:left!important;
-}
-.sidebar-nav-link:hover{
-  background:#f8fafc!important;
-  border-color:#e5e7eb!important;
-  color:#111827!important;
-  text-decoration:none!important;
-}
-.sidebar-nav-link.active{
-  background:#111827!important;
-  border-color:#111827!important;
-  color:#fff!important;
-  font-weight:700!important;
-  box-shadow:0 5px 14px rgba(17,24,39,.14)!important;
-}
-.sidebar-nav-link.active::before{
-  content:""!important;
-  position:absolute!important;
-  left:7px!important;
-  top:50%!important;
-  width:4px!important;
-  height:20px!important;
-  border-radius:999px!important;
-  background:#ef4444!important;
-  transform:translateY(-50%)!important;
-}
-
-/* Navegação interna sem reload do navegador.
-   Os botões mantêm exatamente a geometria SIDEBAR SETTA V1. */
-section[data-testid="stSidebar"] div[data-testid="stButton"]{
-  width:100%!important;
-  margin:0 0 2px 0!important;
-  padding:0!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]){
-  margin:0!important;
-  padding:0!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button{
-  position:relative!important;
-  display:flex!important;
-  align-items:center!important;
-  justify-content:flex-start!important;
-  width:100%!important;
-  height:42px!important;
-  min-height:42px!important;
-  max-height:42px!important;
-  margin:0!important;
-  padding:0 12px 0 24px!important;
-  border:1px solid transparent!important;
-  border-radius:10px!important;
-  background:transparent!important;
-  box-shadow:none!important;
-  color:#374151!important;
-  font-size:13px!important;
-  line-height:16px!important;
-  font-weight:500!important;
-  text-align:left!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button > div{
-  width:100%!important;
-  display:flex!important;
-  align-items:center!important;
-  justify-content:flex-start!important;
-  text-align:left!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button p{
-  width:100%!important;
-  margin:0!important;
-  padding:0!important;
-  color:#374151!important;
-  font-size:13px!important;
-  line-height:16px!important;
-  font-weight:500!important;
-  text-align:left!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]{
-  background:transparent!important;
-  border-color:transparent!important;
-  color:#374151!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]:hover{
-  background:#f8fafc!important;
-  border-color:#e5e7eb!important;
-  color:#111827!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]{
-  background:#111827!important;
-  border-color:#111827!important;
-  color:#fff!important;
-  font-weight:700!important;
-  box-shadow:0 5px 14px rgba(17,24,39,.14)!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] p{
-  color:#fff!important;
-  font-weight:700!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]::before{
-  content:""!important;
-  position:absolute!important;
-  left:7px!important;
-  top:50%!important;
-  width:4px!important;
-  height:20px!important;
-  border-radius:999px!important;
-  background:#ef4444!important;
-  transform:translateY(-50%)!important;
-}
-
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar-head),
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.setta-sidebar-tail){
-  margin:0!important;
-  padding:0!important;
-}
-
-/* Geometria exata igual ao Conversor:
-   NAVEGAÇÃO -> 1º botão = 8 px reais, em um elemento próprio. */
-.sidebar-nav-gap-fixed{
-  display:block!important;
-  width:100%!important;
-  height:8px!important;
-  min-height:8px!important;
-  max-height:8px!important;
-  margin:0!important;
-  padding:0!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-nav-gap-fixed){
-  display:block!important;
-  width:100%!important;
-  height:8px!important;
-  min-height:8px!important;
-  max-height:8px!important;
-  margin:0!important;
-  padding:0!important;
-  overflow:hidden!important;
-}
-
-/* Entre botões = 2 px. O último também deixa 2 px pelo widget;
-   o bloco de status compensa esses 2 px para manter 20 px reais até a linha. */
-.setta-sidebar-tail{
-  margin-top:-2px!important;
-}
-
-.sidebar-divider{
-  display:block!important;
-  width:100%!important;
-  height:1px!important;
-  min-height:1px!important;
-  background:#d1d5db!important;
-  margin:20px 0!important;
-  padding:0!important;
-}
-.sidebar-status-card{
-  width:100%!important;
-  background:#f8fafc!important;
-  border:1px solid #e5e8ee!important;
-  border-radius:10px!important;
-  padding:12px 14px!important;
-  margin:0!important;
-  color:#6b7280!important;
-}
-.sidebar-status-name{
-  margin:0!important;
-  padding:0!important;
-  font-size:11px!important;
-  line-height:14px!important;
-  font-weight:800!important;
-  color:#64748b!important;
-  text-transform:uppercase!important;
-  letter-spacing:.025em!important;
-}
-.sidebar-status-value{
-  margin:4px 0 0 0!important;
-  padding:0!important;
-  font-size:13px!important;
-  line-height:16px!important;
-  font-weight:900!important;
-  text-transform:uppercase!important;
-}
-.sidebar-status-value.status-ok{color:#16a34a!important}
-.sidebar-status-value.status-warning{color:#f59e0b!important}
-.sidebar-status-value.status-error{color:#ef4444!important}
-.sidebar-status-meta{
-  margin:6px 0 0 0!important;
-  padding:0!important;
-  color:#6b7280!important;
-  font-size:11px!important;
-  line-height:15px!important;
-  text-transform:uppercase!important;
-}
-
-[data-testid="stAppViewContainer"] > .main,
-[data-testid="stAppViewContainer"] .main,
-[data-testid="stMain"],
-.stMain{width:100%!important;max-width:100%!important;margin-left:0!important;margin-right:0!important}
-[data-testid="stAppViewContainer"] .main .block-container,
-[data-testid="stMain"] .block-container,
-.stMain .block-container{width:100%!important;max-width:100%!important;margin-left:0!important;margin-right:0!important}
-section[data-testid="stSidebar"][aria-expanded="false"]{width:0!important;min-width:0!important;max-width:0!important;flex-basis:0!important}
-
-.setta-logo-card{width:100%;min-height:128px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid #e5e8ee;border-radius:16px;box-shadow:0 4px 14px rgba(24,39,75,.08);box-sizing:border-box;margin:0 0 2.55rem 0;padding:1.1rem 2rem}
-.setta-logo-card img{display:block;width:auto;height:auto;max-width:205px;max-height:86px;object-fit:contain}.fallback{font-size:2rem;letter-spacing:.08em}
-.app-title{margin:0!important;padding:0!important;font-size:2.55rem!important;line-height:1.08!important;font-weight:800!important;letter-spacing:-.04em!important;color:#050505!important}
-.app-sub{margin-top:.72rem!important;margin-bottom:1.65rem!important;color:#4f5661!important;font-size:.94rem!important;line-height:1.35!important}
-.section-title{margin:0 0 1rem!important;color:#0f172a!important;font-size:1.28rem!important;font-weight:900!important;letter-spacing:-.02em;text-transform:uppercase}
-.section-band{margin:0 0 .95rem;padding:.82rem 1rem;background:#fff;border:1px solid #e5e8ee;border-left:5px solid #111827;border-radius:12px;box-shadow:0 3px 12px rgba(15,23,42,.035)}
-.section-band-kicker{font-size:.66rem;font-weight:900;letter-spacing:.085em;text-transform:uppercase;color:#ef4444;margin-bottom:.18rem}
-.section-band-title{font-size:1.08rem;font-weight:900;color:#111827;letter-spacing:-.015em;line-height:1.2;text-transform:uppercase}
-.section-band-note{margin-top:.22rem;color:#667085;font-size:.75rem;line-height:1.35}
-.topic-divider{height:1px;background:#cbd5e1;margin:1.55rem 0 1.05rem;width:100%}
-.api-status-head{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;margin-bottom:.8rem}
-.api-status-name{font-size:.92rem;font-weight:900;color:#111827;text-transform:uppercase}
-.api-status-filter{margin-top:.18rem;font-size:.7rem;color:#64748b;font-weight:700;text-transform:uppercase;letter-spacing:.025em}
-.api-status-badge{display:inline-flex;padding:.28rem .52rem;border-radius:999px;background:#dcfce7;color:#166534;font-size:.68rem;font-weight:900;letter-spacing:.035em}
-.api-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.7rem;margin:.25rem 0 .8rem}
-.api-stat{background:#f8fafc;border:1px solid #e5e7eb;border-radius:10px;padding:.7rem .78rem}
-.api-stat-label{font-size:.61rem;font-weight:900;letter-spacing:.055em;text-transform:uppercase;color:#64748b;margin-bottom:.28rem}
-.api-stat-value{font-size:.92rem;font-weight:900;color:#111827;line-height:1.15;overflow-wrap:anywhere}
-.setta-empty-state{border:1px dashed #cbd5e1;border-radius:12px;background:#f8fafc;padding:.85rem 1rem;color:#64748b;font-size:.76rem;font-weight:800;letter-spacing:.02em;text-transform:uppercase;margin:.1rem 0 .5rem}
-.intro{padding:.9rem 1rem;color:#555c66;margin-bottom:1rem;box-shadow:0 3px 12px rgba(15,23,42,.035)}
-.kpi-card{position:relative;min-height:116px;padding:16px 18px 15px;border:1px solid #e2e8f0;border-radius:14px;background:#fff;box-shadow:0 4px 16px rgba(15,23,42,.055);overflow:hidden;transition:transform .12s ease,box-shadow .12s ease}
-.kpi-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--accent)}.kpi-card.selected{outline:2px solid var(--accent);outline-offset:1px}
-.kpi-header{display:flex;align-items:center;gap:8px;margin-bottom:11px}.kpi-dot{width:9px;height:9px;border-radius:999px;background:var(--accent);box-shadow:0 0 0 4px var(--accent-soft);flex:0 0 auto}
-.kpi-label{color:#475569;font-size:.83rem;font-weight:700;line-height:1.15}.kpi-value{color:#0f172a;font-size:2rem;font-weight:800;line-height:1;letter-spacing:-.035em}.kpi-delta{margin-top:8px;color:#64748b;font-size:.76rem}
-[data-testid="stDataFrame"],[data-testid="stDataEditor"]{border:1px solid #d9dee7;border-radius:12px;overflow:hidden;box-shadow:0 5px 18px rgba(15,23,42,.06);background:#fff}
-[data-testid="stDataFrame"] canvas,[data-testid="stDataEditor"] canvas{font-family:Inter,Arial,sans-serif!important}
-[data-testid="stDataFrame"] [role="columnheader"],[data-testid="stDataEditor"] [role="columnheader"]{font-weight:800!important;text-transform:uppercase!important;letter-spacing:.025em!important;background:#f8fafc!important}
-[data-testid="stDataFrame"] [role="gridcell"],[data-testid="stDataEditor"] [role="gridcell"]{border-color:#eef1f5!important}
-[data-testid="stVerticalBlockBorderWrapper"]{border-color:#e5e8ee!important;border-radius:14px!important;background:#fff!important;box-shadow:0 3px 12px rgba(15,23,42,.035)}
-[data-testid="stTabs"] button{font-weight:800!important;text-transform:uppercase!important;letter-spacing:.015em!important}
-.kpi-label{text-transform:uppercase;font-size:.72rem!important;font-weight:900!important;letter-spacing:.025em}
-.kpi-delta{text-transform:uppercase;font-size:.66rem!important;font-weight:700!important;letter-spacing:.02em}
-div[data-testid="stMarkdownContainer"] h1,
-div[data-testid="stMarkdownContainer"] h2,
-div[data-testid="stMarkdownContainer"] h3,
-div[data-testid="stMarkdownContainer"] h4{text-transform:uppercase}
-[data-testid="stAlert"]{border-radius:12px!important;box-shadow:0 3px 12px rgba(15,23,42,.035)}
-button[kind="primary"],button[data-testid="stBaseButton-primary"]{background:var(--p)!important;border-color:var(--p)!important;color:#fff!important}.footer{text-align:center;color:#9298a1;font-size:.72rem;padding-top:1.2rem}
-/* ============================================================
-   SIDEBAR SETTA V1 — GEOMETRIA FIXA, SEM ESPAÇAMENTO AUTOMÁTICO
-   26 / 20 / 8 / 42 / 2 / 20 / 20 / 8 px
-   ============================================================ */
-section[data-testid="stSidebar"] .block-container{
-  width:260px!important;
-  min-width:260px!important;
-  max-width:260px!important;
-  box-sizing:border-box!important;
-  padding:26px 16px 0 16px!important;
-}
-section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{
-  gap:0!important;
-  row-gap:0!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]{
-  margin:0!important;
-  padding:0!important;
+<style id="nfs-component-style">
+div[data-testid="stElementContainer"]:has(#nfs-component-style){
+  display:none!important;
+  height:0!important;
   min-height:0!important;
-}
-
-/* CARTÃO SUPERIOR */
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-brand){
-  margin:0 0 20px 0!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-brand){
-  margin:0 0 20px 0!important;
-  padding:0!important;
-}
-
-section[data-testid="stSidebar"] .sidebar-brand{
-  width:100%!important;
-  margin:0!important;
-  padding:14px 16px!important;
-  background:#f8fafc!important;
-  border:1px solid #e5e8ee!important;
-  border-radius:12px!important;
-  box-sizing:border-box!important;
-}
-section[data-testid="stSidebar"] .sidebar-brand-title{
-  margin:0!important;
-  padding:0!important;
-  font-size:15px!important;
-  line-height:18px!important;
-  font-weight:800!important;
-  color:#111827!important;
-}
-section[data-testid="stSidebar"] .sidebar-brand-sub{
-  margin:3px 0 0 0!important;
-  padding:0!important;
-  font-size:12px!important;
-  line-height:16px!important;
-  font-weight:400!important;
-  color:#6b7280!important;
-}
-
-/* TÍTULOS DAS SEÇÕES */
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-section-label){
-  height:15px!important;
-  min-height:15px!important;
-  max-height:15px!important;
-}
-section[data-testid="stSidebar"] .sidebar-section-label{
-  display:block!important;
-  height:15px!important;
-  margin:0!important;
-  padding:0!important;
-  font-size:12px!important;
-  line-height:15px!important;
-  font-weight:800!important;
-  color:#374151!important;
-  text-transform:uppercase!important;
-  letter-spacing:.055em!important;
-}
-
-/* NAVEGAÇÃO -> PRIMEIRO BOTÃO = 8 PX */
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-nav-gap-fixed){
-  display:block!important;
-  height:8px!important;
-  min-height:8px!important;
-  max-height:8px!important;
-}
-section[data-testid="stSidebar"] .sidebar-nav-gap-fixed{
-  display:block!important;
-  width:100%!important;
-  height:8px!important;
-  min-height:8px!important;
-  max-height:8px!important;
   margin:0!important;
   padding:0!important;
 }
-
-/* BOTÕES: 42 PX / GAP REAL 2 PX */
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(div[data-testid="stButton"]){
-  height:44px!important;
-  min-height:44px!important;
-  max-height:44px!important;
-  margin:0!important;
-  padding:0 0 2px 0!important;
-  box-sizing:border-box!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"]{
-  width:100%!important;
-  height:42px!important;
-  min-height:42px!important;
-  max-height:42px!important;
-  margin:0!important;
-  padding:0!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button{
-  position:relative!important;
-  display:flex!important;
-  align-items:center!important;
-  justify-content:flex-start!important;
-  width:100%!important;
-  height:42px!important;
-  min-height:42px!important;
-  max-height:42px!important;
-  margin:0!important;
-  padding:0 12px 0 24px!important;
-  border:1px solid transparent!important;
-  border-radius:10px!important;
-  background:transparent!important;
-  box-shadow:none!important;
-  color:#374151!important;
-  font-size:13px!important;
-  line-height:16px!important;
-  font-weight:500!important;
-  text-align:left!important;
-  box-sizing:border-box!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button > div,
-section[data-testid="stSidebar"] div[data-testid="stButton"] button p{
-  width:100%!important;
-  margin:0!important;
-  padding:0!important;
-  text-align:left!important;
-  line-height:16px!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-secondary"]{
-  background:transparent!important;
-  border-color:transparent!important;
-  color:#374151!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]{
-  background:#111827!important;
-  border-color:#111827!important;
-  color:#fff!important;
-  box-shadow:0 5px 14px rgba(17,24,39,.14)!important;
-  font-weight:700!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"] p{
-  color:#fff!important;
-  font-weight:700!important;
-}
-section[data-testid="stSidebar"] div[data-testid="stButton"] button[data-testid="stBaseButton-primary"]::before{
-  content:""!important;
-  position:absolute!important;
-  left:7px!important;
-  top:50%!important;
-  width:4px!important;
-  height:20px!important;
-  border-radius:999px!important;
-  background:#ef4444!important;
-  transform:translateY(-50%)!important;
-}
-
-/* ÚLTIMO BOTÃO -> DIVISÓRIA = 20 PX
-   Cada botão fecha com 2px; a divisória compensa para totalizar 20px. */
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-divider){
-  height:39px!important;
-  min-height:39px!important;
-  max-height:39px!important;
-  padding:18px 0 20px 0!important;
-  box-sizing:border-box!important;
-}
-section[data-testid="stSidebar"] .sidebar-divider{
-  display:block!important;
-  width:100%!important;
-  height:1px!important;
-  min-height:1px!important;
-  max-height:1px!important;
-  margin:0!important;
-  padding:0!important;
-  background:#d1d5db!important;
-}
-
-/* STATUS GERAL -> CARTÃO = 8 PX */
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-status-gap-fixed){
-  display:block!important;
-  height:8px!important;
-  min-height:8px!important;
-  max-height:8px!important;
-}
-section[data-testid="stSidebar"] .sidebar-status-gap-fixed{
-  display:block!important;
-  width:100%!important;
-  height:8px!important;
-  min-height:8px!important;
-  max-height:8px!important;
-  margin:0!important;
-  padding:0!important;
-}
-
-/* CARTÃO STATUS */
-section[data-testid="stSidebar"] .sidebar-status-card{
-  width:100%!important;
-  margin:0!important;
-  padding:12px 14px!important;
-  background:#f8fafc!important;
-  border:1px solid #e5e8ee!important;
-  border-radius:10px!important;
-  box-sizing:border-box!important;
-}
-section[data-testid="stSidebar"] .sidebar-status-name{
-  margin:0!important;
-  padding:0!important;
-  font-size:11px!important;
-  line-height:14px!important;
-  font-weight:800!important;
-  color:#64748b!important;
-  text-transform:uppercase!important;
-}
-section[data-testid="stSidebar"] .sidebar-status-value{
-  margin:4px 0 0 0!important;
-  padding:0!important;
-  font-size:13px!important;
-  line-height:16px!important;
+.section-title{
+  margin:0 0 1rem!important;
+  color:#0f172a!important;
+  font-size:1.28rem!important;
   font-weight:900!important;
+  letter-spacing:-.02em!important;
   text-transform:uppercase!important;
 }
-section[data-testid="stSidebar"] .sidebar-status-value.status-ok{color:#16a34a!important}
-section[data-testid="stSidebar"] .sidebar-status-value.status-warning{color:#f59e0b!important}
-section[data-testid="stSidebar"] .sidebar-status-value.status-error{color:#ef4444!important}
-section[data-testid="stSidebar"] .sidebar-status-meta{
-  margin:6px 0 0 0!important;
-  padding:0!important;
-  font-size:11px!important;
-  line-height:15px!important;
-  font-weight:400!important;
-  color:#6b7280!important;
-  text-transform:uppercase!important;
+.api-status-head{
+  display:flex!important;
+  justify-content:space-between!important;
+  align-items:center!important;
+  gap:1rem!important;
+  flex-wrap:wrap!important;
+  margin-bottom:.8rem!important;
 }
-
-@media (max-width:900px){.block-container{padding-top:2rem!important;padding-left:1rem!important;padding-right:1rem!important;padding-bottom:2rem!important}.setta-logo-card{min-height:105px;margin-bottom:1.8rem;padding:.9rem 1rem}.setta-logo-card img{max-width:170px;max-height:72px}.app-title{font-size:2rem!important;line-height:1.12!important}.app-sub{font-size:.86rem!important;margin-bottom:1.35rem!important}.section-title{font-size:1.14rem!important}div[data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}div[data-testid="stHorizontalBlock"]>div[data-testid="stColumn"]{min-width:100%!important;width:100%!important;flex:1 1 100%!important}.kpi-card{min-height:112px;margin-bottom:.12rem}.api-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.api-status-name{font-size:.92rem!important;font-weight:900!important;color:#111827!important;text-transform:uppercase!important}
+.api-status-filter{margin-top:.18rem!important;font-size:.7rem!important;color:#64748b!important;font-weight:700!important;text-transform:uppercase!important;letter-spacing:.025em!important}
+.api-status-badge{display:inline-flex!important;padding:.28rem .52rem!important;border-radius:999px!important;background:#dcfce7!important;color:#166534!important;font-size:.68rem!important;font-weight:900!important;letter-spacing:.035em!important}
+.api-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:.7rem!important;margin:.25rem 0 .8rem!important}
+.api-stat{background:#f8fafc!important;border:1px solid #e5e7eb!important;border-radius:10px!important;padding:.7rem .78rem!important}
+.api-stat-label{font-size:.61rem!important;font-weight:900!important;letter-spacing:.055em!important;text-transform:uppercase!important;color:#64748b!important;margin-bottom:.28rem!important}
+.api-stat-value{font-size:.92rem!important;font-weight:900!important;color:#111827!important;line-height:1.15!important;overflow-wrap:anywhere!important}
+.setta-empty-state{border:1px dashed #cbd5e1!important;border-radius:12px!important;background:#f8fafc!important;padding:.85rem 1rem!important;color:#64748b!important;font-size:.76rem!important;font-weight:800!important;letter-spacing:.02em!important;text-transform:uppercase!important;margin:.1rem 0 .5rem!important}
+.intro{background:#fff!important;border:1px solid #e5e8ee!important;border-radius:14px!important;padding:.9rem 1rem!important;color:#555c66!important;margin-bottom:1rem!important;box-shadow:0 3px 12px rgba(15,23,42,.035)!important}
+.kpi-card.selected{outline:2px solid var(--accent)!important;outline-offset:1px!important}
+.footer{text-align:center!important;color:#9298a1!important;font-size:.72rem!important;padding-top:1.2rem!important}
+@media(max-width:900px){
+  .section-title{font-size:1.14rem!important}
+  .api-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
 </style>
-""".replace("__COLOR__", color),
+""",
     unsafe_allow_html=True,
 )
-
 
 def recalc(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -9885,7 +9282,6 @@ with st.sidebar:
             f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
             '</div>'
             '<div class="sidebar-section-label">NAVEGAÇÃO</div>'
-            '<div class="sidebar-section-gap"></div>'
         ),
         unsafe_allow_html=True,
     )
@@ -9962,8 +9358,7 @@ with st.sidebar:
 
     st.markdown(
         '<div class="sidebar-divider"></div>'
-        '<div class="sidebar-section-label">STATUS GERAL</div>'
-        '<div class="sidebar-section-gap"></div>',
+        '<div class="sidebar-section-label">STATUS GERAL</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
