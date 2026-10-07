@@ -18,6 +18,7 @@ from openpyxl import load_workbook
 
 import db
 import central_nfs_data as central_data
+import setta_shell
 from nf_processor import (
     build_final_name,
     digits_only,
@@ -38,6 +39,7 @@ TZ = ZoneInfo("America/Sao_Paulo")
 # Persistência operacional reativada para homologação integrada.
 SAVE_NF_HISTORY = True
 ENABLE_PENDING_REPORT = True
+NFS_UI_BUILD = "setta-shell-20261007-A"
 
 FAVICON_FILE = ROOT / "config" / "favicon_setta.b64"
 
@@ -125,6 +127,17 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+SETTA_UI_CONFIG=setta_shell.build_ui_config({})
+
+def _setta_sidebar_is_open() -> bool:
+    return bool(st.session_state.get("_setta_sidebar_open", False))
+
+def _setta_toggle_sidebar() -> None:
+    st.session_state["_setta_sidebar_open"] = not _setta_sidebar_is_open()
+
+def _setta_close_sidebar() -> None:
+    st.session_state["_setta_sidebar_open"] = False
 
 DEFAULT = {
     "title": "CONTROLE DE NOTAS FISCAIS",
@@ -9815,6 +9828,14 @@ def _render_nfs_sources_status():
         st.rerun()
 
 
+# SETTA UI — shell canônico compartilhado com os demais apps operacionais.
+# É emitido após os estilos legados para prevalecer sobre eles.
+setta_shell.render_shell(
+    st,
+    SETTA_UI_CONFIG,
+    sidebar_open=_setta_sidebar_is_open(),
+)
+
 _NF_NAV_PAGES = ["Dashboard"]
 if ENABLE_PENDING_REPORT:
     _NF_NAV_PAGES.append("Pendências")
@@ -9832,6 +9853,7 @@ def _cached_nf_sidebar_central_state():
 def _set_nf_page(target: str) -> None:
     if target in _NF_NAV_PAGES:
         st.session_state["_nf_sidebar_page"] = target
+        _setta_close_sidebar()
 
 
 def _current_nf_page() -> str:
@@ -9862,22 +9884,15 @@ with st.sidebar:
             f'<div class="sidebar-brand-title">{cfg["sidebar_title"]}</div>'
             f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
             '</div>'
+            '<div class="sidebar-section-label">NAVEGAÇÃO</div>'
         ),
         unsafe_allow_html=True,
     )
-    st.markdown(
-        '<div class="sidebar-section-label sidebar-nav-label">NAVEGAÇÃO</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="sidebar-nav-gap-fixed"></div>',
-        unsafe_allow_html=True,
-    )
 
-    for _nav_page in _NF_NAV_PAGES:
+    for _nav_index, _nav_page in enumerate(_NF_NAV_PAGES):
         st.button(
             _nf_sidebar_label(_nav_page),
-            key=f"nf_sidebar_nav_{_nav_page.lower().replace(' ', '_').replace('ç','c').replace('ã','a')}",
+            key=f"setta_nav_{_nav_index}",
             type="primary" if _nav_page == page else "secondary",
             use_container_width=True,
             on_click=_set_nf_page,
@@ -9945,15 +9960,8 @@ with st.sidebar:
         _sidebar_status_class = "status-warning"
 
     st.markdown(
-        '<div class="sidebar-divider"></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="sidebar-section-label sidebar-status-label">STATUS GERAL</div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        '<div class="sidebar-status-gap-fixed"></div>',
+        '<div class="sidebar-divider"></div>'
+        '<div class="sidebar-section-label">STATUS GERAL</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -9976,6 +9984,16 @@ if page == "Pendências":
         _ensure_operational_reference_data()
     except Exception as exc:
         st.session_state.db_sync_error = str(exc)
+
+# SETTA UI — botão próprio de abrir/fechar menu.
+with st.container(key="setta_top_controls"):
+    st.button(
+        "☰",
+        key="setta_drawer_toggle",
+        help="Abrir/fechar menu",
+        use_container_width=True,
+        on_click=_setta_toggle_sidebar,
+    )
 
 st.markdown(f'<div class="setta-logo-card">{logo_html()}</div>', unsafe_allow_html=True)
 st.markdown(
