@@ -299,8 +299,6 @@ section[data-testid="stSidebar"] [class*="st-key-setta_nav_"] button[data-testid
 .sidebar-status-meta{{margin:6px 0 0 0!important;padding:0!important;color:#6b7280!important;font-size:11px!important;line-height:15px!important;text-transform:uppercase!important}}
 [data-testid="stAppViewContainer"] > .main,[data-testid="stAppViewContainer"] .main,[data-testid="stMain"],.stMain{{width:100%!important;max-width:100%!important;margin-left:0!important;margin-right:0!important}}
 [data-testid="stAppViewContainer"] .main .block-container,[data-testid="stMain"] .block-container,.stMain .block-container{{width:100%!important;max-width:100%!important;margin-left:0!important;margin-right:0!important}}
-section[data-testid="stSidebar"][aria-expanded="false"]{{width:0!important;min-width:0!important;max-width:0!important;flex:0 0 0!important;flex-basis:0!important}}
-section[data-testid="stSidebar"][aria-expanded="false"]>div{{width:0!important;min-width:0!important;max-width:0!important}}
 
 .setta-logo-card{{
   width:100%!important;
