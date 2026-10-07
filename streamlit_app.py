@@ -39,7 +39,7 @@ TZ = ZoneInfo("America/Sao_Paulo")
 # Persistência operacional reativada para homologação integrada.
 SAVE_NF_HISTORY = True
 ENABLE_PENDING_REPORT = True
-NFS_UI_BUILD = "setta-shell-20261007-A"
+NFS_UI_BUILD = "setta-shell-20261007-B"
 
 FAVICON_FILE = ROOT / "config" / "favicon_setta.b64"
 
