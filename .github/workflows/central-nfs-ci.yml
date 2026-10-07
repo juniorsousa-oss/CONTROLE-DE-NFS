@@ -54,6 +54,7 @@ jobs:
           ]:
               assert forbidden not in app, f"CSS estrutural legado voltou ao app: {forbidden}"
           assert "SETTA UI — App Shell Rounded V1" not in shell
+          assert 'section[data-testid="stSidebar"][aria-expanded="false"]{{width:0' not in shell
           assert '"mes_pre_notas"' in app
           assert '"nf"' in app
           assert 'CONTINGÊNCIA MANUAL' in app
