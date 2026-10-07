@@ -373,3 +373,44 @@ button[kind="primary"],button[data-testid="stBaseButton-primary"]{{background:#1
 </style>""",
         unsafe_allow_html=True,
     )
+
+
+    # Estado aberto precisa vencer tanto o aria-expanded do Streamlit quanto
+    # qualquer style tag residual da execução anterior em que o drawer estava fechado.
+    if sidebar_open:
+        st.markdown(
+            """
+            <style>
+            section[data-testid="stSidebar"],
+            section[data-testid="stSidebar"][aria-expanded="false"]{
+              display:flex!important;
+              visibility:visible!important;
+              opacity:1!important;
+              width:260px!important;
+              min-width:260px!important;
+              max-width:260px!important;
+              flex:0 0 260px!important;
+              flex-basis:260px!important;
+              transform:none!important;
+              overflow:hidden!important;
+            }
+            section[data-testid="stSidebar"]>div,
+            section[data-testid="stSidebar"][aria-expanded="false"]>div{
+              display:block!important;
+              visibility:visible!important;
+              opacity:1!important;
+              width:260px!important;
+              min-width:260px!important;
+              max-width:260px!important;
+              transform:none!important;
+            }
+            section[data-testid="stSidebar"] [data-testid="stSidebarContent"],
+            section[data-testid="stSidebar"] [data-testid="stVerticalBlock"],
+            section[data-testid="stSidebar"] div[data-testid="stElementContainer"]{
+              visibility:visible!important;
+              opacity:1!important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
