@@ -411,8 +411,29 @@ button[kind="primary"],button[data-testid="stBaseButton-primary"]{{background:#1
           height:auto!important;
           min-height:0!important;
           max-height:none!important;
-          margin:0 0 8px 0!important;
+          margin:0!important;
           padding:0!important;
+        }
+        section[data-testid="stSidebar"] .sidebar-section-gap{
+          display:block!important;
+          width:100%!important;
+          height:8px!important;
+          min-height:8px!important;
+          max-height:8px!important;
+          margin:0!important;
+          padding:0!important;
+          overflow:hidden!important;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-section-gap){
+          height:auto!important;
+          min-height:0!important;
+          max-height:none!important;
+          margin:0!important;
+          padding:0!important;
+          overflow:visible!important;
+        }
+        section[data-testid="stSidebar"] .st-key-setta_nav_0{
+          margin-top:0!important;
         }
         section[data-testid="stSidebar"] [class*="st-key-setta_nav_"]{
           height:auto!important;
