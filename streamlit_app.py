@@ -39,7 +39,7 @@ TZ = ZoneInfo("America/Sao_Paulo")
 # Persistência operacional reativada para homologação integrada.
 SAVE_NF_HISTORY = True
 ENABLE_PENDING_REPORT = True
-NFS_UI_BUILD = "setta-shell-20261007-B"
+NFS_UI_BUILD = "setta-shell-20261007-C"
 
 FAVICON_FILE = ROOT / "config" / "favicon_setta.b64"
 
@@ -9885,6 +9885,7 @@ with st.sidebar:
             f'<div class="sidebar-brand-sub">{cfg["sidebar_subtitle"]}</div>'
             '</div>'
             '<div class="sidebar-section-label">NAVEGAÇÃO</div>'
+            '<div class="sidebar-section-gap"></div>'
         ),
         unsafe_allow_html=True,
     )
@@ -9961,7 +9962,8 @@ with st.sidebar:
 
     st.markdown(
         '<div class="sidebar-divider"></div>'
-        '<div class="sidebar-section-label">STATUS GERAL</div>',
+        '<div class="sidebar-section-label">STATUS GERAL</div>'
+        '<div class="sidebar-section-gap"></div>',
         unsafe_allow_html=True,
     )
     st.markdown(
