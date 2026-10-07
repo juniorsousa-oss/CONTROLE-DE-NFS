@@ -6,6 +6,7 @@ on:
     paths:
       - 'streamlit_app.py'
       - 'central_nfs_data.py'
+      - 'setta_shell.py'
       - '.github/workflows/central-nfs-ci.yml'
   workflow_dispatch:
 
@@ -20,14 +21,23 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
       - name: Compilar
-        run: python -m py_compile streamlit_app.py central_nfs_data.py db.py nf_processor.py
+        run: python -m py_compile streamlit_app.py central_nfs_data.py setta_shell.py db.py nf_processor.py
       - name: Validar integração
         run: |
           python - <<'PY'
           from pathlib import Path
           app = Path("streamlit_app.py").read_text(encoding="utf-8")
           central = Path("central_nfs_data.py").read_text(encoding="utf-8")
+          shell = Path("setta_shell.py").read_text(encoding="utf-8")
           assert "def _sync_central_nfs_sources" in app
+          assert "setta_shell.render_shell(" in app
+          assert 'key="setta_drawer_toggle"' in app
+          assert 'key=f"setta_nav_{_nav_index}"' in app
+          assert "_setta_close_sidebar()" in app
+          assert "SETTA UI — Layout padrão Streamlit" in shell
+          assert "width:260px!important" in shell
+          assert "max-width:none!important" in shell
+          assert "SETTA UI — App Shell Rounded V1" not in shell
           assert '"mes_pre_notas"' in app
           assert '"nf"' in app
           assert 'CONTINGÊNCIA MANUAL' in app
