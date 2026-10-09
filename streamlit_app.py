@@ -2102,13 +2102,31 @@ def _supplier_cnpj_lookup(entries: pd.DataFrame) -> tuple[pd.Series, int]:
             if len(unique_docs) == 1:
                 cnpj = unique_docs[0]
             else:
-                matched = match_supplier("", desc, group)
-                matched_name = str(matched.get("nome_padrao") or "").strip()
-                if matched_name:
-                    hit = group[group["nome_padrao"].astype(str).eq(matched_name)]
-                    hit_docs = hit["cnpj"].dropna().astype(str).unique().tolist()
-                    if len(hit_docs) == 1:
-                        cnpj = hit_docs[0]
+                # Mesmo código pode possuir lojas/CNPJs diferentes no TOTVS.
+                # Nome aproximado de 74% não é suficiente para escolher
+                # automaticamente uma filial; exige alto grau e vencedor isolado.
+                ranked = []
+                for _, supplier_row in group.iterrows():
+                    supplier_doc = digits_only(supplier_row.get("cnpj"))
+                    variants = [
+                        str(supplier_row.get("nome_padrao") or ""),
+                        str(supplier_row.get("nome_fantasia") or ""),
+                        *str(supplier_row.get("aliases") or "").split("|"),
+                    ]
+                    score = max(
+                        (supplier_similarity(desc, variant) for variant in variants),
+                        default=0,
+                    )
+                    ranked.append((score, supplier_doc))
+                ranked.sort(reverse=True)
+                if ranked and ranked[0][0] >= 90:
+                    best_score, best_doc = ranked[0]
+                    runner_up = max(
+                        (score for score, doc in ranked[1:] if doc != best_doc),
+                        default=0,
+                    )
+                    if best_score - runner_up >= 5:
+                        cnpj = best_doc
 
         cache[cache_key] = cnpj
         result.append(cnpj)
