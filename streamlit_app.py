@@ -9271,6 +9271,8 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
 
     if errors:
         st.session_state["_central_nfs_error"] = " | ".join(errors)
+    else:
+        st.session_state.pop("_central_nfs_error", None)
 
     return {"changed": bool(changed), "sources": changed, "errors": errors}
 
@@ -9419,6 +9421,19 @@ def _cached_nf_sidebar_central_state():
         return central_data.load_bundle_state(), central_data.sync_state()
     except Exception:
         return {}, {}
+
+
+# Nova sessão: o estado do menu lateral não deve herdar versões de outra
+# sessão pelo cache compartilhado do Streamlit.
+if (
+    st.session_state.get("_nf_central_page_loaded")
+    and not st.session_state.get("_nf_sidebar_sync_cache_refreshed")
+):
+    try:
+        _cached_nf_sidebar_central_state.clear()
+    except Exception:
+        pass
+    st.session_state["_nf_sidebar_sync_cache_refreshed"] = True
 
 
 def _set_nf_page(target: str) -> None:
