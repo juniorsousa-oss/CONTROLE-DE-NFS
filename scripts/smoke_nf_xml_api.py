@@ -9,6 +9,8 @@ cases=[
     ("login",{},400,"LOGIN_E_SENHA_OBRIGATORIOS"),
     ("list",{},401,"SESSAO_NAO_IDENTIFICADA"),
     ("check_existing",{"items":[{"chave":"0"*44,"sha256":"0"*64}]},401,"SESSAO_NAO_IDENTIFICADA"),
+    ("match",{"service_token":"INVALIDO_"+"X"*60,"nfs":[{"numero":"1","cnpj":"11111111000191"}]},401,"SERVICE_TOKEN_INVALID"),
+    ("ingest",{"service_token":"INVALIDO_"+"X"*60},403,"SERVICE_ACTION_DENIED"),
     ("download",{"id":"00000000-0000-0000-0000-000000000000"},401,"SESSAO_NAO_IDENTIFICADA"),
 ]
 for action,payload,code,error in cases:
