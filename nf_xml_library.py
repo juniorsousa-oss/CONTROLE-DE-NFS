@@ -13,6 +13,9 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from pathlib import PurePosixPath
+from xml.etree import ElementTree as ET
+from rapidfuzz import fuzz
+from nf_processor import normalize_text
 
 import pandas as pd
 import requests
@@ -479,6 +482,46 @@ def _simple_nf(value):
     return ds.lstrip("0") or "0"
 
 
+
+def _validate_name_fallback(record: dict, raw: bytes) -> bool:
+    """Valida candidato SEM CNPJ: número, chave e emitente devem concordar."""
+    reference = normalize_text(str(record.get("fornecedor_referencia") or ""))
+    if not reference or len(reference) < 6 or b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
+        return False
+    if len(raw) > MAX_XML:
+        return False
+    try:
+        xml = ET.fromstring(raw)
+        inf = xml.find(".//{*}infNFe")
+        if inf is None:
+            return False
+        emitted = inf.findtext("./{*}emit/{*}xNome", default="")
+        cnpj = re.sub(r"\D", "", inf.findtext("./{*}emit/{*}CNPJ", default=""))
+        number = _simple_nf(inf.findtext("./{*}ide/{*}nNF", default=""))
+        key = re.sub(r"\D", "", str(inf.attrib.get("Id") or ""))
+        if (number != _simple_nf(record.get("numero")) or
+                len(cnpj) != 14 or cnpj != re.sub(r"\D", "",str(record.get("cnpj_emitente") or "")) or
+                key != re.sub(r"\D", "",str(record.get("chave") or "")) or
+                key[20:22] != "55"):
+            return False
+        name = normalize_text(emitted)
+        if not name or len(name) < 6:
+            return False
+        if reference == name:
+            return True
+        a, b = set(reference.split()), set(name.split())
+        common = a & b
+        if len(common) < 2:
+            return False
+        score = int(round(
+            fuzz.token_set_ratio(reference, name) * .55 +
+            fuzz.token_sort_ratio(reference, name) * .45
+        ))
+        return score >= 88 and len(common) / max(1, max(len(a), len(b))) >= .55
+    except (ET.ParseError, ValueError, TypeError):
+        return False
+
+
 def prefill_stage2(pending_pre: pd.DataFrame):
     """Match a seleção uma vez e recupera XMLs em paralelo, preservando êxitos."""
     service_token = _automatic_service_token()
@@ -493,12 +536,15 @@ def prefill_stage2(pending_pre: pd.DataFrame):
         numero = _simple_nf(row.get("numero_nf"))
         cnpj = re.sub(r"\D", "", str(row.get("cnpj") or ""))
         chave = re.sub(r"\D", "", str(row.get("chave_nfe") or ""))
-        if numero != "0" and (len(cnpj) == 14 or len(chave) == 44):
-            requests_nfs.append({"numero": numero, "cnpj": cnpj, "chave": chave})
+        supplier = str(row.get("fornecedor") or row.get("fornecedor_validacao") or "").strip()
+        if numero != "0" and (len(cnpj) == 14 or len(chave) == 44 or supplier):
+            requests_nfs.append({
+                "numero": numero, "cnpj": cnpj, "chave": chave, "fornecedor": supplier,
+            })
     if not requests_nfs:
         return
     fingerprint = hashlib.sha256(
-        repr(sorted((x["numero"], x["cnpj"], x["chave"]) for x in requests_nfs)).encode()
+        repr(sorted((x["numero"], x["cnpj"], x["chave"], x["fornecedor"]) for x in requests_nfs)).encode()
     ).hexdigest()
     refresh = st.button("RECONSULTAR BIBLIOTECA XML", key="nf_xml_force_refresh")
     if refresh:
@@ -512,6 +558,11 @@ def prefill_stage2(pending_pre: pd.DataFrame):
                 f"{linked.get('cte', 0)} CT-e encontrados · "
                 f"{linked.get('missing', 0)} NF(s) ainda sem XML."
             )
+            if linked.get("pending_name"):
+                st.warning(
+                    f"{linked['pending_name']} NF(s) com XML encontrado pelo número, "
+                    "mas emitente não confirmado. Requer conferência manual."
+                )
             if linked.get("download_errors"):
                 st.warning(
                     f"{linked['download_errors']} documento(s) falharam na busca. "
@@ -568,8 +619,15 @@ def prefill_stage2(pending_pre: pd.DataFrame):
             item for item in (matched.get("nfe") or []) + (matched.get("cte") or [])
             if str(item.get("id") or "") not in existing_ids
         ]
+        fallback = [
+            dict(item, _verify_name=True)
+            for item in (matched.get("candidatos_sem_cnpj") or [])
+            if str(item.get("id") or "") not in existing_ids
+        ]
+        records.extend(fallback)
         imported = 0
         failures = []
+        pending_name = []
         if records:
             with st.spinner(f"Recuperando {len(records)} XML(s) em paralelo..."):
                 with ThreadPoolExecutor(max_workers=min(4, len(records))) as executor:
@@ -580,6 +638,9 @@ def prefill_stage2(pending_pre: pd.DataFrame):
                         item = jobs[future]
                         try:
                             name, raw = future.result()
+                            if item.get("_verify_name") and not _validate_name_fallback(item, raw):
+                                pending_name.append(str(item.get("numero") or ""))
+                                continue
                             digest = hashlib.sha256(raw).hexdigest()
                             if digest not in existing_hashes:
                                 cached.append({
@@ -600,12 +661,20 @@ def prefill_stage2(pending_pre: pd.DataFrame):
             "cte": len(matched.get("cte") or []),
             "missing": len(matched.get("nao_encontradas") or []),
             "download_errors": len(failures),
+            "pending_name": len(pending_name),
         }
         if imported:
             st.session_state.document_reprocess_needed = True
             st.success(
                 f"{imported} XML(s) vinculados ao lote. "
                 "A conferência será executada automaticamente."
+            )
+        if pending_name:
+            st.warning(
+                "XML encontrado pelo número da NF, mas o emitente não teve "
+                "correspondência segura: " + ", ".join(sorted(set(pending_name)))
+                + ". Documento NÃO vinculado automaticamente; revise o cadastro "
+                "ou faça a conferência manual."
             )
         if failures:
             st.warning(
