@@ -19,7 +19,7 @@ import streamlit as st
 
 import db
 
-MAX_XML=5*1024*1024
+MAX_XML=4*1024*1024
 MAX_ZIP=120*1024*1024
 MAX_TOTAL_EXPANDED=200*1024*1024
 MAX_FILES=1500
@@ -92,7 +92,7 @@ def _read_xml_uploads(uploaded):
         size=int(getattr(upload,"size",0) or 0)
         if name.lower().endswith(".xml"):
             if size>MAX_XML:
-                errors.append(f"{name}: arquivo maior que 5 MB.")
+                errors.append(f"{name}: arquivo maior que 4 MB.")
                 continue
             raw=upload.getvalue()
             if not raw or len(raw)>MAX_XML:
@@ -113,7 +113,7 @@ def _read_xml_uploads(uploaded):
                             errors.append(f"{member.filename}: caminho inseguro.")
                             continue
                         if member.file_size>MAX_XML:
-                            errors.append(f"{path.name}: XML maior que 5 MB.")
+                            errors.append(f"{path.name}: XML maior que 4 MB.")
                             continue
                         total+=member.file_size
                         if total>MAX_TOTAL_EXPANDED or len(entries)>=MAX_FILES:
