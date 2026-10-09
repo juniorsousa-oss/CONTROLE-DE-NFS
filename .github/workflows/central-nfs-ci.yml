@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'streamlit_app.py'
+      - 'nf_xml_library.py'
+      - 'supabase/migrations/20261009_nf_xml_library.sql'
+      - 'supabase/functions/nf-xml-library-api/index.ts'
+      - 'scripts/test_nf_xml_library.py'
       - 'scripts/test_nf_flow_real_0810.py'
       - 'central_nfs_data.py'
       - 'setta_shell.py'
@@ -23,6 +27,8 @@ jobs:
         run: pip install -r requirements.txt
       - name: Compilar
         run: python -m py_compile streamlit_app.py central_nfs_data.py setta_shell.py db.py nf_processor.py
+      - name: Testar biblioteca XML privada
+        run: python -m compileall -q nf_xml_library.py && python -m scripts.test_nf_xml_library
       - name: Testar fluxo das NFs de 08/10
         run: python scripts/test_nf_flow_real_0810.py
       - name: Validar integração
