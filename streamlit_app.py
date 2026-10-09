@@ -6117,10 +6117,10 @@ def render_mrp_missing_pre_treatments() -> None:
     view = missing[visible_cols].copy()
     if "recebedor" not in view.columns:
         view["recebedor"] = ""
-    base_missing_select_all = st.checkbox(
-        "MARCAR / DESMARCAR TODAS AS NFs",
-        value=True,
-        key="base_missing_mrp_select_all",
+    # Seletores fora do formulário disparavam rerun de TODA a página,
+    # fechando o expander enquanto o operador marcava algumas NFs.
+    base_missing_select_all = bool(
+        st.session_state.get("_nf_missing_mrp_select_all", True)
     )
     view.insert(
         0,
@@ -6137,7 +6137,10 @@ def render_mrp_missing_pre_treatments() -> None:
                 col for col in view.columns
                 if col not in {"Selecionar", "recebedor"}
             ],
-            key=f"base_missing_mrp_editor_{int(bool(base_missing_select_all))}",
+            key=(
+                f"base_missing_mrp_editor_{int(bool(base_missing_select_all))}_"
+                f"{int(st.session_state.get('_nf_missing_mrp_editor_rev') or 0)}"
+            ),
             column_config={
                 "_mrp_key": None,
                 "Selecionar": st.column_config.CheckboxColumn("SELECIONAR"),
@@ -6193,6 +6196,21 @@ def render_mrp_missing_pre_treatments() -> None:
             "APLICAR TRATATIVA",
             type="primary",use_container_width=True,
         )
+        _mark_col, _unmark_col = st.columns(2)
+        mark_all_mrp = _mark_col.form_submit_button(
+            "MARCAR TODAS", use_container_width=True,
+        )
+        unmark_all_mrp = _unmark_col.form_submit_button(
+            "DESMARCAR TODAS", use_container_width=True,
+        )
+
+    if mark_all_mrp or unmark_all_mrp:
+        st.session_state["_nf_missing_mrp_select_all"] = bool(mark_all_mrp)
+        st.session_state["_nf_missing_mrp_editor_rev"] = (
+            int(st.session_state.get("_nf_missing_mrp_editor_rev") or 0) + 1
+        )
+        st.session_state["_nf_missing_mrp_keep_open"] = True
+        st.rerun()
 
     if submit_mrp_treatment:
         if selected.empty:
@@ -11182,7 +11200,7 @@ elif page == "Pendências":
         if isinstance(_not_linked, pd.DataFrame) and not _not_linked.empty:
             with st.expander(
                 f"NFs DO PROTHEUS SEM VÍNCULO NAS PRÉ-NOTAS ({len(_not_linked)})",
-                expanded=False,
+                expanded=bool(st.session_state.get("_nf_missing_mrp_keep_open", False)),
             ):
                 render_mrp_missing_pre_treatments()
 
