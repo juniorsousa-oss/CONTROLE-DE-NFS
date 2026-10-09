@@ -10024,55 +10024,107 @@ if page == "Dashboard":
                 "de lançamento no último STSUP01."
             )
 
-        if st.session_state.pop("_nf_dashboard_clear_filters",False):
-            for _key,_value in (
-                ("nf_dash_type","TODOS"),
-                ("nf_dash_company","TODAS"),
-                ("nf_dash_followup","TODOS"),
-                ("nf_dash_search",""),
+        # O menu lateral também provoca rerun no Streamlit. Apenas o botão
+        # APLICAR FILTROS pode atualizar a consulta; navegação e abertura de
+        # menu não alteram silenciosamente o resultado anterior.
+        _dashboard_defaults = {
+            "tipo": "TODOS", "empresa": "TODAS",
+            "acompanhamento": "TODOS", "pesquisa": "",
+        }
+        if st.session_state.pop("_nf_dashboard_clear_filters", False):
+            for _key, _value in (
+                ("nf_dash_type", "TODOS"),
+                ("nf_dash_company", "TODAS"),
+                ("nf_dash_followup", "TODOS"),
+                ("nf_dash_search", ""),
             ):
-                st.session_state[_key]=_value
+                st.session_state[_key] = _value
+            st.session_state["nf_dash_applied"] = dict(_dashboard_defaults)
+        if "nf_dash_applied" not in st.session_state:
+            st.session_state["nf_dash_applied"] = {
+                "tipo": str(st.session_state.get("nf_dash_type") or "TODOS"),
+                "empresa": str(st.session_state.get("nf_dash_company") or "TODAS"),
+                "acompanhamento": str(st.session_state.get("nf_dash_followup") or "TODOS"),
+                "pesquisa": str(st.session_state.get("nf_dash_search") or ""),
+            }
 
         st.markdown("#### FILTROS DE DOCUMENTOS ENVIADOS")
-        with st.form("nf_dashboard_filters_form"):
-            f1,f2,f3,f4=st.columns([1,1,1.4,2])
-            _types=sorted({
-                str(v) for v in finalized_records.get("tipo_documento",pd.Series(dtype=str)).dropna()
-                if str(v).strip()
-            })
-            _companies=sorted({
-                str(v) for v in finalized_records.get("empresa_sigla",pd.Series(dtype=str)).dropna()
-                if str(v).strip()
-            })
-            _followups=sorted({
-                str(v) for v in finalized_records.get("acompanhamento_lancamento",pd.Series(dtype=str)).dropna()
-                if str(v).strip()
-            })
-            dash_type=f1.selectbox("TIPO",["TODOS"]+_types,key="nf_dash_type")
-            dash_company=f2.selectbox("EMPRESA",["TODAS"]+_companies,key="nf_dash_company")
-            dash_followup=f3.selectbox("ACOMPANHAMENTO",["TODOS"]+_followups,key="nf_dash_followup")
-            dash_search=f4.text_input("NF / CT-e / FORNECEDOR",key="nf_dash_search")
-            find_col,clear_col=st.columns([4,1])
-            find_col.form_submit_button("APLICAR FILTROS",type="primary",use_container_width=True)
-            clear_filters=clear_col.form_submit_button("LIMPAR",use_container_width=True)
-        if clear_filters:
-            st.session_state["_nf_dashboard_clear_filters"]=True
-            st.rerun()
-
-        view=finalized_records.copy()
-        if dash_type!="TODOS":
-            view=view[view["tipo_documento"].fillna("").astype(str).eq(dash_type)]
-        if dash_company!="TODAS":
-            view=view[view["empresa_sigla"].fillna("").astype(str).eq(dash_company)]
-        if dash_followup!="TODOS":
-            view=view[view["acompanhamento_lancamento"].fillna("").astype(str).eq(dash_followup)]
-        if dash_search.strip():
-            _needle=dash_search.strip()
-            _mask=(
-                view["documento"].fillna("").astype(str).str.contains(_needle,case=False,regex=False)
-                |view["parte"].fillna("").astype(str).str.contains(_needle,case=False,regex=False)
+        _types = sorted({
+            str(v) for v in finalized_records.get(
+                "tipo_documento", pd.Series(dtype=str)
+            ).dropna() if str(v).strip()
+        })
+        _companies = sorted({
+            str(v) for v in finalized_records.get(
+                "empresa_sigla", pd.Series(dtype=str)
+            ).dropna() if str(v).strip()
+        })
+        _followups = sorted({
+            str(v) for v in finalized_records.get(
+                "acompanhamento_lancamento", pd.Series(dtype=str)
+            ).dropna() if str(v).strip()
+        })
+        # Duas colunas por linha, com busca em largura própria: ao abrir o
+        # menu SETTA nenhuma caixa disputa espaço com mais três controles.
+        with st.form("nf_dashboard_filters_form", clear_on_submit=False):
+            f1, f2 = st.columns(2, gap="medium")
+            dash_type = f1.selectbox(
+                "TIPO", ["TODOS"] + _types, key="nf_dash_type",
             )
-            view=view.loc[_mask].copy()
+            dash_company = f2.selectbox(
+                "EMPRESA", ["TODAS"] + _companies, key="nf_dash_company",
+            )
+            f3, f4 = st.columns([1, 2], gap="medium")
+            dash_followup = f3.selectbox(
+                "ACOMPANHAMENTO", ["TODOS"] + _followups,
+                key="nf_dash_followup",
+            )
+            dash_search = f4.text_input(
+                "NF / CT-e / FORNECEDOR", key="nf_dash_search",
+            )
+            find_col, clear_col = st.columns([3, 1], gap="medium")
+            apply_filters = find_col.form_submit_button(
+                "APLICAR FILTROS", type="primary", use_container_width=True,
+            )
+            clear_filters = clear_col.form_submit_button(
+                "LIMPAR", use_container_width=True,
+            )
+        if clear_filters:
+            st.session_state["_nf_dashboard_clear_filters"] = True
+            st.rerun()
+        if apply_filters:
+            st.session_state["nf_dash_applied"] = {
+                "tipo": dash_type, "empresa": dash_company,
+                "acompanhamento": dash_followup, "pesquisa": dash_search,
+            }
+
+        _active_filters = dict(st.session_state.get("nf_dash_applied") or _dashboard_defaults)
+        view = finalized_records.copy()
+        if _active_filters["tipo"] != "TODOS":
+            view = view[
+                view["tipo_documento"].fillna("").astype(str).eq(_active_filters["tipo"])
+            ]
+        if _active_filters["empresa"] != "TODAS":
+            view = view[
+                view["empresa_sigla"].fillna("").astype(str).eq(_active_filters["empresa"])
+            ]
+        if _active_filters["acompanhamento"] != "TODOS":
+            view = view[
+                view["acompanhamento_lancamento"].fillna("").astype(str).eq(
+                    _active_filters["acompanhamento"]
+                )
+            ]
+        if _active_filters["pesquisa"].strip():
+            _needle = _active_filters["pesquisa"].strip()
+            _mask = (
+                view["documento"].fillna("").astype(str).str.contains(
+                    _needle, case=False, regex=False
+                )
+                | view["parte"].fillna("").astype(str).str.contains(
+                    _needle, case=False, regex=False
+                )
+            )
+            view = view.loc[_mask].copy()
         st.caption(f"EXIBINDO {len(view)} DE {len(finalized_records)} DOCUMENTO(S) ENVIADO(S)")
         display_cols = [
             x for x in [
