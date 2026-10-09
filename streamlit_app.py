@@ -10590,10 +10590,9 @@ elif page == "Pendências":
             isinstance(_analysis_stage2, pd.DataFrame)
             and not _analysis_stage2.empty
         ):
-            _analysis_stage2 = recalc(
-                apply_cross_checks(_analysis_stage2.copy())
-            )
-            st.session_state.analysis = _analysis_stage2
+            # render_document_linking_stage() já atualiza analysis com
+            # apply_cross_checks + recalc. Repetir aqui a cada interação
+            # duplicava trabalho sem mudar o resultado fiscal.
             _nf_batch_audit = _audit_selected_nf_batch(
                 selected_pending_pre_notes(),_analysis_stage2
             )
