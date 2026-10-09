@@ -479,58 +479,149 @@ def _simple_nf(value):
     return ds.lstrip("0") or "0"
 
 
-def prefill_stage2(pending_pre:pd.DataFrame):
-    """Consulta automática uma vez por seleção; importa apenas documentos inequívocos."""
-    if not _automatic_service_token() and not _token():
-        st.warning(
-            "INTEGRAÇÃO AUTOMÁTICA DE XMLs AGUARDANDO CONFIGURAÇÃO SEGURA "
-            "DO APLICATIVO. O upload manual permanece disponível."
-        )
+def prefill_stage2(pending_pre: pd.DataFrame):
+    """Match a seleção uma vez e recupera XMLs em paralelo, preservando êxitos."""
+    service_token = _automatic_service_token()
+    session_token = _token()
+    if not service_token and not session_token:
+        st.warning("INTEGRAÇÃO DE XMLs NÃO CONFIGURADA. Upload manual disponível.")
         return
-    if not isinstance(pending_pre,pd.DataFrame) or pending_pre.empty:return
-    requests_nfs=[]
-    for _,row in pending_pre.iterrows():
-        numero=_simple_nf(row.get("numero_nf"))
-        cnpj=re.sub(r"\D","",str(row.get("cnpj") or ""))
-        chave=re.sub(r"\D","",str(row.get("chave_nfe") or ""))
-        if numero!="0" and (len(cnpj)==14 or len(chave)==44):
-            requests_nfs.append({"numero":numero,"cnpj":cnpj,"chave":chave})
-    if not requests_nfs:return
-    fingerprint=hashlib.sha256(repr(sorted((x["numero"],x["cnpj"],x["chave"]) for x in requests_nfs)).encode()).hexdigest()
-    refresh=st.button("RECONSULTAR BIBLIOTECA XML",key="nf_xml_force_refresh")
-    if refresh:st.session_state.pop("nf_xml_auto_signature",None)
-    # Não armazenar o token de serviço no estado do navegador.
-    target=f"{'SERVICO' if _automatic_service_token() else 'SESSAO'}:{fingerprint}"
-    if st.session_state.get("nf_xml_auto_signature")==target:
-        linked=st.session_state.get("nf_xml_auto_stats") or {}
+    if not isinstance(pending_pre, pd.DataFrame) or pending_pre.empty:
+        return
+    requests_nfs = []
+    for _, row in pending_pre.iterrows():
+        numero = _simple_nf(row.get("numero_nf"))
+        cnpj = re.sub(r"\D", "", str(row.get("cnpj") or ""))
+        chave = re.sub(r"\D", "", str(row.get("chave_nfe") or ""))
+        if numero != "0" and (len(cnpj) == 14 or len(chave) == 44):
+            requests_nfs.append({"numero": numero, "cnpj": cnpj, "chave": chave})
+    if not requests_nfs:
+        return
+    fingerprint = hashlib.sha256(
+        repr(sorted((x["numero"], x["cnpj"], x["chave"]) for x in requests_nfs)).encode()
+    ).hexdigest()
+    refresh = st.button("RECONSULTAR BIBLIOTECA XML", key="nf_xml_force_refresh")
+    if refresh:
+        st.session_state.pop("nf_xml_auto_signature", None)
+    target = f"{'SERVICO' if service_token else 'SESSAO'}:{fingerprint}"
+    if st.session_state.get("nf_xml_auto_signature") == target:
+        linked = st.session_state.get("nf_xml_auto_stats") or {}
         if linked:
-            st.caption(f"BIBLIOTECA · {linked.get('nfe',0)} NF-e e {linked.get('cte',0)} CT-e encontrados · {linked.get('missing',0)} NF(s) ainda sem XML.")
+            st.caption(
+                f"BIBLIOTECA · {linked.get('nfe', 0)} NF-e e "
+                f"{linked.get('cte', 0)} CT-e encontrados · "
+                f"{linked.get('missing', 0)} NF(s) ainda sem XML."
+            )
+            if linked.get("download_errors"):
+                st.warning(
+                    f"{linked['download_errors']} documento(s) falharam na busca. "
+                    "Use RECONSULTAR BIBLIOTECA XML para tentar novamente."
+                )
         return
+
+    # Credenciais obtidas apenas na thread principal; workers não usam Streamlit.
+    url = f"{db.supabase_url().rstrip('/')}/functions/v1/nf-xml-library-api"
+    key = db.supabase_key()
+    headers = {
+        "apikey": key, "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+    }
+    credential = (
+        {"service_token": service_token} if service_token
+        else {"token": session_token}
+    )
+
+    def download_one(record: dict) -> tuple[str, bytes]:
+        response = requests.post(
+            url, headers=headers,
+            json={"action": "download", "payload": {**credential, "id": record["id"]}},
+            timeout=(8, 25),
+        )
+        try:
+            answer = response.json()
+        except ValueError:
+            raise RuntimeError(f"Resposta inválida (HTTP {response.status_code})") from None
+        if not response.ok or not answer.get("ok"):
+            raise RuntimeError(str(answer.get("error") or f"HTTP {response.status_code}"))
+        data = answer.get("data") or {}
+        raw = base64.b64decode(data.get("raw_base64") or "", validate=True)
+        if not raw:
+            raise ValueError("XML vazio na biblioteca.")
+        filename = str(
+            data.get("filename") or record.get("arquivo_nome")
+            or (str(record.get("chave") or record["id"]) + ".xml")
+        )
+        return filename, raw
+
     try:
-        matched=library_api("match",{"nfs":requests_nfs},timeout=60)
-        cached=list(st.session_state.get("document_upload_cache") or [])
-        existing={hashlib.sha256(x.get("raw") or b"").hexdigest() for x in cached}
-        imported=0
-        for record in (matched.get("nfe") or [])+(matched.get("cte") or []):
-            result=library_api("download",{"id":record["id"]},timeout=70)
-            raw=base64.b64decode(result.get("raw_base64") or "",validate=True)
-            digest=hashlib.sha256(raw).hexdigest()
-            if raw and digest not in existing:
-                name=str(result.get("filename") or record.get("arquivo_nome") or record.get("chave")+".xml")
-                cached.append({"name":name,"raw":raw,"ext":".xml","origem":"BIBLIOTECA"})
-                existing.add(digest)
-                imported+=1
-        st.session_state.document_upload_cache=cached
-        st.session_state.nf_xml_auto_signature=target
-        st.session_state.nf_xml_auto_stats={
-            "nfe":len(matched.get("nfe") or []),
-            "cte":len(matched.get("cte") or []),
-            "missing":len(matched.get("nao_encontradas") or []),
+        with st.spinner("Buscando XMLs vinculados à seleção na biblioteca..."):
+            matched = library_api("match", {"nfs": requests_nfs}, timeout=25)
+        cached = list(st.session_state.get("document_upload_cache") or [])
+        existing_hashes = {
+            hashlib.sha256(x.get("raw") or b"").hexdigest() for x in cached
+        }
+        existing_ids = {
+            str(x.get("library_id") or "")
+            for x in cached if x.get("library_id")
+        }
+        records = [
+            item for item in (matched.get("nfe") or []) + (matched.get("cte") or [])
+            if str(item.get("id") or "") not in existing_ids
+        ]
+        imported = 0
+        failures = []
+        if records:
+            with st.spinner(f"Recuperando {len(records)} XML(s) em paralelo..."):
+                with ThreadPoolExecutor(max_workers=min(4, len(records))) as executor:
+                    jobs = {
+                        executor.submit(download_one, item): item for item in records
+                    }
+                    for future in as_completed(jobs):
+                        item = jobs[future]
+                        try:
+                            name, raw = future.result()
+                            digest = hashlib.sha256(raw).hexdigest()
+                            if digest not in existing_hashes:
+                                cached.append({
+                                    "name": name, "raw": raw, "ext": ".xml",
+                                    "origem": "BIBLIOTECA",
+                                    "library_id": str(item["id"]),
+                                })
+                                existing_hashes.add(digest)
+                                imported += 1
+                        except Exception as exc:
+                            failures.append(
+                                f"{item.get('arquivo_nome') or item.get('chave') or item.get('id')}: {exc}"
+                            )
+        st.session_state.document_upload_cache = cached
+        st.session_state.nf_xml_auto_signature = target
+        st.session_state.nf_xml_auto_stats = {
+            "nfe": len(matched.get("nfe") or []),
+            "cte": len(matched.get("cte") or []),
+            "missing": len(matched.get("nao_encontradas") or []),
+            "download_errors": len(failures),
         }
         if imported:
-            st.session_state.document_reprocess_needed=True
-            st.success(f"{imported} XML(s) da biblioteca incluídos no lote; os documentos serão analisados automaticamente.")
-        else:
-            st.info("Biblioteca consultada. Nenhum XML novo correspondeu a esta seleção.")
+            st.session_state.document_reprocess_needed = True
+            st.success(
+                f"{imported} XML(s) vinculados ao lote. "
+                "A conferência será executada automaticamente."
+            )
+        if failures:
+            st.warning(
+                f"{len(failures)} XML(s) não puderam ser recuperados. "
+                "Os demais foram preservados; reconsulte para tentar novamente."
+            )
+        if not imported and not failures:
+            st.caption("Biblioteca consultada. Nenhum XML novo para esta seleção.")
     except Exception as exc:
-        st.warning("Não foi possível pré-carregar XMLs da biblioteca: "+str(exc))
+        # Não reinicia requisições demoradas a cada widget/rerun.
+        st.session_state.nf_xml_auto_signature = target
+        st.session_state.nf_xml_auto_stats = {
+            "nfe": 0, "cte": 0, "missing": 0, "download_errors": 1,
+        }
+        st.warning(
+            "Não foi possível consultar a biblioteca XML: "
+            f"{exc}. Use RECONSULTAR para tentar novamente; "
+            "os documentos já carregados permanecem no lote."
+        )
