@@ -499,6 +499,7 @@ def init():
         "document_link_stats": {},
         "document_upload_cache": [],
         "document_reprocess_needed": False,
+        "nf_stage2_search_started": False,
         "base_analysis_ready": False,
         "base_analysis_at": None,
         "base_analysis_missing_mrp": pd.DataFrame(),
@@ -4284,6 +4285,7 @@ def _reset_nf_session_flow() -> None:
     st.session_state.pop("nf_xml_auto_signature", None)
     st.session_state.pop("nf_xml_auto_stats", None)
     st.session_state.document_reprocess_needed = False
+    st.session_state.nf_stage2_search_started = False
     st.session_state.last_generation_audit = {}
     st.session_state.nf_selected_flow_keys = set()
     st.session_state.nf_stage1_selection = None
@@ -7099,6 +7101,24 @@ def _analysis_rows_for_cte_pdf(
     return list(rows.values())
 
 
+def _start_stage2_document_search(pending_base: pd.DataFrame, requested: bool) -> bool:
+    """Executa a busca remota SOMENTE após clique explícito na etapa 2.
+
+    A transição da etapa 1 não chama biblioteca, não baixa XMLs e não
+    reprocessa documentos. Resultados anteriores continuam em sessão.
+    """
+    if not requested or pending_base.empty:
+        return False
+    st.session_state.nf_stage2_search_started = True
+    # Um novo clique é uma reconsulta explícita, inclusive após erro.
+    st.session_state.pop("nf_xml_auto_signature", None)
+    nf_xml_library.prefill_stage2(pending_base)
+    if st.session_state.get("document_upload_cache"):
+        # Um documento novo pode ter surgido desde a última conferência.
+        st.session_state.document_reprocess_needed = True
+    return True
+
+
 def render_document_linking_stage() -> None:
     section_band(
         "02 · VALIDAÇÃO",
@@ -7132,15 +7152,28 @@ def render_document_linking_stage() -> None:
         )
         return
 
-    # Pré-carregamento seguro por NF/chave fiscal, sem importar XMLs de outros projetos.
-    nf_xml_library.prefill_stage2(pending_base)
-
-    uploaded = st.file_uploader(
-        "XMLs e PDFs de NF-e / CT-e",
-        type=["xml", "pdf"],
-        accept_multiple_files=True,
-        key="pending_fiscal_documents",
+    st.caption(
+        f"LOTE SELECIONADO · {len(pending_base)} NF(s) · "
+        "DOCUMENTOS PRINCIPAIS: BIBLIOTECA XML"
     )
+    start_search = st.button(
+        "INICIAR BUSCA DE DOCUMENTOS",
+        type="primary",
+        use_container_width=True,
+        key="nf_stage2_start_search",
+    )
+    # Upload é contingência: disponível, porém fora do fluxo principal.
+    with st.expander("UPLOAD MANUAL DE XML/PDF · CONTINGÊNCIA", expanded=False):
+        st.caption(
+            "Utilize somente quando o documento não estiver na biblioteca. "
+            "O upload não altera a base de NFs selecionadas."
+        )
+        uploaded = st.file_uploader(
+            "XMLs e PDFs de NF-e / CT-e",
+            type=["xml", "pdf"],
+            accept_multiple_files=True,
+            key="pending_fiscal_documents",
+        )
 
     live_documents = []
     if uploaded:
@@ -7167,6 +7200,26 @@ def render_document_linking_stage() -> None:
                 cached_documents.append(item)
                 fingerprints.add(digest)
         st.session_state.document_upload_cache = cached_documents
+
+    # Todos os controles da etapa 2 já foram desenhados antes do acesso ao
+    # banco. A biblioteca jamais é consultada na abertura automática da etapa.
+    if start_search:
+        with st.spinner("BUSCANDO E CONFERINDO DOCUMENTOS DO LOTE..."):
+            _start_stage2_document_search(pending_base, requested=True)
+    cached_documents = list(st.session_state.get("document_upload_cache") or [])
+    if not st.session_state.get("nf_stage2_search_started") and not cached_documents:
+        st.info(
+            "ETAPA 2 PRONTA. Clique em INICIAR BUSCA DE DOCUMENTOS para "
+            "localizar os XMLs da seleção. O upload manual permanece como contingência."
+        )
+    elif st.session_state.get("nf_stage2_search_started"):
+        _library_stats = st.session_state.get("nf_xml_auto_stats") or {}
+        if _library_stats:
+            st.caption(
+                f"ÚLTIMA CONSULTA · {_library_stats.get('nfe', 0)} NF-e · "
+                f"{_library_stats.get('cte', 0)} CT-e · "
+                f"{_library_stats.get('missing', 0)} NF(s) não encontrada(s)"
+            )
 
     documents_to_process = cached_documents
     # O botão VALIDAR só será liberado depois da análise deste lote.
@@ -7829,7 +7882,7 @@ def render_document_linking_stage() -> None:
                 expanded=True,
             ):
                 st.info(
-                    "Localize o XML/PDF e clique em RECONSULTAR BIBLIOTECA XML, "
+                    "Localize o XML/PDF e clique em INICIAR BUSCA DE DOCUMENTOS novamente, "
                     "ou retire somente as NFs indicadas do lote atual. "
                     "Elas continuarão na base de pré-notas para processamento posterior."
                 )
@@ -11346,6 +11399,10 @@ elif page == "Pendências":
                 st.session_state.document_ignored_items = []
                 st.session_state.document_link_stats = {}
                 st.session_state.document_upload_cache = []
+                st.session_state.document_reprocess_needed = False
+                st.session_state.nf_stage2_search_started = False
+                st.session_state.pop("nf_xml_auto_signature", None)
+                st.session_state.pop("nf_xml_auto_stats", None)
                 st.session_state.nf_documents_analyzed_signature = ""
                 st.session_state.nf_documents_current_signature = ""
                 st.session_state.pop("pending_fiscal_documents", None)
