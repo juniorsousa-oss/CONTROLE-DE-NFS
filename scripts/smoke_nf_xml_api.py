@@ -8,6 +8,7 @@ headers={"apikey":key,"Authorization":f"Bearer {key}","Content-Type":"applicatio
 cases=[
     ("login",{},400,"LOGIN_E_SENHA_OBRIGATORIOS"),
     ("list",{},401,"SESSAO_NAO_IDENTIFICADA"),
+    ("check_existing",{"items":[{"chave":"0"*44,"sha256":"0"*64}]},401,"SESSAO_NAO_IDENTIFICADA"),
     ("download",{"id":"00000000-0000-0000-0000-000000000000"},401,"SESSAO_NAO_IDENTIFICADA"),
 ]
 for action,payload,code,error in cases:
