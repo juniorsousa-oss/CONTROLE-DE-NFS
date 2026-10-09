@@ -5,6 +5,9 @@ from unittest.mock import patch
 import nf_xml_library as lib
 
 def fixture(key: str, marker: str="A") -> bytes:
+    if key[20:22]=="57":
+        return ('<cteProc><CTe><infCte Id="CTe'+key+'"><ide><nCT>'+marker+
+                '</nCT></ide></infCte></CTe></cteProc>').encode()
     return ('<nfeProc><NFe><infNFe Id="NFe'+key+'"><ide><nNF>'+marker+
             '</nNF></ide></infNFe></NFe></nfeProc>').encode()
 
