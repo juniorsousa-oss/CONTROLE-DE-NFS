@@ -62,6 +62,36 @@ for token in [
 ]:
     assert token in source, f"Regra operacional ausente: {token}"
 
+# Regressão Protheus: formulário não pode exigir ação/seleção antes do submit,
+# pois o Streamlit só transmite os valores novos quando o botão é acionado.
+protheus_func=function("render_mrp_missing_pre_treatments")
+protheus_form=form_containing_editor("missing_mrp_protheus_treat_form")
+submit_buttons=[
+    n for n in ast.walk(protheus_form)
+    if isinstance(n,ast.Call)
+    and isinstance(n.func,ast.Attribute)
+    and n.func.attr=="form_submit_button"
+]
+assert len(submit_buttons)==1, "Tratar NF do Protheus precisa de um único submit"
+assert not any(k.arg=="disabled" for k in submit_buttons[0].keywords), (
+    "Submit do Protheus não pode depender de seleção/tratativa pré-submissão"
+)
+protheus_source=ast.get_source_segment(source,protheus_func)
+for check in (
+    'if submit_mrp_treatment:',
+    'if selected.empty:',
+    'if action == "Escolha uma ação":',
+    'if action == "Adicionar às Pré-notas pendentes":',
+    'if not missing_receiver.empty:',
+):
+    assert check in protheus_source, f"Validação após clique ausente: {check}"
+assert (
+    protheus_source.index('if submit_mrp_treatment:')
+    < protheus_source.index('if selected.empty:')
+    < protheus_source.index('if action == "Escolha uma ação":')
+    < protheus_source.index('if action == "Adicionar às Pré-notas pendentes":')
+), "As validações das NFs devem ocorrer depois da submissão."
+
 ready=function("render_ready_file_stage")
 ready_lines=ast.get_source_segment(source,ready)
 assert ready_lines.index('CT-e VINCULADOS ÀS NFs DESTE LOTE') < ready_lines.index('"GERAR ARQUIVO PRONTO PARA IMPORTAÇÃO"')
