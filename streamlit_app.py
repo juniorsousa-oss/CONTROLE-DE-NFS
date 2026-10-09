@@ -4241,6 +4241,78 @@ def _render_nf_flow_header(stage: int) -> None:
     )
 
 
+def _audit_selected_nf_batch(selected: pd.DataFrame, processed: pd.DataFrame) -> dict:
+    """Reconcilia NFs selecionadas e vinculadas sem inventar documentos ausentes.
+
+    O número identifica a NF; quando ambos os lados fornecem CNPJ completo,
+    também é exigida igualdade de CNPJ, impedindo vínculos cruzados.
+    """
+    expected = selected if isinstance(selected,pd.DataFrame) else pd.DataFrame()
+    actual = processed if isinstance(processed,pd.DataFrame) else pd.DataFrame()
+    requested=[]
+    available=[]
+    for _,row in expected.iterrows():
+        nf=normalized_nf(row.get("numero_nf"))
+        cnpj=digits_only(row.get("cnpj"))
+        if nf and (nf,cnpj) not in requested:
+            requested.append((nf,cnpj))
+    for _,row in actual.iterrows():
+        nf=normalized_nf(row.get("numero_nf"))
+        cnpj=digits_only(row.get("cnpj_fornecedor") or row.get("cnpj"))
+        if nf:
+            available.append((nf,cnpj))
+    missing=[]
+    covered_indices=set()
+    for nf,cnpj in requested:
+        hits=[
+            idx for idx,(found_nf,found_cnpj) in enumerate(available)
+            if found_nf==nf
+            and not (len(cnpj)==14 and len(found_cnpj)==14 and cnpj!=found_cnpj)
+        ]
+        if len(hits)==1 and hits[0] not in covered_indices:
+            covered_indices.add(hits[0])
+        else:
+            missing.append({
+                "NF":nf,"CNPJ":cnpj,
+                "SITUAÇÃO":"VÍNCULO AMBÍGUO" if hits else "SEM DOCUMENTO VINCULADO",
+            })
+    extras=[
+        {"NF":nf,"CNPJ":cnpj,"SITUAÇÃO":"FORA DA SELEÇÃO ATIVA"}
+        for i,(nf,cnpj) in enumerate(available) if i not in covered_indices
+    ]
+    return {
+        "selecionadas":len(requested),
+        "vinculadas":len(covered_indices),
+        "faltantes":missing,
+        "extras":extras,
+    }
+
+
+def _show_nf_batch_audit(audit:dict) -> None:
+    st.markdown("#### CONFERÊNCIA DO LOTE")
+    a,b,c=st.columns(3)
+    a.metric("NFs SELECIONADAS",audit["selecionadas"])
+    b.metric("NFs VINCULADAS",audit["vinculadas"])
+    c.metric("PENDENTES DE VÍNCULO",len(audit["faltantes"]))
+    if audit["faltantes"]:
+        st.warning(
+            f"{len(audit['faltantes'])} NF(s) selecionada(s) ainda "
+            "não aparecem entre os documentos vinculados. "
+            "Elas continuam no lote e precisam de XML/PDF ou tratativa de vínculo."
+        )
+        _setta_dataframe(pd.DataFrame(audit["faltantes"]),
+            use_container_width=True,hide_index=True)
+    if audit["extras"]:
+        st.error(
+            "Existem documentos analisados fora da seleção ativa ou "
+            "com vínculo duplicado. Corrija antes da geração."
+        )
+        with st.expander(f"VER DOCUMENTOS FORA DA SELEÇÃO ({len(audit['extras'])})",
+                         expanded=False):
+            _setta_dataframe(pd.DataFrame(audit["extras"]),
+                use_container_width=True,hide_index=True)
+
+
 def selected_pending_pre_notes() -> pd.DataFrame:
     base = current_pending_pre_notes()
     if base.empty:
@@ -7564,6 +7636,9 @@ def render_document_linking_stage() -> None:
     if isinstance(analysis, pd.DataFrame) and not analysis.empty:
         merged = recalc(apply_cross_checks(analysis.copy()))
         st.session_state.analysis = merged
+        _show_nf_batch_audit(
+            _audit_selected_nf_batch(pending_base,merged)
+        )
 
         def _xml_label(row):
             original = str(row.get("arquivo_original") or "").strip()
@@ -7951,6 +8026,21 @@ def render_ready_file_stage() -> None:
     merged = recalc(apply_cross_checks(frame.copy()))
     st.session_state.analysis = merged
 
+    _current_selection=selected_pending_pre_notes()
+    _lot_audit=_audit_selected_nf_batch(_current_selection,merged)
+    _show_nf_batch_audit(_lot_audit)
+    if (
+        _lot_audit["selecionadas"] == 0
+        or _lot_audit["faltantes"]
+        or _lot_audit["extras"]
+    ):
+        st.error(
+            "O LOTE NÃO ESTÁ COMPLETO. A Etapa 3 foi bloqueada "
+            "para impedir gerar um arquivo com NFs omitidas. "
+            "Volte à Etapa 2 e confira os números listados acima."
+        )
+        return
+
     invalid_mask = treatment_mask(merged)
     duplicate = (
         merged["nome_sugerido"]
@@ -7962,9 +8052,15 @@ def render_ready_file_stage() -> None:
     )
 
     if invalid_mask.any() or duplicate.any():
+        details=merged.loc[invalid_mask | duplicate].copy()
         st.warning(
-            "Existem documentos que ainda precisam de atenção. "
-            "Volte à etapa 2 antes de gerar o arquivo final."
+            f"{len(details)} NF(s) com pendência impedem a geração. "
+            "Corrija vencimento e demais campos obrigatórios na Etapa 2."
+        )
+        st.dataframe(
+            details[[col for col in ("numero_nf","validacao","vencimento","status")
+                     if col in details.columns]],
+            use_container_width=True,hide_index=True,
         )
         return
 
@@ -10157,8 +10253,14 @@ elif page == "Pendências":
                 apply_cross_checks(_analysis_stage2.copy())
             )
             st.session_state.analysis = _analysis_stage2
+            _nf_batch_audit = _audit_selected_nf_batch(
+                selected_pending_pre_notes(),_analysis_stage2
+            )
             _can_continue_stage2 = bool(
-                st.session_state.get("nf_documents_analyzed_signature")
+                _nf_batch_audit["selecionadas"] > 0
+                and not _nf_batch_audit["faltantes"]
+                and not _nf_batch_audit["extras"]
+                and st.session_state.get("nf_documents_analyzed_signature")
                 and st.session_state.get("nf_documents_analyzed_signature")
                 == st.session_state.get("nf_documents_current_signature")
                 and not treatment_mask(_analysis_stage2).any()
