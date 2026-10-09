@@ -8130,14 +8130,32 @@ def render_ready_file_stage() -> None:
             str(row.get("file_id") or ""): normalized_nf(row.get("numero_nf"))
             for _, row in merged.iterrows()
         }
+        mapped_key = {
+            digits_only(row.get("chave_nfe")): normalized_nf(row.get("numero_nf"))
+            for _, row in merged.iterrows()
+            if len(digits_only(row.get("chave_nfe"))) == 44
+        }
+        number_counts = (
+            merged["numero_nf"].map(normalized_nf).value_counts().to_dict()
+            if "numero_nf" in merged.columns else {}
+        )
         cte_preview = []
         for cte in linked_ctes:
             linked_ids = [
                 str(v) for v in (cte.get("linked_file_ids") or []) if str(v).strip()
             ]
+            # IDs locais podem mudar após reanálise. Primeiro conferimos as
+            # chaves fiscais; número só é usado quando inequívoco neste lote.
             linked_numbers = sorted({
-                mapped_nf.get(file_id, "")
-                for file_id in linked_ids if mapped_nf.get(file_id)
+                number for number in (
+                    [mapped_nf.get(file_id, "") for file_id in linked_ids]
+                    + [mapped_key.get(digits_only(key), "") for key in
+                       (cte.get("refs_nfe") or [])]
+                    + [normalized_nf(value) for value in
+                       (cte.get("linked_nf_numbers") or [])
+                       if number_counts.get(normalized_nf(value),0) == 1]
+                )
+                if number and number in number_counts
             })
             cte_preview.append({
                 "CT-e": str(cte.get("numero_cte") or ""),
