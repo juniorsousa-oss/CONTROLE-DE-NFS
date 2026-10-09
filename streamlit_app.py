@@ -6139,9 +6139,22 @@ def render_mrp_missing_pre_treatments() -> None:
             )
             st.session_state.pre_notes = updated
             persist_pre_notes_current("Impacto MRP / Protheus")
-            _refresh_missing_mrp_analysis()
+            # NF adicionada na tratativa entra no lote ativo, não apenas na base.
+            _new_keys = {flow_nf_key(row) for row in additions if flow_nf_key(row)}
+            _active_keys = set(st.session_state.get("nf_stage1_selection") or set())
+            _active_keys.update(_new_keys)
+            st.session_state.nf_stage1_selection = _active_keys
+            st.session_state.nf_selected_flow_keys = set(_active_keys)
+            st.session_state.nf_stage1_selection_draft = None
+            st.session_state.nf_stage1_selection_saved = True
+            st.session_state["_nf_stage1_editor_rev"] = (
+                int(st.session_state.get("_nf_stage1_editor_rev") or 0) + 1
+            )
             st.session_state.document_reprocess_needed = True
-            st.session_state.pop("base_missing_mrp_editor", None)
+            _refresh_missing_mrp_analysis()
+            set_flash("_flash_nf","success",
+                f"{len(additions)} NF(s) incluída(s) nas pré-notas "
+                "e adicionada(s) à seleção ativa do lote.")
             st.rerun()
 
         if action == "Desconsiderar do cálculo atual":
@@ -10733,7 +10746,18 @@ elif page == "Pendências":
 
         # Antes era apenas uma grade informativa: agora o operador pode
         # selecionar individualmente as NFs do Protheus e adicioná-las ao fluxo.
-        render_mrp_missing_pre_treatments()
+        # Exceções do MRP ficam recolhidas por padrão.
+        _not_linked = (
+            _refresh_missing_mrp_analysis()
+            if st.session_state.get("base_analysis_ready")
+            else pd.DataFrame()
+        )
+        if isinstance(_not_linked, pd.DataFrame) and not _not_linked.empty:
+            with st.expander(
+                f"NFs DO PROTHEUS SEM VÍNCULO NAS PRÉ-NOTAS ({len(_not_linked)})",
+                expanded=False,
+            ):
+                render_mrp_missing_pre_treatments()
 
         st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         if st.button(
