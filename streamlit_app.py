@@ -10133,6 +10133,9 @@ elif page == "Pendências":
                 )
 
             pending_view = pending_pre.copy()
+            # Preserva a mesma chave usada pela base persistida, antes do
+            # preenchimento meramente visual do fornecedor por CNPJ.
+            pending_view["_flow_key"] = pending_pre.apply(flow_nf_key,axis=1)
             pending_view["cnpj"] = pending_view["cnpj"].map(digits_only)
             if "fornecedor" not in pending_view.columns:
                 pending_view["fornecedor"] = ""
@@ -10358,10 +10361,7 @@ elif page == "Pendências":
 
             # Tabela operacional no padrão nativo do aplicativo.
             editor_view = filtered.copy()
-            editor_view["_flow_key"] = editor_view.apply(
-                flow_nf_key,
-                axis=1,
-            )
+            # _flow_key veio da base original e permanece idêntica após salvar.
             # A seleção é um rascunho; só fica efetiva após SALVAR DADOS.
             current_keys = set(editor_view["_flow_key"].astype(str))
             draft = st.session_state.get("nf_stage1_selection_draft")
