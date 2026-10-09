@@ -9747,7 +9747,56 @@ if page == "Dashboard":
                 "de lançamento no último STSUP01."
             )
 
-        view = finalized_records.copy()
+        if st.session_state.pop("_nf_dashboard_clear_filters",False):
+            for _key,_value in (
+                ("nf_dash_type","TODOS"),
+                ("nf_dash_company","TODAS"),
+                ("nf_dash_followup","TODOS"),
+                ("nf_dash_search",""),
+            ):
+                st.session_state[_key]=_value
+
+        st.markdown("#### FILTROS DE DOCUMENTOS ENVIADOS")
+        with st.form("nf_dashboard_filters_form"):
+            f1,f2,f3,f4=st.columns([1,1,1.4,2])
+            _types=sorted({
+                str(v) for v in finalized_records.get("tipo_documento",pd.Series(dtype=str)).dropna()
+                if str(v).strip()
+            })
+            _companies=sorted({
+                str(v) for v in finalized_records.get("empresa_sigla",pd.Series(dtype=str)).dropna()
+                if str(v).strip()
+            })
+            _followups=sorted({
+                str(v) for v in finalized_records.get("acompanhamento_lancamento",pd.Series(dtype=str)).dropna()
+                if str(v).strip()
+            })
+            dash_type=f1.selectbox("TIPO",["TODOS"]+_types,key="nf_dash_type")
+            dash_company=f2.selectbox("EMPRESA",["TODAS"]+_companies,key="nf_dash_company")
+            dash_followup=f3.selectbox("ACOMPANHAMENTO",["TODOS"]+_followups,key="nf_dash_followup")
+            dash_search=f4.text_input("NF / CT-e / FORNECEDOR",key="nf_dash_search")
+            find_col,clear_col=st.columns([4,1])
+            find_col.form_submit_button("APLICAR FILTROS",type="primary",use_container_width=True)
+            clear_filters=clear_col.form_submit_button("LIMPAR",use_container_width=True)
+        if clear_filters:
+            st.session_state["_nf_dashboard_clear_filters"]=True
+            st.rerun()
+
+        view=finalized_records.copy()
+        if dash_type!="TODOS":
+            view=view[view["tipo_documento"].fillna("").astype(str).eq(dash_type)]
+        if dash_company!="TODAS":
+            view=view[view["empresa_sigla"].fillna("").astype(str).eq(dash_company)]
+        if dash_followup!="TODOS":
+            view=view[view["acompanhamento_lancamento"].fillna("").astype(str).eq(dash_followup)]
+        if dash_search.strip():
+            _needle=dash_search.strip()
+            _mask=(
+                view["documento"].fillna("").astype(str).str.contains(_needle,case=False,regex=False)
+                |view["parte"].fillna("").astype(str).str.contains(_needle,case=False,regex=False)
+            )
+            view=view.loc[_mask].copy()
+        st.caption(f"EXIBINDO {len(view)} DE {len(finalized_records)} DOCUMENTO(S) ENVIADO(S)")
         display_cols = [
             x for x in [
                 "id",
@@ -9759,13 +9808,10 @@ if page == "Dashboard":
                 "natureza",
                 "vencimento",
                 "prioridade_mrp",
-                "status",
                 "pdf_criado_em",
                 "enviado_em",
-                "prazo_lancamento",
                 "acompanhamento_lancamento",
                 "lancado_em",
-                "lancamento_verificado_em",
                 "arquivo_final",
             ]
             if x in view.columns
@@ -9796,7 +9842,7 @@ if page == "Dashboard":
             table.drop(columns=["id"], errors="ignore"),
             use_container_width=True,
             hide_index=True,
-            height=520,
+            height=380,
             column_config={
                 "tipo_documento": "TIPO",
                 "documento": "NF / CT-e",
@@ -9815,16 +9861,13 @@ if page == "Dashboard":
                 ),
                 "vencimento": "VENCIMENTO",
                 "prioridade_mrp": "PRIORIDADE",
-                "status": "STATUS",
                 "pdf_criado_em": "PDF CRIADO EM",
                 "enviado_em": "ENVIADO EM",
-                "prazo_lancamento": "PRAZO 24H",
                 "acompanhamento_lancamento": st.column_config.TextColumn(
                     "ACOMPANHAMENTO",
                     width="large",
                 ),
                 "lancado_em": "LANÇAMENTO CONFIRMADO",
-                "lancamento_verificado_em": "ÚLTIMA CONFERÊNCIA STSUP01",
                 "arquivo_final": st.column_config.TextColumn(
                     "ARQUIVO",
                     width="large",
@@ -9832,7 +9875,7 @@ if page == "Dashboard":
             },
         )
 
-        export_view = view.drop(columns=[x for x in ["id"] if x in view.columns])
+        export_view = table.drop(columns=["id"], errors="ignore")
         try:
             export_payload = excel_bytes(export_view, "Controle NFs")
         except Exception as exc:
