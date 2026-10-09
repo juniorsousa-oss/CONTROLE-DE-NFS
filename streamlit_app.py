@@ -52,6 +52,7 @@ from openpyxl import load_workbook
 
 import db
 import central_nfs_data as central_data
+import nf_xml_library
 import setta_shell
 from nf_processor import (
     build_final_name,
@@ -4200,6 +4201,8 @@ def _reset_nf_session_flow() -> None:
     st.session_state.document_ignored_items = []
     st.session_state.document_link_stats = {}
     st.session_state.document_upload_cache = []
+    st.session_state.pop("nf_xml_auto_signature", None)
+    st.session_state.pop("nf_xml_auto_stats", None)
     st.session_state.document_reprocess_needed = False
     st.session_state.last_generation_audit = {}
     st.session_state.nf_selected_flow_keys = set()
@@ -6856,6 +6859,9 @@ def render_document_linking_stage() -> None:
         )
         return
 
+    # Pré-carregamento seguro por NF/chave fiscal, sem importar XMLs de outros projetos.
+    nf_xml_library.prefill_stage2(pending_base)
+
     uploaded = st.file_uploader(
         "XMLs e PDFs de NF-e / CT-e",
         type=["xml", "pdf"],
@@ -6873,12 +6879,23 @@ def render_document_linking_stage() -> None:
             }
             for file in uploaded
         ]
-        st.session_state.document_upload_cache = live_documents
 
-    cached_documents = list(
-        st.session_state.get("document_upload_cache") or []
-    )
-    documents_to_process = live_documents or cached_documents
+    cached_documents = list(st.session_state.get("document_upload_cache") or [])
+    if live_documents:
+        # Upload manual complementa a biblioteca, sem apagar os XMLs pré-carregados.
+        import hashlib as _xml_hashlib
+        fingerprints={
+            _xml_hashlib.sha256(item.get("raw") or b"").hexdigest()
+            for item in cached_documents
+        }
+        for item in live_documents:
+            digest=_xml_hashlib.sha256(item["raw"]).hexdigest()
+            if digest not in fingerprints:
+                cached_documents.append(item)
+                fingerprints.add(digest)
+        st.session_state.document_upload_cache = cached_documents
+
+    documents_to_process = cached_documents
     # O botão VALIDAR só será liberado depois da análise deste lote.
     import hashlib
     _doc_fingerprint = hashlib.sha256()
@@ -6890,7 +6907,7 @@ def render_document_linking_stage() -> None:
     )
     st.session_state.nf_documents_current_signature = current_signature
 
-    if not uploaded and cached_documents:
+    if cached_documents:
         class _CachedFiscalUpload:
             def __init__(self, item):
                 self.name = str(item.get("name") or "documento")
@@ -9338,6 +9355,7 @@ setta_shell.render_shell(
 _NF_NAV_PAGES = ["Dashboard"]
 if ENABLE_PENDING_REPORT:
     _NF_NAV_PAGES.append("Pendências")
+_NF_NAV_PAGES.append("Biblioteca XML")
 _NF_NAV_PAGES.append("Configurações")
 
 
@@ -10680,6 +10698,10 @@ elif page == "Pendências":
             st.rerun()
 
         st.stop()
+
+
+elif page == "Biblioteca XML":
+    nf_xml_library.render_page()
 
 
 elif page == "Configurações":
