@@ -50,9 +50,20 @@ def _token():
     return str(_session().get("token") or "")
 
 
+def _automatic_service_token():
+    # Exclusivo do servidor Streamlit, nunca incluído em URL, widget ou HTML.
+    return db._secret("NF_XML_AUTOMATION_TOKEN")
+
+
 def library_api(action:str,values:dict|None=None,timeout:int=70):
+    # A consulta do lote é automática via credencial de serviço restrita.
+    # Para importar, consultar o catálogo ou gerir pessoas, login humano persiste.
+    if action in {"match","download"} and _automatic_service_token():
+        return _call(action,{
+            "service_token":_automatic_service_token(),**(values or {})
+        },timeout=timeout)
     if not _token():
-        raise RuntimeError("Entre com seu usuário SETTA para acessar a biblioteca XML.")
+        raise RuntimeError("Biblioteca XML ainda não autorizada nesta sessão.")
     return _call(action,{"token":_token(),**(values or {})},timeout=timeout)
 
 
@@ -470,8 +481,11 @@ def _simple_nf(value):
 
 def prefill_stage2(pending_pre:pd.DataFrame):
     """Consulta automática uma vez por seleção; importa apenas documentos inequívocos."""
-    if not _token():
-        st.caption("BIBLIOTECA XML · Faça login no menu Biblioteca XML para associar automaticamente os documentos disponíveis.")
+    if not _automatic_service_token() and not _token():
+        st.warning(
+            "INTEGRAÇÃO AUTOMÁTICA DE XMLs AGUARDANDO CONFIGURAÇÃO SEGURA "
+            "DO APLICATIVO. O upload manual permanece disponível."
+        )
         return
     if not isinstance(pending_pre,pd.DataFrame) or pending_pre.empty:return
     requests_nfs=[]
@@ -485,7 +499,8 @@ def prefill_stage2(pending_pre:pd.DataFrame):
     fingerprint=hashlib.sha256(repr(sorted((x["numero"],x["cnpj"],x["chave"]) for x in requests_nfs)).encode()).hexdigest()
     refresh=st.button("RECONSULTAR BIBLIOTECA XML",key="nf_xml_force_refresh")
     if refresh:st.session_state.pop("nf_xml_auto_signature",None)
-    target=f"{_token()}:{fingerprint}"
+    # Não armazenar o token de serviço no estado do navegador.
+    target=f"{'SERVICO' if _automatic_service_token() else 'SESSAO'}:{fingerprint}"
     if st.session_state.get("nf_xml_auto_signature")==target:
         linked=st.session_state.get("nf_xml_auto_stats") or {}
         if linked:
