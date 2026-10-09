@@ -3,21 +3,8 @@ name: Validar Central Controle de NFs
 on:
   push:
     branches: [main]
-    paths:
-      - 'streamlit_app.py'
-      - 'nf_xml_library.py'
-      - 'supabase/migrations/20261009_nf_xml_library.sql'
-      - 'supabase/functions/nf-xml-library-api/index.ts'
-      - 'scripts/test_nf_xml_library.py'
-      - 'scripts/test_nf_supplier_xml_fallback.py'
-      - 'scripts/test_nf_xml_incremental.py'
-      - 'scripts/smoke_nf_xml_api.py'
-      - 'scripts/test_nf_flow_real_0810.py'
-      - 'scripts/test_nf_navigation_recovery.py'
-      - 'scripts/test_dashboard_sidebar_filters.py'
-      - 'central_nfs_data.py'
-      - 'setta_shell.py'
-      - '.github/workflows/central-nfs-ci.yml'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -30,8 +17,12 @@ jobs:
           python-version: "3.11"
       - name: Instalar dependências
         run: pip install -r requirements.txt
-      - name: Compilar
-        run: python -m py_compile streamlit_app.py central_nfs_data.py setta_shell.py db.py nf_processor.py
+      - name: Compilar TODOS os fontes Python
+        run: python -m compileall -q .
+      - name: Auditar TODOS os arquivos e pontos de custo
+        run: python -m scripts.audit_quality
+      - name: Testar índice MRP contra pré-notas
+        run: python -m scripts.test_nf_mrp_index
       - name: Testar biblioteca XML privada
         run: python -m compileall -q nf_xml_library.py && python -m scripts.test_nf_xml_library
       - name: Testar pré-conferência e carga incremental dos XMLs
@@ -91,3 +82,12 @@ jobs:
           assert 'visual_get' in central
           print("CENTRAL_NFS_OK")
           PY
+
+      - name: Publicar auditoria do repositório
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maintenance-audit
+          path: .ci_reports/maintenance_audit.json
+          if-no-files-found: warn
+          retention-days: 14
