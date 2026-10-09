@@ -12,6 +12,28 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
+
+# Padrão SETTA: tabelas responsivas ao total de registros exibidos nos filtros.
+def _setta_table_height(data, requested=None):
+    try:
+        rows = len(data)
+    except (TypeError, ValueError):
+        return requested
+    limit = requested if isinstance(requested, int) and requested > 0 else 600
+    return min(limit, max(84, 42 + 35 * (min(rows, 100) + 1)))
+
+
+def _setta_dataframe(data, *args, **kwargs):
+    kwargs["height"] = _setta_table_height(data, kwargs.get("height"))
+    return st.dataframe(data, *args, **kwargs)
+
+
+def _setta_data_editor(data, *args, **kwargs):
+    if kwargs.get("num_rows") != "dynamic":
+        kwargs["height"] = _setta_table_height(data, kwargs.get("height"))
+    return st.data_editor(data, *args, **kwargs)
+
+
 from rapidfuzz import fuzz
 from PIL import Image
 from openpyxl import load_workbook
@@ -2272,7 +2294,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 ]
             ].copy()
 
-            st.dataframe(
+            _setta_dataframe(
                 display,
                 use_container_width=True,
                 hide_index=True,
@@ -2418,7 +2440,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
             "fornecedor_validacao",
         ]
 
-        st.dataframe(
+        _setta_dataframe(
             show[visible_cols],
             use_container_width=True,
             hide_index=True,
@@ -2447,7 +2469,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                 expanded=False,
             ):
                 ignored_df = pd.DataFrame(ignored_records)
-                st.dataframe(
+                _setta_dataframe(
                     ignored_df,
                     use_container_width=True,
                     hide_index=True,
@@ -2526,7 +2548,7 @@ def render_mrp_priority_feed(key_prefix: str = "mrp", allow_feed: bool = True) -
                     "Todas vêm marcadas por padrão. Desmarque apenas as NFs que não receberão a ação."
                 )
 
-                edited = st.data_editor(
+                edited = _setta_data_editor(
                     add_view,
                     use_container_width=True,
                     hide_index=True,
@@ -3883,7 +3905,7 @@ def render_launch_tracking_panel(
         ]
         if col in frame.columns
     ]
-    st.dataframe(
+    _setta_dataframe(
         frame[cols],
         use_container_width=True,
         hide_index=True,
@@ -4081,7 +4103,7 @@ def render_excluded_nf_manager() -> None:
             if col in view.columns
         ]
         if visible:
-            st.dataframe(
+            _setta_dataframe(
                 view[visible].fillna("NÃO INFORMADO"),
                 use_container_width=True,
                 hide_index=True,
@@ -4755,7 +4777,7 @@ def render_pre_notes_feed() -> None:
                 f"{invalid_count} registro(s) sem Data, NF ou Fornecedor válido foram ignorados na validação."
             )
 
-        st.dataframe(
+        _setta_dataframe(
             preview,
             use_container_width=True,
             hide_index=True,
@@ -5002,7 +5024,7 @@ def render_suppliers_feed() -> None:
             st.error(
                 f"Há {stats.get('conflitos', 0)} CNPJ(s) vinculados a Razões Sociais diferentes."
             )
-            st.dataframe(
+            _setta_dataframe(
                 conflicts,
                 use_container_width=True,
                 hide_index=True,
@@ -5017,7 +5039,7 @@ def render_suppliers_feed() -> None:
             "tipo",
             "aliases",
         ]
-        st.dataframe(
+        _setta_dataframe(
             clean[show_cols].head(500),
             use_container_width=True,
             hide_index=True,
@@ -5269,7 +5291,7 @@ def render_nf_treatment_center() -> None:
         review_df.insert(0, "Decisão", "PENDENTE")
         review_df["Vincular à pré-nota"] = ""
 
-        editor = st.data_editor(
+        editor = _setta_data_editor(
             review_df,
             use_container_width=True,
             hide_index=True,
@@ -5476,7 +5498,7 @@ def render_nf_treatment_center() -> None:
                 "nome_sugerido",
                 "prioridade_mrp",
             ]
-            st.dataframe(
+            _setta_dataframe(
                 merged.loc[~pending_mask, ready_cols],
                 use_container_width=True,
                 hide_index=True,
@@ -5516,7 +5538,7 @@ def render_nf_treatment_center() -> None:
                 "observacao",
             ]
 
-            treatment_editor = st.data_editor(
+            treatment_editor = _setta_data_editor(
                 pending[treatment_cols],
                 use_container_width=True,
                 hide_index=True,
@@ -5670,7 +5692,7 @@ def render_nf_treatment_center() -> None:
             priority_view["prioridade_manual"] = False
 
         with st.form("priority_selection_form"):
-            priority_editor = st.data_editor(
+            priority_editor = _setta_data_editor(
                 priority_view,
                 use_container_width=True,
                 hide_index=True,
@@ -5746,7 +5768,7 @@ def render_nf_treatment_center() -> None:
                 f"{priority} em prioridade."
             )
             with st.expander("PRÉVIA FINAL DOS NOMES", expanded=False):
-                st.dataframe(
+                _setta_dataframe(
                     merged[
                         [
                             "arquivo_original",
@@ -5955,7 +5977,7 @@ def render_mrp_missing_pre_treatments() -> None:
         bool(base_missing_select_all),
     )
 
-    edited = st.data_editor(
+    edited = _setta_data_editor(
         view,
         use_container_width=True,
         hide_index=True,
@@ -6610,7 +6632,7 @@ def render_cte_linking_stage() -> None:
             for item in links
         ])
         st.success(f"{len(links)} CT-e(s) vinculado(s) e DACTE(s) gerado(s).")
-        st.dataframe(
+        _setta_dataframe(
             view,
             use_container_width=True,
             hide_index=True,
@@ -6646,7 +6668,7 @@ def render_cte_linking_stage() -> None:
         st.error(
             f"{len(rejected)} CT-e(s) vinculados ao lote precisam de atenção antes da geração final."
         )
-        st.dataframe(
+        _setta_dataframe(
             pd.DataFrame(rejected),
             use_container_width=True,
             hide_index=True,
@@ -7539,7 +7561,7 @@ def render_document_linking_stage() -> None:
             })
 
         st.markdown("#### NFs VINCULADAS")
-        st.dataframe(
+        _setta_dataframe(
             pd.DataFrame(summary_rows),
             use_container_width=True,
             hide_index=True,
@@ -7587,7 +7609,7 @@ def render_document_linking_stage() -> None:
                     ]
                     if col in pending.columns
                 ]
-                treatment_editor = st.data_editor(
+                treatment_editor = _setta_data_editor(
                     pending[treatment_cols],
                     use_container_width=True,
                     hide_index=True,
@@ -7722,7 +7744,7 @@ def render_document_linking_stage() -> None:
             expanded=False,
         ):
             exc_view = pd.DataFrame(exceptions)
-            st.dataframe(
+            _setta_dataframe(
                 exc_view[["arquivo", "tipo", "motivo"]],
                 use_container_width=True,
                 hide_index=True,
@@ -7883,7 +7905,7 @@ def render_ready_file_stage() -> None:
         ]
         if col in merged.columns
     ]
-    st.dataframe(
+    _setta_dataframe(
         merged[summary_cols],
         use_container_width=True,
         hide_index=True,
@@ -8554,7 +8576,7 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
             f"{len(send_view)}_{send_id_signature}"
         )
         with st.form("send_confirmation_form"):
-            send_editor = st.data_editor(
+            send_editor = _setta_data_editor(
                 send_view,
                 use_container_width=True,
                 hide_index=True,
@@ -9691,7 +9713,7 @@ if page == "Dashboard":
 
         table = table.fillna("NÃO INFORMADO").replace("", "NÃO INFORMADO")
 
-        st.dataframe(
+        _setta_dataframe(
             table.drop(columns=["id"], errors="ignore"),
             use_container_width=True,
             hide_index=True,
@@ -10224,7 +10246,7 @@ elif page == "Pendências":
                 "prioridade",
             ]
 
-            pending_editor = st.data_editor(
+            pending_editor = _setta_data_editor(
                 editor_view[table_cols],
                 use_container_width=True,
                 hide_index=True,
@@ -10486,7 +10508,7 @@ elif page == "Pendências":
                     ]
                     if col in _missing_stage1.columns
                 ]
-                st.dataframe(
+                _setta_dataframe(
                     _missing_stage1[_missing_cols],
                     use_container_width=True,
                     hide_index=True,
