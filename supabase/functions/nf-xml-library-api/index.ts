@@ -248,18 +248,27 @@ Deno.serve(async(req)=>{
   }
   if(action==="match"){
    const items=array(payload.nfs).slice(0,500);
-   const normalized=items.map((i:any)=>({numero:fiscalNumber(i.numero),cnpj:digits(i.cnpj),chave:digits(i.chave)}))
-    .filter((i:any)=>i.numero!=="0"&&(i.cnpj.length===14||i.chave.length===44));
+   const normalized=items.map((i:any)=>({numero:fiscalNumber(i.numero),cnpj:digits(i.cnpj),chave:digits(i.chave),fornecedor:trim(i.fornecedor).slice(0,250)}))
+    .filter((i:any)=>i.numero!=="0"&&(i.cnpj.length===14||i.chave.length===44||i.fornecedor.length>0));
    if(!normalized.length)return json({ok:true,data:{nfe:[],cte:[],nao_encontradas:[]}});
    const nums=[...new Set(normalized.map((x:any)=>x.numero))];
    const {data:docs,error:de}=await api.from("nf_xml_documentos")
     .select("id,tipo,chave,numero,cnpj_emitente,refs_nfe,arquivo_nome")
     .eq("tipo","NFE").in("numero",nums).limit(2000);
    if(de)return fail("FALHA_BUSCA_NFE",500);
-   const selected:any[]=[],missing:string[]=[];
+   const selected:any[]=[],missing:string[]=[],candidatosSemCnpj:any[]=[];
    for(const item of normalized){
-    const matches=(docs||[]).filter((r:any)=>r.numero===item.numero &&
-      (item.chave.length===44?r.chave===item.chave:r.cnpj_emitente===item.cnpj));
+    const numberMatches=(docs||[]).filter((r:any)=>r.numero===item.numero);
+    // Sem CNPJ e sem chave: só retorna candidatos inequívocos, sem validar.
+    // A confirmação pelo emitente do XML é obrigatória no aplicativo.
+    if(item.chave.length!==44&&item.cnpj.length!==14){
+     if(item.fornecedor&&numberMatches.length===1){
+      candidatosSemCnpj.push({...numberMatches[0],fornecedor_referencia:item.fornecedor});
+     }else missing.push(item.numero+(numberMatches.length>1?" (AMBÍGUA)":" (SEM CNPJ)"));
+     continue;
+    }
+    const matches=numberMatches.filter((r:any)=>
+      item.chave.length===44?r.chave===item.chave:r.cnpj_emitente===item.cnpj);
     if(matches.length===1){
      if(!selected.some(x=>x.id===matches[0].id))selected.push(matches[0]);
     }else missing.push(item.numero+(matches.length>1?" (AMBÍGUA)":""));
@@ -273,7 +282,7 @@ Deno.serve(async(req)=>{
     if(ce)return fail("FALHA_BUSCA_CTE",500);
     linkedCte=(cte||[]).filter((x:any)=>array(x.refs_nfe).some((k:any)=>keys.has(k)));
    }
-   return json({ok:true,data:{nfe:selected,cte:linkedCte,nao_encontradas:missing}});
+   return json({ok:true,data:{nfe:selected,cte:linkedCte,nao_encontradas:missing,candidatos_sem_cnpj:candidatosSemCnpj}});
   }
   if(action==="download"){
    const id=trim(payload.id);
