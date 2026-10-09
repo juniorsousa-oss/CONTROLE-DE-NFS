@@ -66,8 +66,10 @@ ready=function("render_ready_file_stage")
 ready_lines=ast.get_source_segment(source,ready)
 assert ready_lines.index('CT-e VINCULADOS ÀS NFs DESTE LOTE') < ready_lines.index('"GERAR ARQUIVO PRONTO PARA IMPORTAÇÃO"')
 
-dashboard=source[source.index('        display_cols = [', source.index('st.markdown("#### FILTROS DE DOCUMENTOS ENVIADOS")'): ]
-dashboard_cols=dashboard.split('        table = view[display_cols]',1)[0]
+dash_marker=source.index('st.markdown("#### FILTROS DE DOCUMENTOS ENVIADOS")')
+dash_start=source.index('        display_cols = [',dash_marker)
+dash_end=source.index('        table = view[display_cols]',dash_start)
+dashboard_cols=source[dash_start:dash_end]
 for redundant in ['"status",','"prazo_lancamento",','"lancamento_verificado_em",']:
     assert redundant not in dashboard_cols, f"Coluna redundante reapareceu: {redundant}"
 
