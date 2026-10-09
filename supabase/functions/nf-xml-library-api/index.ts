@@ -16,7 +16,7 @@ const array=(x:unknown):any[]=>x===undefined||x===null?[]:Array.isArray(x)?x:[x]
 const errText=(e:unknown)=>e instanceof Error?e.message:String(e);
 const parser=new XMLParser({ignoreAttributes:false,attributeNamePrefix:"@",removeNSPrefix:true,parseTagValue:false,parseAttributeValue:false,trimValues:true,processEntities:false});
 const SCOPE="nf-xml-library";
-const MAX_BYTES=5242880;
+const MAX_BYTES=4194304;
 
 function classify(xml:Uint8Array){
  const source=new TextDecoder("utf-8",{fatal:true}).decode(xml);
@@ -141,7 +141,7 @@ Deno.serve(async(req)=>{
    if(!raw||raw.length>7500000)return fail("ARQUIVO_ACIMA_DO_LIMITE");
    let bytes:Uint8Array;
    try{bytes=Uint8Array.from(atob(raw),c=>c.charCodeAt(0))}catch{return fail("XML_BASE64_INVALIDO")}
-   if(!bytes.length||bytes.length>MAX_BYTES)return fail("ARQUIVO_ACIMA_DE_5_MB");
+   if(!bytes.length||bytes.length>MAX_BYTES)return fail("ARQUIVO_ACIMA_DE_4_MB");
    let info:ReturnType<typeof classify>;
    try{info=classify(bytes)}catch(e){
     const message=errText(e).slice(0,300);
