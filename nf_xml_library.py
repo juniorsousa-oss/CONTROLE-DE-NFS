@@ -10,6 +10,7 @@ import hashlib
 import io
 import re
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from pathlib import PurePosixPath
 
@@ -134,32 +135,159 @@ def _read_xml_uploads(uploaded):
         if fingerprint not in seen:
             seen.add(fingerprint)
             unique.append((name,raw))
+        else:
+            errors.append(f"DUPLICADO NA CARGA | {name}: conteúdo repetido dentro da seleção.")
     return unique,errors
 
 
-def _make_report(uploaded:list):
-    records=[]
-    files,errors=_read_xml_uploads(uploaded)
-    records.extend({"ARQUIVO":"—","RESULTADO":"INVÁLIDO","INFORMAÇÃO":err} for err in errors)
-    if not files:return pd.DataFrame(records)
-    progress=st.progress(0,text="Importando documentos fiscais na biblioteca privada...")
-    for ix,(filename,raw) in enumerate(files,1):
-        try:
-            result=library_api("ingest",{
-                "filename":filename,
-                "raw_base64":base64.b64encode(raw).decode("ascii"),
-            },timeout=90)
-            records.append({
-                "ARQUIVO":filename,
-                "RESULTADO":str(result.get("resultado") or "?"),
-                "INFORMAÇÃO":str(result.get("chave") or ""),
-            })
-        except Exception as exc:
-            records.append({"ARQUIVO":filename,"RESULTADO":"ERRO","INFORMAÇÃO":str(exc)})
-        progress.progress(ix/len(files),text=f"Importando {ix} de {len(files)}...")
-    progress.empty()
-    return pd.DataFrame(records)
+def _fiscal_key(raw: bytes) -> str:
+    """Extrai somente a chave fiscal para pré-consulta; validação completa fica na API."""
+    for tag, prefix, model in ((b"infNFe", b"NFe", b"55"), (b"infCte", b"CTe", b"57")):
+        # O atributo Id pode estar em qualquer posição, com quebra de linha.
+        pattern = (
+            rb"<(?:[A-Za-z_][\w.-]*:)?" + tag +
+            rb"\b[^>]{0,1200}?\bId\s*=\s*['\"]" + prefix +
+            rb"([0-9]{44})['\"]"
+        )
+        match = re.search(pattern, raw)
+        if match and match.group(1)[20:22] == model:
+            return match.group(1).decode("ascii")
+    return ""
 
+
+def _preflight_files(files):
+    """Consulta por chave e hash sem transmitir bytes de XML ao Supabase."""
+    hashed = [
+        {"filename": filename, "raw": raw, "sha256": hashlib.sha256(raw).hexdigest(),
+         "chave": _fiscal_key(raw)}
+        for filename, raw in files
+    ]
+    by_key = {}
+    for item in hashed:
+        if item["chave"]:
+            by_key.setdefault(item["chave"], []).append(item)
+
+    # Chave igual com conteúdos diferentes na MESMA carga exige revisão,
+    # independentemente do que já exista na biblioteca.
+    conflicts = {
+        key for key,group in by_key.items()
+        if len({entry["sha256"] for entry in group}) > 1
+    }
+    candidates = [item for item in hashed if item["chave"] and item["chave"] not in conflicts]
+    requested = [
+        {"chave": item["chave"], "sha256": item["sha256"]}
+        for item in candidates
+    ]
+    states = {}
+    for start in range(0, len(requested), 200):
+        batch = requested[start:start+200]
+        response = library_api("check_existing", {"items": batch}, timeout=60)
+        for state in response.get("results") or []:
+            if state.get("status") not in ("NOVO","DUPLICADO","CONFLITO"):
+                raise RuntimeError("A biblioteca retornou um estado de conferência desconhecido.")
+            states[str(state["chave"])] = str(state["status"])
+        if any(item["chave"] not in states for item in batch):
+            raise RuntimeError("Resposta incompleta da biblioteca ao conferir as chaves.")
+
+    uploads,results = [],[]
+    for item in hashed:
+        filename,key=item["filename"],item["chave"]
+        if key in conflicts:
+            results.append({"ARQUIVO":filename,"RESULTADO":"CONFLITO",
+                            "INFORMAÇÃO":f"Chave {key} com arquivos diferentes na mesma carga. Revisão necessária."})
+        elif key and states.get(key) in ("DUPLICADO","CONFLITO"):
+            status=states[key]
+            results.append({"ARQUIVO":filename,"RESULTADO":status,
+                            "INFORMAÇÃO":key if status=="DUPLICADO"
+                            else f"Chave {key}: biblioteca já possui conteúdo diferente."})
+        else:
+            uploads.append(item)
+    return uploads,results
+
+
+def _upload_new_xml(item:dict,url:str,headers:dict,token:str):
+    """Thread sem chamadas ao Streamlit; só a API controla acesso e duplicidade."""
+    filename=item["filename"]
+    try:
+        raw=base64.b64encode(item["raw"]).decode("ascii")
+        response=requests.post(
+            url,headers=headers,
+            json={"action":"ingest","payload":{
+                "token":token,"filename":filename,"raw_base64":raw,
+            }},
+            timeout=(10,90),
+        )
+        try: result=response.json()
+        except ValueError:
+            raise RuntimeError(f"Resposta inválida do servidor (HTTP {response.status_code})")
+        if not response.ok or not result.get("ok"):
+            raise RuntimeError(str(result.get("error") or f"HTTP {response.status_code}"))
+        data=result.get("data") or {}
+        return {
+            "ARQUIVO":filename,"RESULTADO":str(data.get("resultado") or "ERRO"),
+            "INFORMAÇÃO":str(data.get("chave") or ""),
+        }
+    except Exception as exc:
+        return {"ARQUIVO":filename,"RESULTADO":"ERRO","INFORMAÇÃO":str(exc)[:300]}
+
+
+def _make_report(uploaded:list):
+    files,errors=_read_xml_uploads(uploaded)
+    records=[]
+    for error in errors:
+        duplicate=error.startswith("DUPLICADO NA CARGA |")
+        records.append({
+            "ARQUIVO":"—","RESULTADO":"DUPLICADO" if duplicate else "INVÁLIDO",
+            "INFORMAÇÃO":error.replace("DUPLICADO NA CARGA | ",""),
+        })
+    if not files:
+        return pd.DataFrame(records,columns=["ARQUIVO","RESULTADO","INFORMAÇÃO"])
+
+    with st.spinner(f"Conferindo {len(files)} XMLs na biblioteca antes do envio..."):
+        try:
+            to_upload,checked=_preflight_files(files)
+        except Exception as exc:
+            records.append({
+                "ARQUIVO":"—","RESULTADO":"ERRO",
+                "INFORMAÇÃO":f"Conferência prévia indisponível: {exc}. Nenhum XML foi enviado.",
+            })
+            return pd.DataFrame(records,columns=["ARQUIVO","RESULTADO","INFORMAÇÃO"])
+    records.extend(checked)
+
+    st.caption(
+        f"CONFERÊNCIA PRÉVIA · {len(files)} arquivos únicos · "
+        f"{len(checked)} já existentes/conflitantes · "
+        f"{len(to_upload)} para envio"
+    )
+    if not to_upload:
+        return pd.DataFrame(records,columns=["ARQUIVO","RESULTADO","INFORMAÇÃO"])
+
+    # Credenciais e URL são obtidas na thread principal; workers não acessam
+    # st.session_state nem st.secrets, preservando o contexto do Streamlit.
+    token=_token()
+    url=f"{db.supabase_url().rstrip('/')}/functions/v1/nf-xml-library-api"
+    key=db.supabase_key()
+    headers={
+        "apikey":key,"Authorization":f"Bearer {key}",
+        "Content-Type":"application/json",
+    }
+    progress=st.progress(0,text=f"Enviando somente os {len(to_upload)} XMLs novos...")
+    completed=0
+    with ThreadPoolExecutor(max_workers=min(5,len(to_upload))) as executor:
+        futures=[
+            executor.submit(_upload_new_xml,item,url,headers,token)
+            for item in to_upload
+        ]
+        for future in as_completed(futures):
+            records.append(future.result())
+            completed+=1
+            progress.progress(
+                completed/len(to_upload),
+                text=f"Enviados {completed}/{len(to_upload)} · "
+                     f"{len(files)-len(to_upload)} ignorados na pré-consulta",
+            )
+    progress.empty()
+    return pd.DataFrame(records,columns=["ARQUIVO","RESULTADO","INFORMAÇÃO"])
 
 def render_page():
     st.markdown("## BIBLIOTECA DE XMLs")
@@ -169,7 +297,7 @@ def render_page():
     tab_upload,tab_documents,tab_access=st.tabs(["IMPORTAR XMLs","DOCUMENTOS ARMAZENADOS","PERMISSÕES"])
     with tab_upload:
         st.markdown("#### IMPORTAR PASTA OU ZIP")
-        st.caption("Selecione vários XMLs de uma só vez ou envie um arquivo ZIP contendo XMLs. Arquivos duplicados não são substituídos; versões conflitantes exigem análise.")
+        st.caption("Selecione vários XMLs ou um ZIP. O sistema confere as chaves fiscais primeiro e envia somente arquivos novos. Cargas repetidas não substituem documentos já armazenados.")
         with st.form("nf_xml_library_import_form",clear_on_submit=True):
             uploads=st.file_uploader(
                 "XMLs NF-e / CT-e ou ZIP",type=["xml","zip"],
@@ -187,7 +315,7 @@ def render_page():
         if isinstance(report,pd.DataFrame) and not report.empty:
             counts=report["RESULTADO"].value_counts().to_dict()
             cols=st.columns(4)
-            for c,(key,title) in zip(cols,[("INCLUIDO","INCLUÍDOS"),("DUPLICADO","DUPLICADOS"),("CONFLITO","CONFLITOS"),("ERRO","ERROS")]):
+            for c,(key,title) in zip(cols,[("INCLUIDO","INCLUÍDOS"),("DUPLICADO","IGNORADOS · JÁ EXISTEM"),("CONFLITO","CONFLITOS"),("ERRO","FALHAS")]):
                 c.metric(title,int(counts.get(key,0)))
             st.dataframe(report,hide_index=True,use_container_width=True,height=min(500,95+35*len(report)))
             st.download_button("EXPORTAR RELATÓRIO DE IMPORTAÇÃO",report.to_csv(index=False,sep=";").encode("utf-8-sig"),"biblioteca_xml_importacao.csv","text/csv",use_container_width=True)
