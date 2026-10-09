@@ -6001,70 +6001,71 @@ def render_mrp_missing_pre_treatments() -> None:
         bool(base_missing_select_all),
     )
 
-    edited = _setta_data_editor(
-        view,
-        use_container_width=True,
-        hide_index=True,
-        disabled=[
-            col for col in view.columns
-            if col not in {"Selecionar", "recebedor"}
-        ],
-        key="base_missing_mrp_editor",
-        column_config={
-            "_mrp_key": None,
-            "Selecionar": st.column_config.CheckboxColumn("SELECIONAR"),
-            "data_pre_nota": st.column_config.DateColumn(
-                "DATA",
-                format="DD/MM/YYYY",
-            ),
-            "numero_nf": "NF",
-            "cnpj": "CNPJ",
-            "fornecedor": st.column_config.TextColumn(
-                "FORNECEDOR",
-                width="large",
-            ),
-            "recebedor": st.column_config.TextColumn(
-                "RECEBEDOR",
-                width="medium",
-                help="Obrigatório para adicionar a NF ao fluxo.",
-            ),
-            "prioridade": "PRIORIDADE",
-            "data_cm": st.column_config.DateColumn(
-                "DATA CM",
-                format="DD/MM/YYYY",
-            ),
-            "situacao_vinculo": st.column_config.TextColumn(
-                "SITUAÇÃO",
-                width="large",
-            ),
-            "score_fornecedor": st.column_config.NumberColumn(
-                "ADERÊNCIA FORNECEDOR",
-                format="%d%%",
-            ),
-        },
-    )
+    with st.form("missing_mrp_protheus_treat_form"):
+        edited = _setta_data_editor(
+            view,
+            use_container_width=True,
+            hide_index=True,
+            disabled=[
+                col for col in view.columns
+                if col not in {"Selecionar", "recebedor"}
+            ],
+            key=f"base_missing_mrp_editor_{int(bool(base_missing_select_all))}",
+            column_config={
+                "_mrp_key": None,
+                "Selecionar": st.column_config.CheckboxColumn("SELECIONAR"),
+                "data_pre_nota": st.column_config.DateColumn(
+                    "DATA",
+                    format="DD/MM/YYYY",
+                ),
+                "numero_nf": "NF",
+                "cnpj": "CNPJ",
+                "fornecedor": st.column_config.TextColumn(
+                    "FORNECEDOR",
+                    width="large",
+                ),
+                "recebedor": st.column_config.TextColumn(
+                    "RECEBEDOR",
+                    width="medium",
+                    help="Obrigatório para adicionar a NF ao fluxo.",
+                ),
+                "prioridade": "PRIORIDADE",
+                "data_cm": st.column_config.DateColumn(
+                    "DATA CM",
+                    format="DD/MM/YYYY",
+                ),
+                "situacao_vinculo": st.column_config.TextColumn(
+                    "SITUAÇÃO",
+                    width="large",
+                ),
+                "score_fornecedor": st.column_config.NumberColumn(
+                    "ADERÊNCIA FORNECEDOR",
+                    format="%d%%",
+                ),
+            },
+        )
 
-    selected = edited[
-        edited["Selecionar"].fillna(False).astype(bool)
-    ].copy()
+        selected = edited[
+            edited["Selecionar"].fillna(False).astype(bool)
+        ].copy()
 
-    action = st.selectbox(
-        "TRATATIVA",
-        [
-            "Escolha uma ação",
-            "Adicionar às Pré-notas pendentes",
-            "Desconsiderar do cálculo atual",
-        ],
-        key="base_missing_mrp_action",
-    )
+        action = st.selectbox(
+            "TRATATIVA",
+            [
+                "Escolha uma ação",
+                "Adicionar às Pré-notas pendentes",
+                "Desconsiderar do cálculo atual",
+            ],
+            key="base_missing_mrp_action",
+        )
 
-    if st.button(
-        "APLICAR TRATATIVA",
-        type="primary",
-        use_container_width=True,
-        disabled=selected.empty or action == "Escolha uma ação",
-        key="apply_base_missing_mrp",
-    ):
+        submit_mrp_treatment=st.form_submit_button(
+            "APLICAR TRATATIVA",
+            type="primary",use_container_width=True,
+            disabled=selected.empty or action == "Escolha uma ação",
+        )
+
+    if submit_mrp_treatment:
         if action == "Adicionar às Pré-notas pendentes":
             missing_receiver = selected[
                 selected["recebedor"]
@@ -8890,7 +8891,7 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
 
                     # Só reiniciar quando TODOS os documentos deste lote
                     # tiverem envio confirmado, preservando envios parciais.
-                    if updated_count and len(set(selected_send_ids)) >= len(awaiting_send):
+                    if updated_count == len(set(selected_send_ids)) == len(awaiting_send):
                         _reset_nf_session_flow()
                         set_flash(
                             "_flash_nf","success",
@@ -8898,8 +8899,8 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
                             "Fluxo reiniciado para as próximas pré-notas.",
                         )
                     else:
-                        st.session_state["_flash_nf"] = (
-                            "success",
+                        set_flash(
+                            "_flash_nf","info",
                             f"{updated_count} documento(s) enviados. "
                             "Ainda há documentos aguardando confirmação.",
                         )
