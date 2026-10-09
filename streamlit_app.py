@@ -7159,7 +7159,11 @@ def render_document_linking_stage() -> None:
         "DOCUMENTOS PRINCIPAIS: BIBLIOTECA XML"
     )
     start_search = st.button(
-        "INICIAR BUSCA DE DOCUMENTOS",
+        (
+            "RECONSULTAR DOCUMENTOS NO BANCO"
+            if st.session_state.get("nf_stage2_search_started")
+            else "INICIAR BUSCA DE DOCUMENTOS"
+        ),
         type="primary",
         use_container_width=True,
         key="nf_stage2_start_search",
@@ -7222,6 +7226,16 @@ def render_document_linking_stage() -> None:
                 f"{_library_stats.get('cte', 0)} CT-e · "
                 f"{_library_stats.get('missing', 0)} NF(s) não encontrada(s)"
             )
+            if _library_stats.get("pending_name"):
+                st.warning(
+                    f"{_library_stats['pending_name']} NF(s) com emitente "
+                    "não confirmado. Consulte ou faça conferência manual."
+                )
+            if _library_stats.get("download_errors"):
+                st.warning(
+                    f"{_library_stats['download_errors']} falha(s) de consulta/download. "
+                    "Clique em RECONSULTAR DOCUMENTOS NO BANCO para tentar novamente."
+                )
 
     documents_to_process = cached_documents
     # O botão VALIDAR só será liberado depois da análise deste lote.
@@ -7249,13 +7263,16 @@ def render_document_linking_stage() -> None:
             for item in cached_documents
         ]
 
-    process_documents = st.button(
-        "ANALISAR E VINCULAR DOCUMENTOS",
-        type="primary",
-        use_container_width=True,
-        disabled=not bool(documents_to_process),
-        key="process_fiscal_documents",
-    )
+    process_documents = False
+    if documents_to_process:
+        # Contingência: a busca automática já analisa os XMLs recuperados.
+        # Só exibir reanálise manual quando existirem documentos carregados.
+        process_documents = st.button(
+            "REANALISAR DOCUMENTOS CARREGADOS",
+            type="secondary",
+            use_container_width=True,
+            key="process_fiscal_documents",
+        )
     auto_reprocess = bool(
         documents_to_process
         and st.session_state.get("document_reprocess_needed")
