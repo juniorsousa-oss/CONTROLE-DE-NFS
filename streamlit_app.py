@@ -4288,12 +4288,34 @@ def _audit_selected_nf_batch(selected: pd.DataFrame, processed: pd.DataFrame) ->
     }
 
 
+def _selected_nf_selection_gaps() -> list[str]:
+    """Identifica NFs selecionadas que sumiram da base pendente entre etapas."""
+    active=set(st.session_state.get("nf_selected_flow_keys") or set())
+    base=current_pending_pre_notes()
+    available={
+        flow_nf_key(row)
+        for _,row in base.iterrows()
+        if flow_nf_key(row)
+    } if isinstance(base,pd.DataFrame) and not base.empty else set()
+    return sorted(active-available)
+
+
 def _show_nf_batch_audit(audit:dict) -> None:
     st.markdown("#### CONFERÊNCIA DO LOTE")
+    _inactive_keys=_selected_nf_selection_gaps()
     a,b,c=st.columns(3)
-    a.metric("NFs SELECIONADAS",audit["selecionadas"])
+    a.metric("NFs SELECIONADAS",audit["selecionadas"]+len(_inactive_keys))
     b.metric("NFs VINCULADAS",audit["vinculadas"])
-    c.metric("PENDENTES DE VÍNCULO",len(audit["faltantes"]))
+    c.metric("SEM VÍNCULO / FORA DA BASE",len(audit["faltantes"])+len(_inactive_keys))
+    if _inactive_keys:
+        st.error(
+            f"{len(_inactive_keys)} NF(s) selecionada(s) não estão mais na base "
+            "de pré-notas pendentes desta sessão. Revise o vínculo, o status "
+            "de envio e a gravação da inclusão manual."
+        )
+        with st.expander("VER SELEÇÕES AUSENTES DA BASE",expanded=False):
+            st.dataframe(pd.DataFrame({"CHAVE DA SELEÇÃO":_inactive_keys}),
+                hide_index=True,use_container_width=True)
     if audit["faltantes"]:
         st.warning(
             f"{len(audit['faltantes'])} NF(s) selecionada(s) ainda "
@@ -8033,6 +8055,7 @@ def render_ready_file_stage() -> None:
         _lot_audit["selecionadas"] == 0
         or _lot_audit["faltantes"]
         or _lot_audit["extras"]
+        or _selected_nf_selection_gaps()
     ):
         st.error(
             "O LOTE NÃO ESTÁ COMPLETO. A Etapa 3 foi bloqueada "
@@ -10260,6 +10283,7 @@ elif page == "Pendências":
                 _nf_batch_audit["selecionadas"] > 0
                 and not _nf_batch_audit["faltantes"]
                 and not _nf_batch_audit["extras"]
+                and not _selected_nf_selection_gaps()
                 and st.session_state.get("nf_documents_analyzed_signature")
                 and st.session_state.get("nf_documents_analyzed_signature")
                 == st.session_state.get("nf_documents_current_signature")
