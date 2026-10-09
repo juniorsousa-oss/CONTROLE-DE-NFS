@@ -4220,7 +4220,11 @@ def _reset_nf_session_flow() -> None:
 
 
 def _set_nf_flow_stage(stage: int) -> None:
-    st.session_state.nf_flow_stage = max(1, min(3, int(stage)))
+    target = max(1, min(3, int(stage)))
+    st.session_state.nf_flow_stage = target
+    if target != 3:
+        st.session_state.pop("_nf_send_confirmation_batch", None)
+        st.session_state.pop("nf_remote_confirm_sent_files", None)
 
 
 def _render_nf_flow_header(stage: int) -> None:
