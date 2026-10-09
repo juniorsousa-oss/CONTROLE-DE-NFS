@@ -508,6 +508,10 @@ def init():
         "last_generation_audit": {},
         "nf_flow_stage": 1,
         "nf_selected_flow_keys": set(),
+        "nf_stage1_selection": None,
+        "nf_stage1_selection_draft": None,
+        "nf_stage1_selection_saved": False,
+        "_nf_stage1_editor_rev": 0,
         "document_ignored_items": [],
         "danfe_outputs": {},
         "danfe_results": [],
@@ -4197,6 +4201,10 @@ def _reset_nf_session_flow() -> None:
     st.session_state.document_reprocess_needed = False
     st.session_state.last_generation_audit = {}
     st.session_state.nf_selected_flow_keys = set()
+    st.session_state.nf_stage1_selection = None
+    st.session_state.nf_stage1_selection_draft = None
+    st.session_state.nf_stage1_selection_saved = False
+    st.session_state["_nf_stage1_editor_rev"] = int(st.session_state.get("_nf_stage1_editor_rev") or 0) + 1
     st.session_state.pop("pending_fiscal_documents", None)
     st.session_state.pop("pending_pre_notes_editor", None)
     st.session_state.pop("linked_documents_to_delete", None)
@@ -10246,7 +10254,15 @@ elif page == "Pendências":
                 flow_nf_key,
                 axis=1,
             )
-            editor_view.insert(0, "Selecionar", True)
+            # A seleção é um rascunho; só fica efetiva após SALVAR DADOS.
+            current_keys = set(editor_view["_flow_key"].astype(str))
+            draft = st.session_state.get("nf_stage1_selection_draft")
+            saved = st.session_state.get("nf_stage1_selection")
+            chosen = (
+                current_keys if saved is None and draft is None
+                else set(draft if draft is not None else saved or set()) & current_keys
+            )
+            editor_view.insert(0, "Selecionar", editor_view["_flow_key"].isin(chosen))
 
             table_cols = [
                 "Selecionar",
@@ -10258,64 +10274,67 @@ elif page == "Pendências":
                 "prioridade",
             ]
 
-            pending_editor = _setta_data_editor(
-                editor_view[table_cols],
-                use_container_width=True,
-                hide_index=True,
-                num_rows="fixed",
-                key="pending_pre_notes_editor",
-                disabled=[
-                    col
-                    for col in table_cols
-                    if col not in {
-                        "Selecionar",
-                        "recebedor",
-                        "data_pre_nota",
-                    }
-                ],
-                column_config={
-                    "Selecionar": st.column_config.CheckboxColumn(
-                        "SELECIONAR",
-                        width="small",
-                    ),
-                    "_flow_key": None,
-                    "data_pre_nota": st.column_config.DateColumn(
-                        "DATA DE RECEBIMENTO",
-                        format="DD/MM/YYYY",
-                    ),
-                    "numero_nf": "NF",
-                    "fornecedor": st.column_config.TextColumn(
-                        "FORNECEDOR",
-                        width="large",
-                    ),
-                    "recebedor": st.column_config.TextColumn(
-                        "RECEBEDOR",
-                        width="medium",
-                    ),
-                    "prioridade": "PRIORIDADE MRP",
-                },
-            )
+            with st.form("nf_stage1_pending_selection_form",clear_on_submit=False):
+                pending_editor = _setta_data_editor(
+                    editor_view[table_cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    num_rows="fixed",
+                    key=f"pending_pre_notes_editor_{int(st.session_state.get('_nf_stage1_editor_rev') or 0)}",
+                    disabled=[
+                        col
+                        for col in table_cols
+                        if col not in {
+                            "Selecionar",
+                            "recebedor",
+                            "data_pre_nota",
+                        }
+                    ],
+                    column_config={
+                        "Selecionar": st.column_config.CheckboxColumn(
+                            "SELECIONAR",
+                            width="small",
+                        ),
+                        "_flow_key": None,
+                        "data_pre_nota": st.column_config.DateColumn(
+                            "DATA DE RECEBIMENTO",
+                            format="DD/MM/YYYY",
+                        ),
+                        "numero_nf": "NF",
+                        "fornecedor": st.column_config.TextColumn(
+                            "FORNECEDOR",
+                            width="large",
+                        ),
+                        "recebedor": st.column_config.TextColumn(
+                            "RECEBEDOR",
+                            width="medium",
+                        ),
+                        "prioridade": "PRIORIDADE MRP",
+                    },
+                )
 
-            selected_pending = pending_editor[
-                pending_editor["Selecionar"].fillna(False).astype(bool)
-            ].copy()
-            st.caption(
-                f"SELECIONADAS: {len(selected_pending)} X {len(editor_view)}"
-            )
 
-            a1, a2 = st.columns([1, 1])
-            save_receivers = a1.button(
-                "SALVAR DADOS DE RECEBIMENTO",
-                use_container_width=True,
-                key="save_pending_receivers",
-            )
-            exclude_selected = a2.button(
-                "EXCLUIR SELECIONADAS DO FLUXO",
-                type="primary",
-                use_container_width=True,
-                disabled=selected_pending.empty,
-                key="exclude_selected_pending",
-            )
+                selected_pending = pending_editor[
+                    pending_editor["Selecionar"].fillna(False).astype(bool)
+                ].copy()
+                st.caption(f"SELECIONADAS: {len(selected_pending)} DE {len(editor_view)}")
+                s1,s2,s3,s4 = st.columns([2,1,1,2])
+                save_receivers = s1.form_submit_button(
+                    "SALVAR DADOS E SELEÇÃO",type="primary",use_container_width=True,
+                )
+                mark_all_stage1 = s2.form_submit_button("MARCAR TODAS",use_container_width=True)
+                unmark_all_stage1 = s3.form_submit_button("DESMARCAR TODAS",use_container_width=True)
+                exclude_selected = s4.form_submit_button(
+                    "EXCLUIR SELECIONADAS DO FLUXO",use_container_width=True,
+                )
+            if mark_all_stage1 or unmark_all_stage1:
+                st.session_state.nf_stage1_selection_draft = (
+                    set(current_keys) if mark_all_stage1 else set()
+                )
+                st.session_state["_nf_stage1_editor_rev"] += 1
+                st.rerun()
+            if not (save_receivers or exclude_selected):
+                st.caption("ALTERAÇÕES NA TABELA SÓ SÃO APLICADAS AO CLICAR EM SALVAR DADOS E SELEÇÃO.")
 
             if save_receivers:
                 receiver_map = {
@@ -10354,6 +10373,13 @@ elif page == "Pendências":
                 persist_pre_notes_current(
                     "Ajuste manual de dados de recebimento"
                 )
+                st.session_state.nf_stage1_selection = set(
+                    selected_pending["_flow_key"].fillna("").astype(str).tolist()
+                )
+                st.session_state.nf_selected_flow_keys = set(st.session_state.nf_stage1_selection)
+                st.session_state.nf_stage1_selection_draft = None
+                st.session_state.nf_stage1_selection_saved = True
+                st.session_state["_nf_stage1_editor_rev"] += 1
 
                 analysis = st.session_state.analysis.copy()
                 if isinstance(analysis, pd.DataFrame) and not analysis.empty:
@@ -10561,20 +10587,12 @@ elif page == "Pendências":
             use_container_width=True,
             disabled=(
                 not st.session_state.get("base_analysis_ready")
-                or selected_pending.empty
+                or not st.session_state.get("nf_stage1_selection_saved")
+                or not st.session_state.get("nf_stage1_selection")
             ),
             key="flow_to_documents",
         ):
-            _new_selection = set(
-                selected_pending.get(
-                    "_flow_key",
-                    pd.Series(dtype=str),
-                )
-                .fillna("")
-                .astype(str)
-                .loc[lambda values: values.ne("")]
-                .tolist()
-            )
+            _new_selection = set(st.session_state.get("nf_stage1_selection") or set())
             _old_selection = set(
                 st.session_state.get("nf_selected_flow_keys") or set()
             )
