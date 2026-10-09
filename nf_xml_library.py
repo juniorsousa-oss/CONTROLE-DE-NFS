@@ -321,31 +321,122 @@ def render_page():
             st.download_button("EXPORTAR RELATÓRIO DE IMPORTAÇÃO",report.to_csv(index=False,sep=";").encode("utf-8-sig"),"biblioteca_xml_importacao.csv","text/csv",use_container_width=True)
 
     with tab_documents:
-        if st.button("ATUALIZAR CONSULTA",key="nf_xml_refresh_list"):
+        # O índice antigo retornava somente 300 registros e fazia parecer que
+        # a biblioteca não possuía todos os XMLs. Totais agora são globais e
+        # a pesquisa/paginação são executadas diretamente no banco.
+        if "nf_xml_doc_page" not in st.session_state:
+            st.session_state.nf_xml_doc_page=1
+        left,right=st.columns([3,1])
+        left.markdown("#### ACERVO XML ARMAZENADO")
+        refresh=right.button(
+            "ATUALIZAR CONSULTA",key="nf_xml_refresh_list",use_container_width=True,
+        )
+        if refresh:
             st.session_state.pop("nf_xml_library_index",None)
+            st.session_state.pop("nf_xml_doc_request",None)
+
+        with st.form("nf_xml_search_catalog_form"):
+            search_col,type_col,button_col=st.columns([2.5,1,1])
+            typed_search=search_col.text_input(
+                "PESQUISAR NÚMERO, CHAVE, EMITENTE OU ARQUIVO",
+                value=str(st.session_state.get("nf_xml_doc_filter_search") or ""),
+                placeholder="Pesquisa em toda a biblioteca",
+            )
+            typed_type=type_col.selectbox(
+                "TIPO DE DOCUMENTO",["TODOS","NFE","CTE"],
+                index=["TODOS","NFE","CTE"].index(
+                    str(st.session_state.get("nf_xml_doc_filter_type") or "TODOS")
+                ),
+            )
+            search_now=button_col.form_submit_button(
+                "PESQUISAR",type="primary",use_container_width=True,
+            )
+        if search_now:
+            st.session_state.nf_xml_doc_filter_search=typed_search.strip()
+            st.session_state.nf_xml_doc_filter_type=typed_type
+            st.session_state.nf_xml_doc_page=1
+            st.session_state.pop("nf_xml_library_index",None)
+
+        search=str(st.session_state.get("nf_xml_doc_filter_search") or "")
+        kind=str(st.session_state.get("nf_xml_doc_filter_type") or "TODOS")
+        requested_page=int(st.session_state.get("nf_xml_doc_page") or 1)
+        request_signature=(requested_page,search,kind)
         try:
-            if "nf_xml_library_index" not in st.session_state:
-                st.session_state.nf_xml_library_index=library_api("list")
+            if (
+                st.session_state.get("nf_xml_doc_request")!=request_signature
+                or "nf_xml_library_index" not in st.session_state
+            ):
+                st.session_state.nf_xml_library_index=library_api("list",{
+                    "page":requested_page,
+                    "page_size":100,
+                    "search":search,
+                    "tipo":kind,
+                })
+                st.session_state.nf_xml_doc_request=request_signature
             index=st.session_state.nf_xml_library_index
             documents=index.get("documentos") or []
             imports=index.get("historico") or []
+            count=int(index.get("total") or 0)
+            nfe=int(index.get("total_nfe") or 0)
+            cte=int(index.get("total_cte") or 0)
+            filtered=int(index.get("filtered_total") or 0)
+            last_page=max(1,int(index.get("page_count") or 1))
+            displayed_page=int(index.get("page") or requested_page)
+            page_size=max(1,int(index.get("page_size") or 100))
             a,b,c=st.columns(3)
-            a.metric("DOCUMENTOS CONSULTADOS",len(documents))
-            b.metric("NF-e",sum(d.get("tipo")=="NFE" for d in documents))
-            c.metric("CT-e",sum(d.get("tipo")=="CTE" for d in documents))
-            query=st.text_input("PESQUISAR NÚMERO, CHAVE OU EMITENTE")
-            show=[d for d in documents if not query.strip() or query.lower().strip() in (
-                str(d.get("numero",""))+" "+str(d.get("chave",""))+" "+str(d.get("cnpj_emitente",""))+" "+str(d.get("arquivo_nome",""))
-            ).lower()]
-            if show:
-                data=pd.DataFrame(show)[["tipo","numero","chave","cnpj_emitente","cnpj_destinatario","arquivo_nome","origem","importado_em"]]
-                data.columns=["TIPO","NÚMERO","CHAVE","CNPJ EMITENTE","CNPJ DESTINATÁRIO","ARQUIVO","ORIGEM","IMPORTADO EM"]
-                st.dataframe(data,hide_index=True,use_container_width=True,height=min(500,95+35*len(data)))
-            else:st.info("Nenhum documento encontrado nesta consulta.")
+            a.metric("TOTAL DE XMLs NA BIBLIOTECA",count)
+            b.metric("NF-e ARMAZENADAS",nfe)
+            c.metric("CT-e ARMAZENADOS",cte)
+            if search or kind!="TODOS":
+                st.caption(f"FILTROS ATIVOS · {filtered} DOCUMENTOS ENCONTRADOS EM TODO O ACERVO")
+            first=(displayed_page-1)*page_size+1 if filtered else 0
+            last=min(displayed_page*page_size,filtered)
+            st.caption(
+                f"EXIBINDO {first} A {last} DE {filtered} · "
+                f"PÁGINA {displayed_page} DE {last_page}"
+            )
+            if documents:
+                data=pd.DataFrame(documents)[[
+                    "tipo","numero","chave","cnpj_emitente",
+                    "cnpj_destinatario","arquivo_nome","origem","importado_em"
+                ]]
+                data.columns=[
+                    "TIPO","NÚMERO","CHAVE","CNPJ EMITENTE",
+                    "CNPJ DESTINATÁRIO","ARQUIVO","ORIGEM","IMPORTADO EM"
+                ]
+                st.dataframe(
+                    data,hide_index=True,use_container_width=True,
+                    height=min(500,95+35*len(data)),
+                )
+            else:
+                st.info("Nenhum documento encontrado para os filtros selecionados.")
+
+            prev_col,page_col,next_col=st.columns([1,2,1])
+            if prev_col.button(
+                "PÁGINA ANTERIOR",key="nf_xml_doc_previous",
+                disabled=displayed_page<=1,use_container_width=True,
+            ):
+                st.session_state.nf_xml_doc_page=displayed_page-1
+                st.rerun()
+            page_col.markdown(
+                f"<div style='text-align:center;padding:10px'>"
+                f"PÁGINA {displayed_page} / {last_page}</div>",
+                unsafe_allow_html=True,
+            )
+            if next_col.button(
+                "PRÓXIMA PÁGINA",key="nf_xml_doc_next",
+                disabled=displayed_page>=last_page,use_container_width=True,
+            ):
+                st.session_state.nf_xml_doc_page=displayed_page+1
+                st.rerun()
             if imports:
                 with st.expander("ÚLTIMOS REGISTROS DE IMPORTAÇÃO"):
-                    st.dataframe(pd.DataFrame(imports),use_container_width=True,hide_index=True)
-        except Exception as exc:st.error("Erro na biblioteca: "+str(exc))
+                    st.dataframe(
+                        pd.DataFrame(imports),
+                        use_container_width=True,hide_index=True,
+                    )
+        except Exception as exc:
+            st.error("Erro ao consultar a biblioteca: "+str(exc))
 
     with tab_access:
         if _session().get("perfil")!="ADMIN":
