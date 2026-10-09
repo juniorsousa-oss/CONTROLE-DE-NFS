@@ -44,6 +44,13 @@ assert recovery_mark < action.col_offset+sum(1 for _ in []) or code.index(
     'db.restart_pending_process_records(_batch_ids)',recovery_mark
 ) < recovery_end
 
+assert 'key="flow_back_to_base_from_final"' in flow
+assert 'st.session_state.pop("_nf_send_confirmation_batch", None)' in code
+assert 'value=not bool(st.session_state.get("_nf_send_confirmation_batch"))' in code
+assert '"CONFIRMO QUE OS ARQUIVOS DESTE LOTE FORAM "' in code
+assert 'if confirm_send and not _confirm_sent_files:' in code
+assert 'if target != 3:' in code
+
 ready=next(
     node for node in tree.body
     if isinstance(node,ast.FunctionDef) and node.name=="render_ready_file_stage"
