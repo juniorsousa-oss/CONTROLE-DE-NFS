@@ -88,21 +88,45 @@ Deno.serve(async(req)=>{
    return json({ok:true,data:{token,expira_em:expires,nome:account.full_name,perfil:isAdmin?"ADMIN":permission.perfil}});
   }
   if(action==="logout"){
+   // Serviço do aplicativo: consulta/leitura de XMLs sem login humano, restrita
+  // às ações match/download. O token fica apenas no servidor Streamlit.
+  const serviceToken=trim(payload.service_token);
+  let user="",profile="";
+  if(serviceToken){
+   if(!["match","download"].includes(action))return fail("SERVICE_ACTION_DENIED",403);
+   if(serviceToken.length<50||serviceToken.length>200)return fail("SERVICE_TOKEN_INVALID",401);
+   const hash=Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(serviceToken)))
+   ).map(x=>x.toString(16).padStart(2,"0")).join("");
+   const {data:service,error:serviceError}=await api.from("nf_xml_app_tokens")
+    .select("token_sha256,ativo").eq("app_id","nfssetta-streamlit").maybeSingle();
+   if(serviceError||!service?.ativo)return fail("SERVICE_NOT_CONFIGURED",403);
+   // Comparação constante no tamanho e sem retorno de detalhes sensíveis.
+   const expected=trim(service.token_sha256);
+   let difference=hash.length^expected.length;
+   for(let i=0;i<64;i++)difference |= (hash.charCodeAt(i)||0)^(expected.charCodeAt(i)||0);
+   if(difference!==0)return fail("SERVICE_TOKEN_INVALID",401);
+   user="nfssetta-streamlit";
+   profile="SERVICO";
+  }else{
    const token=trim(payload.token);
-   if(token)await api.from("nf_xml_sessoes").delete().eq("token",token);
-   return json({ok:true,data:{logout:true}});
+   if(!/^[0-9a-f-]{36}$/i.test(token))return fail("SESSAO_NAO_IDENTIFICADA",401);
+   const {data:session,error:se}=await api.from("nf_xml_sessoes")
+    .select("user_id,expira_em").eq("token",token)
+    .gt("expira_em",new Date().toISOString()).maybeSingle();
+   if(se||!session)return fail("SESSAO_INVALIDA_OU_EXPIRADA",401);
+   const {data:account,error:ae}=await api.from("operahub_users")
+    .select("id,username,full_name,role,is_active")
+    .eq("id",session.user_id).maybeSingle();
+   if(ae||!account?.is_active)return fail("CONTA_INATIVA",403);
+   const admin=trim(account.role).toLowerCase()==="admin";
+   const {data:permission,error:pe}=await api.from("nf_xml_permissoes")
+    .select("perfil").eq("user_id",account.id).maybeSingle();
+   if(pe)return fail("ERRO_NAS_PERMISSOES",500);
+   if(!admin&&!permission)return fail("ACESSO_REVOGADO",403);
+   user=account.id;
+   profile=admin?"ADMIN":permission.perfil;
   }
-  const token=trim(payload.token);
-  if(!/^[0-9a-f-]{36}$/i.test(token))return fail("SESSAO_NAO_IDENTIFICADA",401);
-  const {data:session,error:se}=await api.from("nf_xml_sessoes").select("user_id,expira_em").eq("token",token).gt("expira_em",new Date().toISOString()).maybeSingle();
-  if(se||!session)return fail("SESSAO_INVALIDA_OU_EXPIRADA",401);
-  const {data:account,error:ae}=await api.from("operahub_users").select("id,username,full_name,role,is_active").eq("id",session.user_id).maybeSingle();
-  if(ae||!account?.is_active)return fail("CONTA_INATIVA",403);
-  const admin=trim(account.role).toLowerCase()==="admin";
-  const {data:permission,error:pe}=await api.from("nf_xml_permissoes").select("perfil").eq("user_id",account.id).maybeSingle();
-  if(pe)return fail("ERRO_NAS_PERMISSOES",500);
-  if(!admin&&!permission)return fail("ACESSO_REVOGADO",403);
-  const user=account.id,profile=admin?"ADMIN":permission.perfil;
   if(action==="whoami")return json({ok:true,data:{nome:account.full_name,perfil:profile}});
   if(action==="users"){
    if(profile!=="ADMIN")return fail("ADMIN_REQUIRED",403);
