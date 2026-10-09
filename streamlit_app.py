@@ -8034,11 +8034,22 @@ def render_ready_file_stage() -> None:
     frame = st.session_state.get("analysis")
     if not isinstance(frame, pd.DataFrame) or frame.empty:
         if not awaiting_remote.empty:
-            st.info(
-                "Este lote já foi gerado em outra sessão. "
-                "A etapa de confirmação de envio foi recuperada pelo banco."
+            st.warning(
+                "Somente os REGISTROS do lote foram recuperados do banco. "
+                "Os PDFs e ZIPs não estão disponíveis neste computador. "
+                "Não confirme envio de arquivos que não foram baixados e encaminhados."
             )
-            render_send_and_tracking_stage(current_records)
+            _selected_batch=str(
+                st.session_state.get("_nf_send_confirmation_batch") or ""
+            )
+            if _selected_batch and "lote_id" in awaiting_remote.columns:
+                awaiting_remote=awaiting_remote[
+                    awaiting_remote["lote_id"].fillna("").astype(str).eq(_selected_batch)
+                ].copy()
+            if awaiting_remote.empty:
+                st.warning("O lote selecionado não possui registros aguardando envio.")
+                return
+            render_send_and_tracking_stage(awaiting_remote)
             return
         st.warning(
             "Nenhuma NF validada está disponível. Volte à etapa de documentos."
@@ -10258,11 +10269,10 @@ elif page == "Pendências":
         st.session_state.base_analysis_ready = True
         st.session_state.base_analysis_at = now_local().isoformat(timespec="seconds")
 
-    # Se um lote foi gerado em outro computador e ainda não foi confirmado
-    # como enviado, o fluxo abre diretamente na etapa de envio.
+    # Registros no Supabase NÃO implicam que os PDFs/ZIPs estejam disponíveis:
+    # o banco guarda metadados, não os bytes. Nunca redirecionar à Etapa 3
+    # automaticamente por histórico de outra sessão.
     _awaiting_remote = _awaiting_send_records(pending_records)
-    if not _awaiting_remote.empty:
-        st.session_state.nf_flow_stage = 3
 
     try:
         _flow_stage = int(st.session_state.get("nf_flow_stage", 1))
@@ -10333,6 +10343,109 @@ elif page == "Pendências":
 
         render_ready_file_stage()
         st.stop()
+
+    # Recuperação orientada de lotes com metadados salvos, mas sem ZIP
+    # recuperável nesta sessão. A pessoa escolhe a ação; não há exclusão automática.
+    if not _awaiting_remote.empty:
+        st.warning(
+            f"EXISTEM {len(_awaiting_remote)} REGISTRO(S) COM GERAÇÃO INDICADA "
+            "NO BANCO, MAS AINDA SEM ENVIO CONFIRMADO. "
+            "ESTES REGISTROS NÃO GARANTEM QUE O ZIP TENHA SIDO BAIXADO. "
+            "A navegação foi liberada; os XMLs e os registros históricos permanecem preservados."
+        )
+        _pending_batches = _awaiting_remote.copy()
+        if "lote_id" not in _pending_batches.columns:
+            _pending_batches["lote_id"] = "SEM IDENTIFICAÇÃO"
+        _pending_batches["lote_id"] = (
+            _pending_batches["lote_id"].fillna("SEM IDENTIFICAÇÃO")
+            .astype(str).replace("", "SEM IDENTIFICAÇÃO")
+        )
+        with st.expander(
+            f"RECUPERAÇÃO DE LOTES NÃO ENVIADOS ({len(_awaiting_remote)} REGISTROS)",
+            expanded=True,
+        ):
+            _batch_options = {}
+            for _batch_id, _batch_group in _pending_batches.groupby("lote_id",sort=False):
+                _batch_options[f"{_batch_id} · {len(_batch_group)} DOCUMENTO(S)"] = (
+                    _batch_id,_batch_group
+                )
+            _batch_label=st.selectbox(
+                "LOTE PARA CONFERÊNCIA OU REPROCESSAMENTO",
+                list(_batch_options),
+                key="nf_recovery_batch_select",
+            )
+            _batch_id,_batch_group=_batch_options[_batch_label]
+            _view_cols=[
+                _c for _c in (
+                    "tipo_documento","numero_nf","numero_cte","fornecedor_padrao",
+                    "arquivo_final","status","pdf_criado_em"
+                ) if _c in _batch_group.columns
+            ]
+            _setta_dataframe(
+                _batch_group[_view_cols].copy(),
+                hide_index=True,use_container_width=True,height=300,
+            )
+            st.caption(
+                "A confirmação de envio deve ser usada SOMENTE quando os arquivos "
+                "tiverem sido realmente gerados, baixados e encaminhados. "
+                "Para refazer arquivos perdidos, reabra apenas o lote selecionado."
+            )
+            _confirm_col,_restart_col=st.columns(2)
+            if _confirm_col.button(
+                "CONFERIR ENVIO DO LOTE",
+                key="nf_recovery_open_send",use_container_width=True,
+            ):
+                st.session_state["_nf_send_confirmation_batch"]=_batch_id
+                _set_nf_flow_stage(3)
+                st.rerun()
+            _reopen = _restart_col.checkbox(
+                "AUTORIZO REABRIR ESTE LOTE",
+                key="nf_recovery_reopen_confirm",
+                help=(
+                    "Apaga SOMENTE os registros de geração não enviados "
+                    "deste lote para permitir refazer o processamento. "
+                    "Não apaga XMLs da biblioteca nem registros enviados."
+                ),
+            )
+            st.caption(
+                "REABRIR: remove do histórico operacional somente as linhas "
+                "REALIZADO/PDF CRIADO ainda sem envio do lote escolhido. "
+                "Essa ação exige sua confirmação e será registrada pela operação do banco."
+            )
+            if st.button(
+                "REABRIR LOTE PARA GERAR NOVAMENTE",
+                type="secondary",use_container_width=True,
+                disabled=not _reopen,key="nf_recovery_restart_batch",
+            ):
+                _batch_ids = (
+                    _batch_group["id"].dropna().astype(str).tolist()
+                    if "id" in _batch_group.columns else []
+                )
+                if not _batch_ids:
+                    st.error("Não foi possível identificar os registros a reabrir.")
+                elif not (SAVE_NF_HISTORY and db.configured()):
+                    st.error("A recuperação exige conexão com o banco de registros.")
+                else:
+                    try:
+                        _result = db.restart_pending_process_records(_batch_ids)
+                        _count=int((_result or {}).get("reiniciados") or 0)
+                        if _count != len(_batch_ids):
+                            st.error(
+                                f"Reabertos {_count} de {len(_batch_ids)} registros. "
+                                "Confira se outra sessão alterou o lote."
+                            )
+                        else:
+                            _invalidate_process_cache()
+                            _reset_nf_session_flow()
+                            set_flash(
+                                "_flash_nf","success",
+                                f"{_count} registro(s) não enviado(s) do lote "
+                                f"{_batch_id} reabertos. Selecione novamente as NFs "
+                                "e processe os XMLs na Etapa 2."
+                            )
+                            st.rerun()
+                    except Exception as exc:
+                        st.error(f"Não foi possível reabrir o lote: {exc}")
 
     pre_base = st.session_state.pre_notes.copy()
     pending_pre = current_pending_pre_notes()
