@@ -693,6 +693,25 @@ div[data-testid="stElementContainer"]:has(#nfs-component-style){
 .api-status-name{font-size:.92rem!important;font-weight:900!important;color:#111827!important;text-transform:uppercase!important}
 .api-status-filter{margin-top:.18rem!important;font-size:.7rem!important;color:#64748b!important;font-weight:700!important;text-transform:uppercase!important;letter-spacing:.025em!important}
 .api-status-badge{display:inline-flex!important;padding:.28rem .52rem!important;border-radius:999px!important;background:#dcfce7!important;color:#166534!important;font-size:.68rem!important;font-weight:900!important;letter-spacing:.035em!important}
+/* O menu SETTA reduz a área útil do Dashboard.
+   Impede que filtros e botões transbordem sobre as colunas ao abrir a lateral. */
+div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="stHorizontalBlock"]{
+  flex-wrap:wrap!important;
+  min-width:0!important;
+  gap:.7rem!important;
+}
+div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="column"]{
+  flex:1 1 215px!important;
+  width:auto!important;
+  min-width:min(100%,215px)!important;
+  max-width:100%!important;
+}
+div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="stSelectbox"],
+div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="stTextInput"]{
+  min-width:0!important;
+  max-width:100%!important;
+  width:100%!important;
+}
 .api-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:.7rem!important;margin:.25rem 0 .8rem!important}
 .api-stat{background:#f8fafc!important;border:1px solid #e5e7eb!important;border-radius:10px!important;padding:.7rem .78rem!important}
 .api-stat-label{font-size:.61rem!important;font-weight:900!important;letter-spacing:.055em!important;text-transform:uppercase!important;color:#64748b!important;margin-bottom:.28rem!important}
