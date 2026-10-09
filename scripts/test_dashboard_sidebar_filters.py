@@ -51,4 +51,53 @@ for rule in ("flex:1 1 0%!important;", "width:auto!important;", "min-width:0!imp
     assert rule in main_rule, rule
 assert "width:100%!important;max-width:100%!important;margin-left:0!important" not in main_rule
 
+# Regressão do fluxo: consultas não podem rerenderizar o app inteiro
+# após cada lote, e a escolha de NFs do Protheus deve ser um formulário.
+assert "ThreadPoolExecutor(max_workers=min(4, len(records)))" in Path(
+    "nf_xml_library.py"
+).read_text(encoding="utf-8")
+assert 'def prefill_stage2(pending_pre: pd.DataFrame)' in Path(
+    "nf_xml_library.py"
+).read_text(encoding="utf-8")
+assert 'base_missing_select_all = st.checkbox(' not in source
+assert '"RETIRAR SELECIONADAS DESTE LOTE"' in source
+assert '"nf_stage2_defer_missing_button"' in source
+assert 'st.session_state.nf_selected_flow_keys = _remaining' in source
+assert 'st.session_state.nf_stage1_selection = set(_remaining)' in source
+assert 'not any(' in source
+assert 'item.get("vinculado_base")' in source
+assert 'progress.empty()\n        st.rerun()\n\n    stats =' not in source
+
+# Auditoria de NF só considera vinculada a NF que realmente existe e
+# cujo CNPJ não é conflitante. Faltantes jamais viram "validadas" sozinhas.
+import pandas as pd
+import re
+audit_node=next(n for n in tree.body if isinstance(n,ast.FunctionDef)
+                and n.name=="_audit_selected_nf_batch")
+audit_module=ast.Module(body=[audit_node],type_ignores=[])
+ast.fix_missing_locations(audit_module)
+namespace={
+    "pd":pd,
+    "normalized_nf":lambda value: re.sub(r"\D","",str(value or "")).lstrip("0"),
+    "digits_only":lambda value: re.sub(r"\D","",str(value or "")),
+}
+exec(compile(audit_module,"<audit-test>","exec"),namespace)
+audit=namespace["_audit_selected_nf_batch"]
+selected=pd.DataFrame([
+    {"numero_nf":str(i),"cnpj":"12345678000199"} for i in range(1,18)
+])
+actual=pd.DataFrame([
+    {"numero_nf":str(i),"cnpj_fornecedor":"12345678000199"}
+    for i in range(1,16)
+])
+pending=audit(selected,actual)
+assert pending["selecionadas"]==17 and pending["vinculadas"]==15
+assert {x["NF"] for x in pending["faltantes"]}=={"16","17"}
+after_defer=audit(selected.iloc[:15],actual)
+assert after_defer["vinculadas"]==15 and not after_defer["faltantes"]
+conflict=actual.copy()
+conflict.loc[0,"cnpj_fornecedor"]="99999999000199"
+invalid=audit(selected.iloc[:15],conflict)
+assert any(x["NF"]=="1" for x in invalid["faltantes"])
+
 print("NFS_DASHBOARD_SIDEBAR_FILTERS_OK")
