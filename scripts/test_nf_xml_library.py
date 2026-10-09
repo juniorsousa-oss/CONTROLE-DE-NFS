@@ -57,4 +57,28 @@ assert "service_role" not in Path("nf_xml_library.py").read_text(encoding="utf-8
 assert "public=false" in migration
 assert "enable row level security" in migration
 assert "verify_jwt" not in api, "A validação JWT é configurada no deploy, não removida no código"
+# O acervo total não pode ser confundido com o limite da primeira página.
+ui=Path("nf_xml_library.py").read_text(encoding="utf-8")
+for expected in [
+    'a.metric("TOTAL DE XMLs NA BIBLIOTECA",count)',
+    'b.metric("NF-e ARMAZENADAS",nfe)',
+    'c.metric("CT-e ARMAZENADOS",cte)',
+    '"page_size":100',
+    '"PÁGINA ANTERIOR"',
+    '"PRÓXIMA PÁGINA"',
+    '"nf_xml_search_catalog_form"',
+    '"nf_xml_doc_request"',
+]:
+    assert expected in ui, f"Consulta global e paginada ausente: {expected}"
+for expected in [
+    'if(action==="list")',
+    'filtered_total:',
+    'total_nfe:nfe',
+    'total_cte:cte',
+    'page_count:',
+    '.range(first,first+pageSize-1)',
+    '{count:"exact",head:true}',
+]:
+    assert expected in api, f"Contagem/paginação não implementada no servidor: {expected}"
+
 print("NFS_XML_LIBRARY_REGRESSION_OK")
