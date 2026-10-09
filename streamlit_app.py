@@ -9275,14 +9275,68 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
     return {"changed": bool(changed), "sources": changed, "errors": errors}
 
 
+def _sync_central_nfs_on_page_load() -> dict:
+    """Sincroniza no carregamento real da sessão, nunca em cliques dos widgets.
+
+    Streamlit executa o script a cada interação; o marcador da sessão evita
+    repetir o tratamento pesado até um novo carregamento do navegador.
+    A comparação de versões continua protegendo contra reprocessamentos iguais.
+    """
+    if st.session_state.get("_nf_central_page_loaded"):
+        return {"checked": False}
+    # Marcar antes de qualquer chamada de rede impede tentativas repetidas a
+    # cada clique em uma sessão com erro de conexão.
+    st.session_state["_nf_central_page_loaded"] = True
+    try:
+        # Cache compartilhado entre sessões pode estar obsoleto em um novo
+        # carregamento, mesmo quando o estado da Central já consta atualizado.
+        _invalidate_pre_notes_cache()
+        _invalidate_mrp_cache()
+        _invalidate_materials_status_cache()
+        try:
+            _load_materials_api_current_cached.clear()
+        except Exception:
+            pass
+
+        with st.spinner("Conferindo versões e atualizando bases da Central SETTA..."):
+            result = _sync_central_nfs_sources(force=False)
+            # Se outra sessão já concluiu o processamento, o banco contém a
+            # fotografia vigente; recuperá-la é obrigatório antes da análise.
+            _ensure_operational_reference_data()
+            if (
+                st.session_state.get("pre_notes_db_loaded")
+                and st.session_state.get("mrp_db_loaded")
+                and not result.get("errors")
+            ):
+                _refresh_missing_mrp_analysis()
+                st.session_state.base_analysis_ready = True
+                st.session_state.base_analysis_at = now_local().isoformat(
+                    timespec="seconds"
+                )
+        st.session_state["_nf_last_auto_sync"] = result
+        return result
+    except Exception as exc:
+        st.session_state["_central_nfs_error"] = (
+            "FALHA NA SINCRONIZAÇÃO AUTOMÁTICA: " + str(exc)
+        )
+        return {"changed": False, "errors": [str(exc)]}
+
+
 _force_central_sync = bool(st.session_state.pop("_force_central_nfs_sync", False))
 if _force_central_sync:
+    # Reprocessamento explícito continua disponível como contingência.
     try:
-        _central_sync_result = _sync_central_nfs_sources(force=True)
+        with st.spinner("Reprocessando fontes da Central SETTA..."):
+            _central_sync_result = _sync_central_nfs_sources(force=True)
+            _invalidate_pre_notes_cache()
+            _invalidate_mrp_cache()
+        st.session_state["_nf_central_page_loaded"] = True
         if _central_sync_result.get("changed"):
             st.rerun()
     except Exception as _central_sync_exc:
         st.session_state["_central_nfs_error"] = str(_central_sync_exc)
+else:
+    _sync_central_nfs_on_page_load()
 
 
 def _render_nfs_sources_status():
