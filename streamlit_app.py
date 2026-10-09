@@ -6062,13 +6062,21 @@ def render_mrp_missing_pre_treatments() -> None:
             key="base_missing_mrp_action",
         )
 
+        # Em um st.form, as mudanças do editor e da TRATATIVA só chegam ao
+        # Python quando o operador envia o formulário. Nunca calcular
+        # disabled usando os valores anteriores à submissão.
         submit_mrp_treatment=st.form_submit_button(
             "APLICAR TRATATIVA",
             type="primary",use_container_width=True,
-            disabled=selected.empty or action == "Escolha uma ação",
         )
 
     if submit_mrp_treatment:
+        if selected.empty:
+            st.warning("Selecione pelo menos uma NF na tabela para aplicar a tratativa.")
+            return
+        if action == "Escolha uma ação":
+            st.warning("Selecione a tratativa antes de aplicar a ação nas NFs.")
+            return
         if action == "Adicionar às Pré-notas pendentes":
             missing_receiver = selected[
                 selected["recebedor"]
