@@ -127,13 +127,37 @@ Deno.serve(async(req)=>{
    return json({ok:true,data:{user_id:target,perfil:desired}});
   }
   if(action==="list"){
-   const limit=Math.max(1,Math.min(1000,Number(payload.limit)||300));
-   const [docs,logs]=await Promise.all([
-    api.from("nf_xml_documentos").select("id,tipo,chave,numero,cnpj_emitente,cnpj_destinatario,refs_nfe,arquivo_nome,origem,importado_em,status_fiscal").order("importado_em",{ascending:false}).limit(limit),
-    api.from("nf_xml_importacoes").select("arquivo_nome,resultado,mensagem,origem,criado_em").order("criado_em",{ascending:false}).limit(40),
+   // Paginação e totais vêm do BANCO INTEIRO, não apenas dos primeiros 300.
+   const pageSize=Math.max(20,Math.min(200,Math.floor(Number(payload.page_size)||100)));
+   const page=Math.max(1,Math.min(100000,Math.floor(Number(payload.page)||1)));
+   const search=trim(payload.search).replace(/[%_,()"\\]/g,"").slice(0,90);
+   const tipo=trim(payload.tipo).toUpperCase();
+   if(tipo&&tipo!=="TODOS"&&!["NFE","CTE"].includes(tipo))return fail("TIPO_INVALIDO");
+
+   let listQuery=api.from("nf_xml_documentos")
+    .select("id,tipo,chave,numero,cnpj_emitente,cnpj_destinatario,refs_nfe,arquivo_nome,origem,importado_em,status_fiscal",{count:"exact"})
+    .order("importado_em",{ascending:false}).order("id",{ascending:false});
+   if(tipo&&tipo!=="TODOS")listQuery=listQuery.eq("tipo",tipo);
+   if(search)listQuery=listQuery.or(
+    "numero.ilike.%"+search+"%,chave.ilike.%"+search+
+    "%,cnpj_emitente.ilike.%"+search+"%,arquivo_nome.ilike.%"+search+"%"
+   );
+   const first=(page-1)*pageSize;
+   const [docs,logs,allNfe,allCte]=await Promise.all([
+    listQuery.range(first,first+pageSize-1),
+    api.from("nf_xml_importacoes").select("arquivo_nome,resultado,mensagem,origem,criado_em")
+     .order("criado_em",{ascending:false}).limit(40),
+    api.from("nf_xml_documentos").select("id",{count:"exact",head:true}).eq("tipo","NFE"),
+    api.from("nf_xml_documentos").select("id",{count:"exact",head:true}).eq("tipo","CTE"),
    ]);
-   if(docs.error||logs.error)return fail("CONSULTA_INDISPONIVEL",500);
-   return json({ok:true,data:{documentos:docs.data||[],historico:logs.data||[]}});
+   if(docs.error||logs.error||allNfe.error||allCte.error)return fail("CONSULTA_INDISPONIVEL",500);
+   const nfe=Number(allNfe.count||0),cte=Number(allCte.count||0);
+   return json({ok:true,data:{
+     documentos:docs.data||[],historico:logs.data||[],
+     total:nfe+cte,total_nfe:nfe,total_cte:cte,
+     filtered_total:Number(docs.count||0),page,page_size:pageSize,
+     page_count:Math.max(1,Math.ceil(Number(docs.count||0)/pageSize)),
+   }});
   }
   if(action==="check_existing"){
    // Preflight sem upload de documentos: apenas chaves e SHA-256.
