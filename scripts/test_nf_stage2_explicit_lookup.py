@@ -103,4 +103,79 @@ assert 'st.session_state.get("nf_stage2_batch_keys") or set()' in source
 assert 'st.session_state.nf_stage2_search_started = False' in source
 assert 'st.session_state.pop("nf_xml_auto_stats", None)' in source
 
+
+# Executa de fato a renderização da etapa 2 com uma interface substituta.
+# Verifica que a entrada inicial NÃO chama o banco e mantém o expander oculto.
+from contextlib import nullcontext
+
+class FakeUI:
+    def __init__(self, session, press=False):
+        self.session_state=session
+        self.press=press
+        self.buttons=[]
+        self.expanders=[]
+        self.notices=[]
+    def button(self, label, **kwargs):
+        self.buttons.append(label)
+        return self.press and label in (
+            "INICIAR BUSCA DE DOCUMENTOS",
+            "RECONSULTAR DOCUMENTOS NO BANCO",
+        )
+    def expander(self, label, **kwargs):
+        self.expanders.append((label,kwargs.get("expanded")))
+        return nullcontext()
+    def spinner(self, *args, **kwargs):
+        return nullcontext()
+    def file_uploader(self, *args, **kwargs):
+        return None
+    def caption(self, *args, **kwargs):
+        pass
+    def info(self, value, **kwargs):
+        self.notices.append(value)
+    def warning(self, value, **kwargs):
+        self.notices.append(value)
+
+initial=Session(
+    base_analysis_ready=True,
+    nf_stage2_search_started=False,
+    document_upload_cache=[],
+    document_reprocess_needed=False,
+    nf_xml_auto_stats={},
+    document_link_stats={},
+    prefilter_rejected=[],
+    document_ignored_items=[],
+    cte_rejected=[],
+    cte_ignored_non_setta=[],
+    cte_links=[],
+    analysis=pd.DataFrame(),
+)
+ui=FakeUI(initial,press=False)
+render_module=ast.Module(body=[handler,render],type_ignores=[])
+ast.fix_missing_locations(render_module)
+environment={
+    "st":ui, "pd":pd, "Path":Path,
+    "nf_xml_library":fake,
+    "section_band":lambda *args,**kwargs:None,
+    "selected_pending_pre_notes":lambda:base,
+}
+exec(compile(render_module,"<render-stage2>","exec"),environment)
+before=len(fake.calls)
+environment["render_document_linking_stage"]()
+assert len(fake.calls)==before, "Abrir etapa 2 não pode iniciar busca"
+assert ui.buttons==["INICIAR BUSCA DE DOCUMENTOS"],ui.buttons
+assert ui.expanders[0]==("UPLOAD MANUAL DE XML/PDF · CONTINGÊNCIA",False)
+assert any("ETAPA 2 PRONTA" in message for message in ui.notices)
+
+ui.press=True
+environment["render_document_linking_stage"]()
+assert len(fake.calls)==before+1, "Clique deve iniciar busca exatamente uma vez"
+assert initial.nf_stage2_search_started
+ui.press=False
+environment["render_document_linking_stage"]()
+assert len(fake.calls)==before+1, "Rerun normal não pode repetir busca"
+assert "RECONSULTAR DOCUMENTOS NO BANCO" in ui.buttons
+ui.press=True
+environment["render_document_linking_stage"]()
+assert len(fake.calls)==before+2, "Reconsulta deve ser acionada por novo clique"
+
 print("NFS_STAGE2_EXPLICIT_LOOKUP_OK")
