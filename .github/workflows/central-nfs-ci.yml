@@ -9,6 +9,7 @@ on:
       - 'supabase/migrations/20261009_nf_xml_library.sql'
       - 'supabase/functions/nf-xml-library-api/index.ts'
       - 'scripts/test_nf_xml_library.py'
+      - 'scripts/test_nf_xml_incremental.py'
       - 'scripts/smoke_nf_xml_api.py'
       - 'scripts/test_nf_flow_real_0810.py'
       - 'central_nfs_data.py'
@@ -30,6 +31,8 @@ jobs:
         run: python -m py_compile streamlit_app.py central_nfs_data.py setta_shell.py db.py nf_processor.py
       - name: Testar biblioteca XML privada
         run: python -m compileall -q nf_xml_library.py && python -m scripts.test_nf_xml_library
+      - name: Testar pré-conferência e carga incremental dos XMLs
+        run: python -m scripts.test_nf_xml_incremental
       - name: Testar autorização da API XML implantada
         run: python -m scripts.smoke_nf_xml_api
       - name: Testar fluxo das NFs de 08/10
