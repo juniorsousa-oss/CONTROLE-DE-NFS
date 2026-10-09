@@ -546,9 +546,8 @@ def prefill_stage2(pending_pre: pd.DataFrame):
     fingerprint = hashlib.sha256(
         repr(sorted((x["numero"], x["cnpj"], x["chave"], x["fornecedor"]) for x in requests_nfs)).encode()
     ).hexdigest()
-    refresh = st.button("RECONSULTAR BIBLIOTECA XML", key="nf_xml_force_refresh")
-    if refresh:
-        st.session_state.pop("nf_xml_auto_signature", None)
+    # Este método é invocado exclusivamente pelo botão da etapa 2.
+    # Nenhum widget adicional ou consulta automática durante render.
     target = f"{'SERVICO' if service_token else 'SESSAO'}:{fingerprint}"
     if st.session_state.get("nf_xml_auto_signature") == target:
         linked = st.session_state.get("nf_xml_auto_stats") or {}
@@ -566,7 +565,7 @@ def prefill_stage2(pending_pre: pd.DataFrame):
             if linked.get("download_errors"):
                 st.warning(
                     f"{linked['download_errors']} documento(s) falharam na busca. "
-                    "Use RECONSULTAR BIBLIOTECA XML para tentar novamente."
+                    "Clique novamente em INICIAR BUSCA DE DOCUMENTOS."
                 )
         return
 
@@ -691,6 +690,6 @@ def prefill_stage2(pending_pre: pd.DataFrame):
         }
         st.warning(
             "Não foi possível consultar a biblioteca XML: "
-            f"{exc}. Use RECONSULTAR para tentar novamente; "
+            f"{exc}. Clique em INICIAR BUSCA DE DOCUMENTOS novamente; "
             "os documentos já carregados permanecem no lote."
         )
