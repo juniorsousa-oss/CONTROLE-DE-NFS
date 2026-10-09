@@ -712,6 +712,12 @@ div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="stTextInput"
   max-width:100%!important;
   width:100%!important;
 }
+/* Evita saltos causados por transições do layout responsivo dos filtros. */
+div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="stHorizontalBlock"],
+div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="column"]{
+  transition:none!important;
+  animation:none!important;
+}
 .api-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:.7rem!important;margin:.25rem 0 .8rem!important}
 .api-stat{background:#f8fafc!important;border:1px solid #e5e7eb!important;border-radius:10px!important;padding:.7rem .78rem!important}
 .api-stat-label{font-size:.61rem!important;font-weight:900!important;letter-spacing:.055em!important;text-transform:uppercase!important;color:#64748b!important;margin-bottom:.28rem!important}
@@ -7673,7 +7679,8 @@ def render_document_linking_stage() -> None:
                 })
         st.session_state.document_ignored_items = _unassociated
         progress.empty()
-        st.rerun()
+        # O resultado já está no estado e é renderizado abaixo nesta execução.
+        # Evita outra execução integral e a sobreposição branca do Streamlit.
 
     stats = st.session_state.get("document_link_stats") or {}
     analysis = st.session_state.get("analysis")
@@ -7682,9 +7689,68 @@ def render_document_linking_stage() -> None:
     if isinstance(analysis, pd.DataFrame) and not analysis.empty:
         merged = recalc(apply_cross_checks(analysis.copy()))
         st.session_state.analysis = merged
-        _show_nf_batch_audit(
-            _audit_selected_nf_batch(pending_base,merged)
-        )
+        _batch_audit = _audit_selected_nf_batch(pending_base, merged)
+        _show_nf_batch_audit(_batch_audit)
+
+        # Uma NF sem XML continua pendente na BASE, mas o operador pode
+        # retirá-la explicitamente do LOTE ATUAL para concluir as demais.
+        # Não altera o Protheus, o banco, a biblioteca nem a pré-nota original.
+        if _batch_audit["faltantes"]:
+            with st.expander(
+                f"RESOLVER NFs SEM DOCUMENTO ({len(_batch_audit['faltantes'])})",
+                expanded=True,
+            ):
+                st.info(
+                    "Localize o XML/PDF e clique em RECONSULTAR BIBLIOTECA XML, "
+                    "ou retire somente as NFs indicadas do lote atual. "
+                    "Elas continuarão na base de pré-notas para processamento posterior."
+                )
+                _missing_options = {}
+                for _, _pre in pending_base.iterrows():
+                    _number = normalized_nf(_pre.get("numero_nf"))
+                    _cnpj = digits_only(_pre.get("cnpj"))
+                    _is_missing = any(
+                        normalized_nf(item.get("NF")) == _number
+                        and not (
+                            len(digits_only(item.get("CNPJ"))) == 14
+                            and len(_cnpj) == 14
+                            and digits_only(item.get("CNPJ")) != _cnpj
+                        )
+                        for item in _batch_audit["faltantes"]
+                    )
+                    if _is_missing:
+                        _key = flow_nf_key(_pre)
+                        _missing_options[f"NF {_number} · {_cnpj or 'CNPJ NÃO INFORMADO'}"] = _key
+                _ignore_labels = st.multiselect(
+                    "NFs QUE FICARÃO PARA O PRÓXIMO LOTE",
+                    options=list(_missing_options.keys()),
+                    key="nf_stage2_defer_missing",
+                )
+                if st.button(
+                    "RETIRAR SELECIONADAS DESTE LOTE",
+                    disabled=not bool(_ignore_labels),
+                    use_container_width=True,
+                    key="nf_stage2_defer_missing_button",
+                ):
+                    _ignored_keys = {_missing_options[x] for x in _ignore_labels}
+                    _active = set(st.session_state.get("nf_selected_flow_keys") or set())
+                    _remaining = _active - _ignored_keys
+                    if not _remaining:
+                        st.error("O lote não pode ficar vazio. Retorne à base para escolher outras NFs.")
+                    else:
+                        st.session_state.nf_selected_flow_keys = _remaining
+                        st.session_state.nf_stage1_selection = set(_remaining)
+                        st.session_state.nf_stage1_selection_draft = None
+                        st.session_state.nf_stage1_selection_saved = True
+                        st.session_state["_nf_stage1_editor_rev"] = (
+                            int(st.session_state.get("_nf_stage1_editor_rev") or 0) + 1
+                        )
+                        st.session_state.pop("nf_stage2_defer_missing", None)
+                        st.session_state["_nf_stage2_deferred_message"] = (
+                            f"{len(_ignored_keys)} NF(s) retiradas somente do lote atual. "
+                            "Permanecem pendentes na base; nenhum documento foi apagado."
+                        )
+                        st.rerun()
 
         def _xml_label(row):
             original = str(row.get("arquivo_original") or "").strip()
@@ -10374,6 +10440,9 @@ elif page == "Pendências":
         st.session_state.nf_flow_stage = 1
 
     if _flow_stage == 2:
+        _deferred_message = st.session_state.pop("_nf_stage2_deferred_message", "")
+        if _deferred_message:
+            st.success(_deferred_message)
         _nav1, _nav2 = st.columns([1, 3])
         if _nav1.button(
             "VOLTAR À BASE",
@@ -10408,7 +10477,10 @@ elif page == "Pendências":
                 == st.session_state.get("nf_documents_current_signature")
                 and not treatment_mask(_analysis_stage2).any()
                 and not st.session_state.get("cte_rejected")
-                and not st.session_state.get("prefilter_rejected")
+                and not any(
+                    item.get("vinculado_base")
+                    for item in (st.session_state.get("prefilter_rejected") or [])
+                )
             )
 
         if st.button(
