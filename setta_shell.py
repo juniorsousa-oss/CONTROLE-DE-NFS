@@ -297,7 +297,18 @@ section[data-testid="stSidebar"] [class*="st-key-setta_nav_"] button[data-testid
 .sidebar-status-value.status-warning{{color:#f59e0b!important}}
 .sidebar-status-value.status-error{{color:#ef4444!important}}
 .sidebar-status-meta{{margin:6px 0 0 0!important;padding:0!important;color:#6b7280!important;font-size:11px!important;line-height:15px!important;text-transform:uppercase!important}}
-[data-testid="stAppViewContainer"] > .main,[data-testid="stAppViewContainer"] .main,[data-testid="stMain"],.stMain{{width:100%!important;max-width:100%!important;margin-left:0!important;margin-right:0!important}}
+/* Main precisa ceder a largura ocupada pela barra lateral (260px).
+   width:100% com o sidebar aberto criava um total maior que a viewport,
+   cortando os filtros do Dashboard apesar do flex-wrap. */
+[data-testid="stAppViewContainer"]{{min-width:0!important}}
+[data-testid="stAppViewContainer"] > .main,[data-testid="stAppViewContainer"] .main,[data-testid="stMain"],.stMain{{
+  flex:1 1 0%!important;
+  width:auto!important;
+  min-width:0!important;
+  max-width:100%!important;
+  margin-left:0!important;
+  margin-right:0!important;
+}}
 [data-testid="stAppViewContainer"] .main .block-container,[data-testid="stMain"] .block-container,.stMain .block-container{{width:100%!important;max-width:100%!important;margin-left:0!important;margin-right:0!important}}
 
 .setta-logo-card{{
