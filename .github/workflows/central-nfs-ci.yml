@@ -25,6 +25,8 @@ jobs:
         run: python -m scripts.test_nf_mrp_index
       - name: Testar catálogo de fornecedores por código e loja
         run: python -m scripts.test_nf_supplier_index
+      - name: Testar transição explícita para busca na etapa 2
+        run: python -m scripts.test_nf_stage2_explicit_lookup
       - name: Testar biblioteca XML privada
         run: python -m compileall -q nf_xml_library.py && python -m scripts.test_nf_xml_library
       - name: Testar pré-conferência e carga incremental dos XMLs
