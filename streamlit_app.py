@@ -2062,32 +2062,50 @@ def _extract_launch_report_cached(
     )
 
 
-def _supplier_cnpj_lookup(entries: pd.DataFrame) -> tuple[pd.Series, int]:
-    suppliers = supplier_dataframe(st.session_state.suppliers).copy()
-    if suppliers.empty:
-        return pd.Series([""] * len(entries), index=entries.index), len(entries)
+@st.cache_data(show_spinner=False, max_entries=3)
+def _supplier_code_index_cached(raw_suppliers: pd.DataFrame) -> dict:
+    """Indexa o cadastro ativo uma única vez por versão do DataFrame.
 
+    Sem estado mutável global: novas cargas de fornecedores invalidam
+    naturalmente o cache pela mudança dos dados de entrada.
+    """
+    suppliers = supplier_dataframe(raw_suppliers)
+    if suppliers.empty:
+        return {}
     suppliers = suppliers[suppliers["ativo"]].copy()
     suppliers["_codigo_norm"] = suppliers["codigo"].map(_supplier_code_norm)
     suppliers = suppliers[
         suppliers["_codigo_norm"].ne("")
         & suppliers["cnpj"].map(valid_cnpj)
-    ].copy()
+    ]
+    by_code = {}
+    for code, group in suppliers.groupby("_codigo_norm", sort=False):
+        options = []
+        for _, row in group.iterrows():
+            variants = (
+                str(row.get("nome_padrao") or ""),
+                str(row.get("nome_fantasia") or ""),
+                *str(row.get("aliases") or "").split("|"),
+            )
+            options.append((digits_only(row.get("cnpj")), variants))
+        by_code[code] = tuple(options)
+    return by_code
 
-    by_code = {
-        code: group.copy()
-        for code, group in suppliers.groupby("_codigo_norm", sort=False)
-    }
+
+def _supplier_cnpj_lookup(entries: pd.DataFrame) -> tuple[pd.Series, int]:
+    if entries.empty:
+        return pd.Series(dtype=str, index=entries.index), 0
+    by_code = _supplier_code_index_cached(st.session_state.suppliers)
+    if not by_code:
+        return pd.Series([""] * len(entries), index=entries.index), len(entries)
 
     cache = {}
     unresolved = 0
     result = []
-
     for _, row in entries.iterrows():
         code = _supplier_code_norm(row.get("fornecedor_codigo"))
         desc = str(row.get("fornecedor") or "").strip()
         cache_key = (code, normalize_text(desc))
-
         if cache_key in cache:
             cnpj = cache[cache_key]
             result.append(cnpj)
@@ -2095,44 +2113,35 @@ def _supplier_cnpj_lookup(entries: pd.DataFrame) -> tuple[pd.Series, int]:
                 unresolved += 1
             continue
 
-        group = by_code.get(code)
+        group = by_code.get(code) or ()
         cnpj = ""
-        if group is not None and not group.empty:
-            unique_docs = group["cnpj"].dropna().astype(str).unique().tolist()
-            if len(unique_docs) == 1:
-                cnpj = unique_docs[0]
-            else:
-                # Mesmo código pode possuir lojas/CNPJs diferentes no TOTVS.
-                # Nome aproximado de 74% não é suficiente para escolher
-                # automaticamente uma filial; exige alto grau e vencedor isolado.
-                ranked = []
-                for _, supplier_row in group.iterrows():
-                    supplier_doc = digits_only(supplier_row.get("cnpj"))
-                    variants = [
-                        str(supplier_row.get("nome_padrao") or ""),
-                        str(supplier_row.get("nome_fantasia") or ""),
-                        *str(supplier_row.get("aliases") or "").split("|"),
-                    ]
-                    score = max(
-                        (supplier_similarity(desc, variant) for variant in variants),
-                        default=0,
-                    )
-                    ranked.append((score, supplier_doc))
-                ranked.sort(reverse=True)
-                if ranked and ranked[0][0] >= 90:
-                    best_score, best_doc = ranked[0]
-                    runner_up = max(
-                        (score for score, doc in ranked[1:] if doc != best_doc),
-                        default=0,
-                    )
-                    if best_score - runner_up >= 5:
-                        cnpj = best_doc
+        docs = {doc for doc, _ in group if doc}
+        if len(docs) == 1:
+            cnpj = next(iter(docs))
+        elif len(docs) > 1 and desc:
+            # Um código pode possuir vários CNPJs/lojas. Desambiguar
+            # somente com nome fortemente aderente e vencedor isolado.
+            ranked = []
+            for supplier_doc, variants in group:
+                score = max(
+                    (supplier_similarity(desc, variant) for variant in variants),
+                    default=0,
+                )
+                ranked.append((score, supplier_doc))
+            ranked.sort(reverse=True)
+            if ranked and ranked[0][0] >= 90:
+                best_score, best_doc = ranked[0]
+                runner_up = max(
+                    (score for score, doc in ranked[1:] if doc != best_doc),
+                    default=0,
+                )
+                if best_score - runner_up >= 5:
+                    cnpj = best_doc
 
         cache[cache_key] = cnpj
         result.append(cnpj)
         if not cnpj:
             unresolved += 1
-
     return pd.Series(result, index=entries.index), unresolved
 
 
