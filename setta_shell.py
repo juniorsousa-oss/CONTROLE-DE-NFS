@@ -116,6 +116,9 @@ html,body,#root{{
   overflow-y:auto!important;
   overflow-x:hidden!important;
 }}
+/* Preserva o espaço da barra de rolagem entre reruns e abertura do menu,
+   evitando deslocamento horizontal de filtros, botões e tabelas. */
+html{{scrollbar-gutter:stable!important}}
 html,body{{background:#F4F7FB!important}}
 body{{
   box-sizing:border-box!important;
