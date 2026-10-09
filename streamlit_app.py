@@ -7763,7 +7763,6 @@ def render_document_linking_stage() -> None:
                         st.session_state["_nf_stage1_editor_rev"] = (
                             int(st.session_state.get("_nf_stage1_editor_rev") or 0) + 1
                         )
-                        st.session_state.pop("nf_stage2_defer_missing", None)
                         st.session_state["_nf_stage2_deferred_message"] = (
                             f"{len(_ignored_keys)} NF(s) retiradas somente do lote atual. "
                             "Permanecem pendentes na base; nenhum documento foi apagado."
