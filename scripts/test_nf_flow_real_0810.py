@@ -92,6 +92,48 @@ assert (
     < protheus_source.index('if action == "Adicionar às Pré-notas pendentes":')
 ), "As validações das NFs devem ocorrer depois da submissão."
 
+# Simulação do problema operacional: 17 selecionadas, somente 15 processadas.
+import pandas as pd
+from collections import Counter
+node=function("_audit_selected_nf_batch")
+scope={
+    "pd":pd,
+    "normalized_nf":lambda v:str(v or "").strip().lstrip("0") or "0",
+    "digits_only":lambda v:"".join(x for x in str(v or "") if x.isdigit()),
+}
+exec(compile(ast.Module(body=[node],type_ignores=[]),"audit_test","exec"),scope)
+audit=scope["_audit_selected_nf_batch"]
+selected=pd.DataFrame([
+    {"numero_nf":f"{i:05d}","cnpj":"11111111000191"}
+    for i in range(1,18)
+])
+processed=pd.DataFrame([
+    {"numero_nf":str(i),"cnpj_fornecedor":"11111111000191"}
+    for i in range(1,16)
+])
+out=audit(selected,processed)
+assert out["selecionadas"]==17 and out["vinculadas"]==15,out
+assert [x["NF"] for x in out["faltantes"]]==["16","17"],out
+assert not out["extras"],out
+out_complete=audit(selected,pd.concat([
+    processed,
+    pd.DataFrame([
+        {"numero_nf":"16","cnpj_fornecedor":"11111111000191"},
+        {"numero_nf":"17","cnpj_fornecedor":"11111111000191"},
+    ]),
+],ignore_index=True))
+assert not out_complete["faltantes"] and out_complete["vinculadas"]==17
+wrong_supplier=audit(
+    selected.head(1),
+    pd.DataFrame([{"numero_nf":"1","cnpj_fornecedor":"99999999000199"}]),
+)
+assert wrong_supplier["faltantes"], "Nunca vincular nota a CNPJ divergente."
+assert 'expanded=False' in source[source.index('NFs DO PROTHEUS SEM VÍNCULO NAS PRÉ-NOTAS')-90:
+                                     source.index('NFs DO PROTHEUS SEM VÍNCULO NAS PRÉ-NOTAS')+150]
+assert 'st.session_state.nf_selected_flow_keys = set(_active_keys)' in source
+assert '_lot_audit=_audit_selected_nf_batch' in source
+assert 'if invalid_mask.any() or duplicate.any():' in source
+
 ready=function("render_ready_file_stage")
 ready_lines=ast.get_source_segment(source,ready)
 assert ready_lines.index('CT-e VINCULADOS ÀS NFs DESTE LOTE') < ready_lines.index('"GERAR ARQUIVO PRONTO PARA IMPORTAÇÃO"')
