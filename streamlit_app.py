@@ -7965,6 +7965,40 @@ def render_ready_file_stage() -> None:
         },
     )
 
+    # Confirmação 03: relação explícita dos CT-e antes de montar ZIP.
+    linked_ctes = list(st.session_state.get("cte_links") or [])
+    if linked_ctes:
+        mapped_nf = {
+            str(row.get("file_id") or ""): normalized_nf(row.get("numero_nf"))
+            for _, row in merged.iterrows()
+        }
+        cte_preview = []
+        for cte in linked_ctes:
+            linked_ids = [
+                str(v) for v in (cte.get("linked_file_ids") or []) if str(v).strip()
+            ]
+            linked_numbers = sorted({
+                mapped_nf.get(file_id, "")
+                for file_id in linked_ids if mapped_nf.get(file_id)
+            })
+            cte_preview.append({
+                "CT-e": str(cte.get("numero_cte") or ""),
+                "TRANSPORTADORA": str(cte.get("transportadora") or ""),
+                "NFs VINCULADAS": ", ".join(linked_numbers),
+                "ARQUIVO DACTE": str(cte.get("arquivo_final") or cte.get("arquivo_original") or ""),
+            })
+        st.markdown("#### CT-e VINCULADOS ÀS NFs DESTE LOTE")
+        _setta_dataframe(
+            pd.DataFrame(cte_preview),
+            use_container_width=True,hide_index=True,height=300,
+        )
+        _missing_cte_links = any(not x["NFs VINCULADAS"] for x in cte_preview)
+        if _missing_cte_links:
+            st.error("EXISTEM CT-e SEM NF VINCULADA NESTE LOTE. VOLTE À ETAPA 2.")
+            return
+    else:
+        st.caption("NENHUM CT-e VINCULADO A ESTE LOTE.")
+
     if not st.session_state.get("zip_outputs"):
         if st.button(
             "GERAR ARQUIVO PRONTO PARA IMPORTAÇÃO",
@@ -8854,11 +8888,21 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
                             manifest
                         )
 
-                    st.success(
-                        f"{updated_count} documento(s) confirmado(s) "
-                        "como enviado(s). O prazo de 24 horas para "
-                        "lançamento começa nesta confirmação."
-                    )
+                    # Só reiniciar quando TODOS os documentos deste lote
+                    # tiverem envio confirmado, preservando envios parciais.
+                    if updated_count and len(set(selected_send_ids)) >= len(awaiting_send):
+                        _reset_nf_session_flow()
+                        set_flash(
+                            "_flash_nf","success",
+                            f"ENVIO FINALIZADO · {updated_count} documento(s) confirmado(s). "
+                            "Fluxo reiniciado para as próximas pré-notas.",
+                        )
+                    else:
+                        st.session_state["_flash_nf"] = (
+                            "success",
+                            f"{updated_count} documento(s) enviados. "
+                            "Ainda há documentos aguardando confirmação.",
+                        )
                     st.rerun()
                 except Exception as exc:
                     action_name = (
