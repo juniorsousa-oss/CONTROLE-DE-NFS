@@ -181,6 +181,7 @@ def render_page():
             else:
                 report=_make_report(uploads)
                 st.session_state.nf_xml_last_report=report
+                st.session_state.pop("nf_xml_library_index",None)
                 st.session_state.pop("nf_xml_auto_signature",None)
         report=st.session_state.get("nf_xml_last_report")
         if isinstance(report,pd.DataFrame) and not report.empty:
