@@ -8765,7 +8765,7 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
         sel0, sel1, sel2 = st.columns(3)
         select_all_send = sel0.checkbox(
             "MARCAR / DESMARCAR TUDO",
-            value=True,
+            value=not bool(st.session_state.get("_nf_send_confirmation_batch")),
             key="select_all_send",
         )
         select_all_nf_send = sel1.checkbox(
@@ -8833,6 +8833,15 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
             f"{len(send_view)}_{send_id_signature}"
         )
         with st.form("send_confirmation_form"):
+            if st.session_state.get("_nf_send_confirmation_batch"):
+                _confirm_sent_files = st.checkbox(
+                    "CONFIRMO QUE OS ARQUIVOS DESTE LOTE FORAM "
+                    "EFETIVAMENTE BAIXADOS E ENVIADOS.",
+                    value=False,
+                    key="nf_remote_confirm_sent_files",
+                )
+            else:
+                _confirm_sent_files = True
             send_editor = _setta_data_editor(
                 send_view,
                 use_container_width=True,
@@ -8905,6 +8914,12 @@ def render_send_and_tracking_stage(pending_records: pd.DataFrame) -> None:
             )
 
         if confirm_send or delete_send or save_receipt_dates:
+            if confirm_send and not _confirm_sent_files:
+                st.error(
+                    "Não é permitido confirmar o envio sem declarar "
+                    "que os arquivos foram efetivamente encaminhados."
+                )
+                return
             selected_send_ids = (
                 send_editor.loc[
                     send_editor["CONFIRMAR"].fillna(False).astype(bool),
@@ -10333,8 +10348,15 @@ elif page == "Pendências":
         st.stop()
 
     if _flow_stage == 3:
-        _nav1, _nav2 = st.columns([1, 3])
+        _nav1, _nav2, _nav3 = st.columns([1, 1, 2])
         if _nav1.button(
+            "VOLTAR ÀS PRÉ-NOTAS",
+            use_container_width=True,
+            key="flow_back_to_base_from_final",
+        ):
+            _set_nf_flow_stage(1)
+            st.rerun()
+        if _nav2.button(
             "VOLTAR AOS DOCUMENTOS",
             use_container_width=True,
             key="flow_back_to_documents",
