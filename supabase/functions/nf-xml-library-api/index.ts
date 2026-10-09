@@ -88,7 +88,11 @@ Deno.serve(async(req)=>{
    return json({ok:true,data:{token,expira_em:expires,nome:account.full_name,perfil:isAdmin?"ADMIN":permission.perfil}});
   }
   if(action==="logout"){
-   // Serviço do aplicativo: consulta/leitura de XMLs sem login humano, restrita
+   const token=trim(payload.token);
+   if(token)await api.from("nf_xml_sessoes").delete().eq("token",token);
+   return json({ok:true,data:{logout:true}});
+  }
+  // Serviço do aplicativo: consulta/leitura de XMLs sem login humano, restrita
   // às ações match/download. O token fica apenas no servidor Streamlit.
   const serviceToken=trim(payload.service_token);
   let user="",profile="";
