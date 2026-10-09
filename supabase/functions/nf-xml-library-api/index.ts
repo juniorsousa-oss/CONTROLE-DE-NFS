@@ -135,6 +135,30 @@ Deno.serve(async(req)=>{
    if(docs.error||logs.error)return fail("CONSULTA_INDISPONIVEL",500);
    return json({ok:true,data:{documentos:docs.data||[],historico:logs.data||[]}});
   }
+  if(action==="check_existing"){
+   // Preflight sem upload de documentos: apenas chaves e SHA-256.
+   // A verificação é autenticada, limitada a 200 registros por lote.
+   const requested=array(payload.items);
+   if(!requested.length || requested.length>200)return fail("LOTE_DE_CONFERENCIA_DEVE_TER_1_A_200_DOCUMENTOS");
+   const wanted=new Map<string,string>();
+   for(const item of requested){
+    const chave=digits(item?.chave),hash=trim(item?.sha256).toLowerCase();
+    if(!/^[0-9]{44}$/.test(chave)||!["55","57"].includes(chave.slice(20,22))
+      || !/^[0-9a-f]{64}$/.test(hash))return fail("CHAVE_OU_HASH_INVALIDO");
+    const prev=wanted.get(chave);
+    if(prev&&prev!==hash)return fail("CHAVE_REPETIDA_COM_HASH_DIFERENTE");
+    wanted.set(chave,hash);
+   }
+   const {data,error}=await api.from("nf_xml_documentos").select("chave,sha256")
+    .in("chave",[...wanted.keys()]).limit(200);
+   if(error)return fail("ERRO_CONSULTA_PREVIA",500);
+   const existing=new Map((data||[]).map((row:any)=>[String(row.chave),String(row.sha256).toLowerCase()]));
+   const results=[...wanted.entries()].map(([chave,sha256])=>({
+    chave,
+    status:!existing.has(chave)?"NOVO":existing.get(chave)===sha256?"DUPLICADO":"CONFLITO",
+   }));
+   return json({ok:true,data:{results}});
+  }
   if(action==="ingest"){
    const nome=limitName(payload.filename),raw=trim(payload.raw_base64);
    if(!nome.toLowerCase().endsWith(".xml"))return fail("APENAS_XML");
