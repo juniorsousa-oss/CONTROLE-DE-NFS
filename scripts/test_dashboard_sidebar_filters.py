@@ -42,4 +42,13 @@ for fn in ("_setta_toggle_sidebar", "_setta_close_sidebar"):
 assert ':has(.st-key-nf_dash_search)' in source
 assert 'flex-wrap:wrap!important;' in source
 assert 'min-width:min(100%,215px)!important;' in source
+# A barra lateral não pode somar 260px a um Main travado em 100% da viewport.
+# O shell divide o espaço com flex, permitindo que os filtros refluam.
+shell=Path("setta_shell.py").read_text(encoding="utf-8")
+main_rule=shell[shell.index('/* Main precisa ceder a largura'):
+                shell.index('[data-testid="stAppViewContainer"] .main .block-container')]
+for rule in ("flex:1 1 0%!important;", "width:auto!important;", "min-width:0!important;"):
+    assert rule in main_rule, rule
+assert "width:100%!important;max-width:100%!important;margin-left:0!important" not in main_rule
+
 print("NFS_DASHBOARD_SIDEBAR_FILTERS_OK")
