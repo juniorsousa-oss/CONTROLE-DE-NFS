@@ -6086,6 +6086,16 @@ def _refresh_missing_mrp_analysis() -> pd.DataFrame:
     summary = st.session_state.get("mrp_priority_summary")
     pre = st.session_state.get("pre_notes")
 
+    # Recupera os códigos que já existem no DETALHE do STSUP01 para resumos
+    # persistidos antes da correção (que descartavam fornecedor_codigo).
+    detail = st.session_state.get("mrp_impact_detail")
+    supplier_codes = {}
+    if isinstance(detail, pd.DataFrame) and not detail.empty:
+        for _, row in detail.iterrows():
+            _nf = normalized_nf(row.get("numero_nf"))
+            _code = _supplier_code_norm(row.get("fornecedor_codigo"))
+            if _nf and _code:
+                supplier_codes.setdefault(_nf, set()).add(_code)
     rows = []
     if (
         isinstance(summary, pd.DataFrame)
@@ -6100,6 +6110,12 @@ def _refresh_missing_mrp_analysis() -> pd.DataFrame:
             match = match_mrp_to_pre_note(mrp_row, pre)
             if not match.get("matched"):
                 item = mrp_row.to_dict()
+                if not _supplier_code_norm(item.get("fornecedor_codigo")):
+                    # Só completa quando o número da NF aponta para UM único
+                    # código na carga detalhada; divergência continua pendente.
+                    _codes = supplier_codes.get(normalized_nf(item.get("numero_nf"))) or set()
+                    if len(_codes) == 1:
+                        item["fornecedor_codigo"] = next(iter(_codes))
                 item["situacao_vinculo"] = str(
                     match.get("situacao") or "AUSENTE NAS PRÉ-NOTAS"
                 )
@@ -6109,15 +6125,24 @@ def _refresh_missing_mrp_analysis() -> pd.DataFrame:
                 rows.append(item)
 
     frame = pd.DataFrame(rows)
+    if not frame.empty and "fornecedor_codigo" in frame.columns:
+        missing_cnpj = (
+            frame.get("cnpj", pd.Series("", index=frame.index))
+            .map(digits_only).map(lambda value: not valid_cnpj(value))
+        )
+        if missing_cnpj.any():
+            found, _ = _supplier_cnpj_lookup(frame.loc[missing_cnpj].copy())
+            frame.loc[missing_cnpj, "cnpj"] = found
     st.session_state.base_analysis_missing_mrp = frame
     return frame
 
 
-def render_mrp_missing_pre_treatments() -> None:
+def render_mrp_missing_pre_treatments(missing: pd.DataFrame | None = None) -> None:
     if not st.session_state.get("base_analysis_ready"):
         return
 
-    missing = _refresh_missing_mrp_analysis()
+    if not isinstance(missing, pd.DataFrame):
+        missing = _refresh_missing_mrp_analysis()
     if missing.empty:
         return
 
@@ -11242,7 +11267,7 @@ elif page == "Pendências":
                 f"NFs DO PROTHEUS SEM VÍNCULO NAS PRÉ-NOTAS ({len(_not_linked)})",
                 expanded=bool(st.session_state.get("_nf_missing_mrp_keep_open", False)),
             ):
-                render_mrp_missing_pre_treatments()
+                render_mrp_missing_pre_treatments(_not_linked)
 
         st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         if st.button(
