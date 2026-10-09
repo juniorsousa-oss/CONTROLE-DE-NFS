@@ -2130,7 +2130,7 @@ def _build_mrp_impact(
         ])
         empty_summary = pd.DataFrame(columns=[
             "data_nf", "data_pre_nota", "numero_nf", "cnpj", "fornecedor",
-            "fornecedor_validacao", "natureza", "cr", "desc_cr",
+            "fornecedor_validacao", "fornecedor_codigo", "natureza", "cr", "desc_cr",
             "prioridade", "ops", "data_cm", "itens_impacto",
         ])
         return empty_detail, empty_summary, {"cnpj_nao_localizado": 0}
@@ -2160,8 +2160,27 @@ def _build_mrp_impact(
         lambda row: date_nf_key(row.get("data_pre_nota"), row.get("numero_nf")),
         axis=1,
     )
-    detail["fornecedor_validacao"] = detail["fornecedor"].map(
-        lambda value: standard_supplier_name(value) or str(value or "").strip()
+    # Resolver 9 mil fornecedores por similaridade A CADA LINHA do STSUP01
+    # era custoso e redundante. Reutiliza o CNPJ recuperado pelo código,
+    # e executa o fallback por nome apenas uma vez por nome distinto.
+    _supplier_base = supplier_dataframe(st.session_state.suppliers)
+    _master_names = (
+        _supplier_base[_supplier_base["ativo"]]
+        .drop_duplicates("cnpj", keep="first")
+        .set_index("cnpj")["nome_padrao"].to_dict()
+        if not _supplier_base.empty else {}
+    )
+    _fallback_names = {}
+    def _supplier_canonical(row):
+        cnpj = digits_only(row.get("cnpj"))
+        if cnpj in _master_names:
+            return _master_names[cnpj]
+        raw = str(row.get("fornecedor") or "").strip()
+        if raw not in _fallback_names:
+            _fallback_names[raw] = standard_supplier_name(raw) if raw else ""
+        return _fallback_names[raw] or raw
+    detail["fornecedor_validacao"] = detail.apply(
+        _supplier_canonical, axis=1
     )
     detail["_fornecedor_norm"] = detail["fornecedor_validacao"].map(
         supplier_validation_name
@@ -2212,6 +2231,7 @@ def _build_mrp_impact(
             "cnpj": group["cnpj"].iloc[0],
             "fornecedor": group["fornecedor"].iloc[0],
             "fornecedor_validacao": group["fornecedor_validacao"].iloc[0],
+            "fornecedor_codigo": group["fornecedor_codigo"].iloc[0],
             "natureza": natureza,
             "cr": cr,
             "desc_cr": desc_cr,
@@ -2990,10 +3010,18 @@ def match_document_to_pre_note(
             return result
 
         if not candidate_cnpj or not doc_cnpj:
+            # Não vincular NF de outro fornecedor apenas pelo número:
+            # a confirmação de nome é obrigatória quando falta CNPJ.
+            if best_score < 88:
+                result["situacao"] = (
+                    "NF ENCONTRADA, MAS FORNECEDOR NÃO CONFIRMADO"
+                )
+                result["score_fornecedor"] = best_score
+                return result
             result.update(
                 matched=True,
-                situacao="OK - NF ÚNICA NA BASE",
-                score_fornecedor=max(best_score, 90),
+                situacao="OK - NF ÚNICA / FORNECEDOR CONFERIDO",
+                score_fornecedor=best_score,
                 row=best.to_dict(),
             )
             return result
@@ -4434,7 +4462,9 @@ def current_pending_pre_notes() -> pd.DataFrame:
                     supplier_similarity(pre_supplier, processed_supplier)
                     for processed_supplier in matching_suppliers
                 )
-                if best_score > 0:
+                # Simples coincidência de uma palavra não significa que
+                # a NF já foi processada por este fornecedor.
+                if best_score >= 88:
                     return True
 
         legacy_key = pre_note_key(
@@ -6106,6 +6136,7 @@ def render_mrp_missing_pre_treatments() -> None:
         "data_pre_nota",
         "numero_nf",
         "cnpj",
+        "fornecedor_codigo",
         "fornecedor",
         "recebedor",
         "prioridade",
@@ -6150,6 +6181,7 @@ def render_mrp_missing_pre_treatments() -> None:
                 ),
                 "numero_nf": "NF",
                 "cnpj": "CNPJ",
+                "fornecedor_codigo": "CÓD. FORNECEDOR",
                 "fornecedor": st.column_config.TextColumn(
                     "FORNECEDOR",
                     width="large",
@@ -6240,14 +6272,23 @@ def render_mrp_missing_pre_treatments() -> None:
                 )
                 return
 
+            # Busca CNPJ primeiro pelo código fornecedor do STSUP01 no
+            # cadastro integrado. Não inventar CNPJ quando houver ambiguidade.
+            _resolved_cnpjs, _ = _supplier_cnpj_lookup(selected)
             additions = []
-            for _, row in selected.iterrows():
+            for _pos, (_, row) in enumerate(selected.iterrows()):
+                _cnpj = digits_only(row.get("cnpj"))
+                if not valid_cnpj(_cnpj):
+                    _cnpj = digits_only(_resolved_cnpjs.iloc[_pos])
                 additions.append({
                     "data_pre_nota": normalized_business_date(
                         row.get("data_pre_nota")
                     ),
                     "numero_nf": normalized_nf(row.get("numero_nf")),
-                    "cnpj": digits_only(row.get("cnpj")),
+                    "cnpj": _cnpj if valid_cnpj(_cnpj) else "",
+                    "fornecedor_codigo": _supplier_code_norm(
+                        row.get("fornecedor_codigo")
+                    ),
                     "fornecedor": str(row.get("fornecedor") or "").strip(),
                     "recebedor": str(row.get("recebedor") or "").strip(),
                     "status": "Pré-nota lançada",
