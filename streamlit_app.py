@@ -6064,6 +6064,7 @@ def render_nf_treatment_center() -> None:
                 type="primary",
                 use_container_width=True,
                 key="download_all_nf_zips",
+                on_click="ignore",
             )
             st.caption(
                 f"O arquivo acima reúne {len(st.session_state.zip_outputs)} ZIP(s) "
@@ -6078,6 +6079,7 @@ def render_nf_treatment_center() -> None:
                     mime="application/zip",
                     use_container_width=True,
                     key=f"download_{zip_name}",
+                    on_click="ignore",
                 )
 
 
@@ -6914,6 +6916,7 @@ def render_cte_linking_stage() -> None:
             mime="application/zip",
             use_container_width=True,
             key="download_dactes_preview",
+                on_click="ignore",
         )
 
     if ignored_ctes:
@@ -8420,6 +8423,7 @@ def render_ready_file_stage() -> None:
         type="primary",
         use_container_width=True,
         key="stage3_download_ready_files",
+                on_click="ignore",
     )
 
     with st.expander(
@@ -8434,6 +8438,7 @@ def render_ready_file_stage() -> None:
                 mime="application/zip",
                 use_container_width=True,
                 key=f"stage3_download_{zip_name}",
+                    on_click="ignore",
             )
 
     current_records = current_process_records_for_tests()
@@ -10387,6 +10392,7 @@ if page == "Dashboard":
                 file_name=f"controle_documentos_{now_local():%d%m%Y}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=True,
+                on_click="ignore",
             )
 
         finalized_delete_options = {}
