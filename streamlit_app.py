@@ -6124,10 +6124,24 @@ def _refresh_missing_mrp_analysis() -> pd.DataFrame:
         and not pre.empty
     ):
         excluded_keys = set(st.session_state.get("excluded_flow_keys") or set())
+        # Índice criado uma única vez por execução. Antes cada NF do MRP
+        # varria todas as pré-notas (custo proporcional a MRP x pré-notas).
+        # A função de vínculo original continua responsável pela decisão.
+        pre_index = {}
+        if "numero_nf" in pre.columns:
+            pre_number = pre["numero_nf"].map(normalized_nf)
+            for nf, indices in pre_number.groupby(pre_number, sort=False).groups.items():
+                if nf:
+                    pre_index[nf] = pre.loc[indices]
         for _, mrp_row in summary.iterrows():
             if flow_nf_key(mrp_row) in excluded_keys:
                 continue
-            match = match_mrp_to_pre_note(mrp_row, pre)
+            nf = normalized_nf(mrp_row.get("numero_nf"))
+            candidates = pre_index.get(nf)
+            match = match_mrp_to_pre_note(
+                mrp_row,
+                candidates if candidates is not None else pre.iloc[0:0],
+            )
             if not match.get("matched"):
                 item = mrp_row.to_dict()
                 if not _supplier_code_norm(item.get("fornecedor_codigo")):
