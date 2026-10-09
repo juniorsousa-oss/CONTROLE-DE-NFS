@@ -72,9 +72,15 @@ submit_buttons=[
     and isinstance(n.func,ast.Attribute)
     and n.func.attr=="form_submit_button"
 ]
-assert len(submit_buttons)==1, "Tratar NF do Protheus precisa de um único submit"
-assert not any(k.arg=="disabled" for k in submit_buttons[0].keywords), (
-    "Submit do Protheus não pode depender de seleção/tratativa pré-submissão"
+action_buttons=[
+    n for n in submit_buttons
+    if n.args and isinstance(n.args[0],ast.Constant)
+    and n.args[0].value=="APLICAR TRATATIVA"
+]
+assert len(action_buttons)==1, "Tratativa do Protheus precisa de um único submit da ação"
+assert len(submit_buttons)==3, "Marcar/desmarcar também devem enviar o mesmo formulário"
+assert not any(k.arg=="disabled" for k in action_buttons[0].keywords), (
+    "Submit da tratativa não pode depender da seleção antes da submissão"
 )
 protheus_source=ast.get_source_segment(source,protheus_func)
 for check in (
@@ -128,8 +134,7 @@ wrong_supplier=audit(
     pd.DataFrame([{"numero_nf":"1","cnpj_fornecedor":"99999999000199"}]),
 )
 assert wrong_supplier["faltantes"], "Nunca vincular nota a CNPJ divergente."
-assert 'expanded=False' in source[source.index('NFs DO PROTHEUS SEM VÍNCULO NAS PRÉ-NOTAS')-90:
-                                     source.index('NFs DO PROTHEUS SEM VÍNCULO NAS PRÉ-NOTAS')+150]
+assert 'expanded=bool(st.session_state.get("_nf_missing_mrp_keep_open", False))' in source
 assert 'st.session_state.nf_selected_flow_keys = set(_active_keys)' in source
 assert '_lot_audit=_audit_selected_nf_batch' in source
 assert 'if invalid_mask.any() or duplicate.any():' in source
