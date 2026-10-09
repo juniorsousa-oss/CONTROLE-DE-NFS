@@ -4216,6 +4216,7 @@ def _reset_nf_session_flow() -> None:
     st.session_state.pop("pending_pre_notes_editor", None)
     st.session_state.pop("linked_documents_to_delete", None)
     st.session_state.nf_flow_stage = 1
+    st.session_state.pop("_nf_send_confirmation_batch", None)
 
 
 def _set_nf_flow_stage(stage: int) -> None:
@@ -10400,7 +10401,7 @@ elif page == "Pendências":
                 st.rerun()
             _reopen = _restart_col.checkbox(
                 "AUTORIZO REABRIR ESTE LOTE",
-                key="nf_recovery_reopen_confirm",
+                key=f"nf_recovery_reopen_confirm_{_batch_id}",
                 help=(
                     "Apaga SOMENTE os registros de geração não enviados "
                     "deste lote para permitir refazer o processamento. "
