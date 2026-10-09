@@ -48,7 +48,7 @@ for token in [
     "nf_stage1_selection_draft",
     'not st.session_state.get("nf_stage1_selection_saved")',
     "_new_selection = set(st.session_state.get(\"nf_stage1_selection\") or set())",
-    "render_mrp_missing_pre_treatments()",
+    "render_mrp_missing_pre_treatments(_not_linked)",
     "nf_documents_analyzed_signature",
     "nf_documents_current_signature",
     'disabled=not bool(documents_to_process)',
