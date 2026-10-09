@@ -510,6 +510,7 @@ def init():
         "last_generation_audit": {},
         "nf_flow_stage": 1,
         "nf_selected_flow_keys": set(),
+        "nf_stage2_batch_keys": set(),
         "nf_stage1_selection": None,
         "nf_stage1_selection_draft": None,
         "nf_stage1_selection_saved": False,
@@ -4288,6 +4289,7 @@ def _reset_nf_session_flow() -> None:
     st.session_state.nf_stage2_search_started = False
     st.session_state.last_generation_audit = {}
     st.session_state.nf_selected_flow_keys = set()
+    st.session_state.nf_stage2_batch_keys = set()
     st.session_state.nf_stage1_selection = None
     st.session_state.nf_stage1_selection_draft = None
     st.session_state.nf_stage1_selection_saved = False
@@ -7920,6 +7922,7 @@ def render_document_linking_stage() -> None:
                         st.error("O lote não pode ficar vazio. Retorne à base para escolher outras NFs.")
                     else:
                         st.session_state.nf_selected_flow_keys = _remaining
+                        st.session_state.nf_stage2_batch_keys = set(_remaining)
                         st.session_state.nf_stage1_selection = set(_remaining)
                         st.session_state.nf_stage1_selection_draft = None
                         st.session_state.nf_stage1_selection_saved = True
@@ -11381,8 +11384,11 @@ elif page == "Pendências":
             key="flow_to_documents",
         ):
             _new_selection = set(st.session_state.get("nf_stage1_selection") or set())
+            # A seleção é atualizada no formulário antes deste botão.
+            # Comparar com nf_selected_flow_keys esconderia mudanças no lote
+            # e reaproveitaria documentos da seleção anterior.
             _old_selection = set(
-                st.session_state.get("nf_selected_flow_keys") or set()
+                st.session_state.get("nf_stage2_batch_keys") or set()
             )
             if _new_selection != _old_selection:
                 st.session_state.analysis = pd.DataFrame()
@@ -11408,6 +11414,7 @@ elif page == "Pendências":
                 st.session_state.pop("pending_fiscal_documents", None)
 
             st.session_state.nf_selected_flow_keys = _new_selection
+            st.session_state.nf_stage2_batch_keys = set(_new_selection)
             _set_nf_flow_stage(2)
             st.rerun()
 
