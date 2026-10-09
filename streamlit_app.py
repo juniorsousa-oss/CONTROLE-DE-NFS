@@ -511,6 +511,8 @@ def init():
         "nf_stage1_selection": None,
         "nf_stage1_selection_draft": None,
         "nf_stage1_selection_saved": False,
+        "nf_documents_analyzed_signature": "",
+        "nf_documents_current_signature": "",
         "_nf_stage1_editor_rev": 0,
         "document_ignored_items": [],
         "danfe_outputs": {},
@@ -4204,6 +4206,8 @@ def _reset_nf_session_flow() -> None:
     st.session_state.nf_stage1_selection = None
     st.session_state.nf_stage1_selection_draft = None
     st.session_state.nf_stage1_selection_saved = False
+    st.session_state.nf_documents_analyzed_signature = ""
+    st.session_state.nf_documents_current_signature = ""
     st.session_state["_nf_stage1_editor_rev"] = int(st.session_state.get("_nf_stage1_editor_rev") or 0) + 1
     st.session_state.pop("pending_fiscal_documents", None)
     st.session_state.pop("pending_pre_notes_editor", None)
@@ -6874,6 +6878,16 @@ def render_document_linking_stage() -> None:
         st.session_state.get("document_upload_cache") or []
     )
     documents_to_process = live_documents or cached_documents
+    # O botão VALIDAR só será liberado depois da análise deste lote.
+    import hashlib
+    _doc_fingerprint = hashlib.sha256()
+    for _document in sorted(documents_to_process, key=lambda item: str(item.get("name") or "")):
+        _doc_fingerprint.update(str(_document.get("name") or "").encode("utf-8"))
+        _doc_fingerprint.update(hashlib.sha256(_document.get("raw") or b"").digest())
+    current_signature = (
+        _doc_fingerprint.hexdigest() if documents_to_process else ""
+    )
+    st.session_state.nf_documents_current_signature = current_signature
 
     if not uploaded and cached_documents:
         class _CachedFiscalUpload:
@@ -7491,6 +7505,7 @@ def render_document_linking_stage() -> None:
         st.session_state.document_link_stats = dict(
             st.session_state.prefilter_stats
         )
+        st.session_state.nf_documents_analyzed_signature = current_signature
         _unassociated = list(ignored_items)
         for _item in nf_rejected:
             if not bool(_item.get("vinculado_base")):
@@ -9946,8 +9961,13 @@ elif page == "Pendências":
                 apply_cross_checks(_analysis_stage2.copy())
             )
             st.session_state.analysis = _analysis_stage2
-            _can_continue_stage2 = not bool(
-                treatment_mask(_analysis_stage2).any()
+            _can_continue_stage2 = bool(
+                st.session_state.get("nf_documents_analyzed_signature")
+                and st.session_state.get("nf_documents_analyzed_signature")
+                == st.session_state.get("nf_documents_current_signature")
+                and not treatment_mask(_analysis_stage2).any()
+                and not st.session_state.get("cte_rejected")
+                and not st.session_state.get("prefilter_rejected")
             )
 
         if st.button(
@@ -10528,57 +10548,9 @@ elif page == "Pendências":
                 f"{len(filtered)} DE {len(pending_view)} PRÉ-NOTA(S) EXIBIDA(S)"
             )
 
-        _missing_stage1 = _refresh_missing_mrp_analysis()
-        if isinstance(_missing_stage1, pd.DataFrame) and not _missing_stage1.empty:
-            with st.expander(
-                f"NFs SEM VINCULAÇÃO AUTOMÁTICA ({len(_missing_stage1)})",
-                expanded=False,
-            ):
-                _missing_cols = [
-                    col for col in [
-                        "data_pre_nota",
-                        "numero_nf",
-                        "fornecedor",
-                        "prioridade",
-                        "data_cm",
-                        "situacao_vinculo",
-                        "score_fornecedor",
-                    ]
-                    if col in _missing_stage1.columns
-                ]
-                _setta_dataframe(
-                    _missing_stage1[_missing_cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config={
-                        "data_pre_nota": st.column_config.DateColumn(
-                            "DATA",
-                            format="DD/MM/YYYY",
-                        ),
-                        "numero_nf": "NF",
-                        "fornecedor": st.column_config.TextColumn(
-                            "FORNECEDOR",
-                            width="large",
-                        ),
-                        "prioridade": "PRIORIDADE",
-                        "data_cm": st.column_config.DateColumn(
-                            "DATA CM",
-                            format="DD/MM/YYYY",
-                        ),
-                        "situacao_vinculo": st.column_config.TextColumn(
-                            "MOTIVO",
-                            width="large",
-                        ),
-                        "score_fornecedor": st.column_config.NumberColumn(
-                            "ADERÊNCIA",
-                            format="%d%%",
-                        ),
-                    },
-                )
-                st.caption(
-                    "Essas NFs não bloqueiam o fluxo. Consulte somente se precisar "
-                    "tratar alguma associação manualmente."
-                )
+        # Antes era apenas uma grade informativa: agora o operador pode
+        # selecionar individualmente as NFs do Protheus e adicioná-las ao fluxo.
+        render_mrp_missing_pre_treatments()
 
         st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
         if st.button(
@@ -10611,6 +10583,8 @@ elif page == "Pendências":
                 st.session_state.document_ignored_items = []
                 st.session_state.document_link_stats = {}
                 st.session_state.document_upload_cache = []
+                st.session_state.nf_documents_analyzed_signature = ""
+                st.session_state.nf_documents_current_signature = ""
                 st.session_state.pop("pending_fiscal_documents", None)
 
             st.session_state.nf_selected_flow_keys = _new_selection
