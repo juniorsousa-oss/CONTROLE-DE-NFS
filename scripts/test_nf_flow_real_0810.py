@@ -139,6 +139,13 @@ assert 'st.session_state.nf_selected_flow_keys = set(_active_keys)' in source
 assert '_lot_audit=_audit_selected_nf_batch' in source
 assert 'if invalid_mask.any() or duplicate.any():' in source
 
+# A tela de vinculação já recalcula as validações, o controlador não pode
+# repetir recalc/apply_cross_checks a cada clique (custo duplicado por NF).
+_stage2_view=source[source.index('if _flow_stage == 2:'):source.index('if _flow_stage == 3:')]
+assert 'render_document_linking_stage()' in _stage2_view
+assert '_analysis_stage2 = recalc(' not in _stage2_view
+assert 'merged = recalc(apply_cross_checks(analysis.copy()))' in source
+
 ready=function("render_ready_file_stage")
 ready_lines=ast.get_source_segment(source,ready)
 assert ready_lines.index('CT-e VINCULADOS ÀS NFs DESTE LOTE') < ready_lines.index('"GERAR ARQUIVO PRONTO PARA IMPORTAÇÃO"')
