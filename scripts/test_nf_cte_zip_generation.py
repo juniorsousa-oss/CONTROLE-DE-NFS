@@ -103,6 +103,17 @@ with zipfile.ZipFile(io.BytesIO(cte_zip)) as inner:
     assert inner.read("CTE-987654.pdf")==b"%PDF-1.4\nfake-dacte"
 assert state.last_generation_audit["cte_gerados"] == 1
 
+# A chave da NF é estável, mesmo quando o file_id muda na reanálise.
+state.cte_links[0]["linked_file_ids"]=["id-antigo"]
+keys_only, manifest_only=make_zips(df)
+assert sum(x["tipo_documento"]=="CT-e" for x in manifest_only)==1
+with zipfile.ZipFile(io.BytesIO(
+    next(data for name,data in keys_only.items() if name.startswith("CTE"))
+)) as archive:
+    assert "CTE-987654.pdf" in archive.namelist()
+# Restaura o ID normal para os demais cenários.
+state.cte_links[0]["linked_file_ids"]=["nf-1"]
+
 # A exclusão fiscal documentada para tomador não-SETTA é permitida; não cria DACTE.
 state.cte_links=[]
 state.cte_ignored_non_setta=[{"chave_cte":cte_key,"tomador":"OUTRA EMPRESA"}]
