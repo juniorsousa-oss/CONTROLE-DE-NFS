@@ -31,6 +31,8 @@ jobs:
         run: python -m scripts.test_nf_stage3_batch_snapshot
       - name: Testar transição explícita para busca na etapa 2
         run: python -m scripts.test_nf_stage2_explicit_lookup
+      - name: Testar impressão avulsa NF-e/CT-e
+        run: python -m scripts.test_nf_avulsa
       - name: Testar biblioteca XML privada
         run: python -m compileall -q nf_xml_library.py && python -m scripts.test_nf_xml_library
       - name: Testar pré-conferência e carga incremental dos XMLs
