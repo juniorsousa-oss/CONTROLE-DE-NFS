@@ -728,6 +728,14 @@ div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="column"]{
 .setta-empty-state{border:1px dashed #cbd5e1!important;border-radius:12px!important;background:#f8fafc!important;padding:.85rem 1rem!important;color:#64748b!important;font-size:.76rem!important;font-weight:800!important;letter-spacing:.02em!important;text-transform:uppercase!important;margin:.1rem 0 .5rem!important}
 .intro{background:#fff!important;border:1px solid #e5e8ee!important;border-radius:14px!important;padding:.9rem 1rem!important;color:#555c66!important;margin-bottom:1rem!important;box-shadow:0 3px 12px rgba(15,23,42,.035)!important}
 .kpi-card.selected{outline:2px solid var(--accent)!important;outline-offset:1px!important}
+/* Uma grade CSS substitui st.columns, evitando cards pulando de fila no
+   rerun de abertura/fechamento da sidebar. Mantém dimensões mínimas nulas. */
+.nf-kpi-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:.8rem!important;width:100%!important;min-width:0!important;margin:.5rem 0 .8rem!important}
+.nf-kpi-grid.nf-kpi-sent{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.nf-kpi-grid .kpi-card{min-width:0!important;width:100%!important;height:100%!important;box-sizing:border-box!important;overflow-wrap:anywhere!important;margin:0!important}
+.nf-kpi-grid .kpi-label{white-space:normal!important;overflow-wrap:anywhere!important}
+@media(max-width:980px){.nf-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:540px){.nf-kpi-grid{grid-template-columns:minmax(0,1fr)!important}.nf-kpi-grid.nf-kpi-sent{grid-template-columns:minmax(0,1fr)!important}}
 .footer{text-align:center!important;color:#9298a1!important;font-size:.72rem!important;padding-top:1.2rem!important}
 @media(max-width:900px){
   .section-title{font-size:1.14rem!important}
@@ -10262,28 +10270,35 @@ if page == "Dashboard":
         ("PRÉ-NOTAS REALIZADAS", pre_done, "CONCLUÍDAS", "#d97706", "#ffedd5", False),
         ("ARQUIVOS CRIADOS", created, "DANFE + DACTE", "#0891b2", "#cffafe", False),
     ]
-    for col, item in zip(st.columns(4), kpis):
-        label, value, delta, accent, soft, selected = item
+    # Componentes estáticos de CSS grid: o Streamlit não precisa remontar
+    # colunas com largura intrínseca quando a sidebar ocupa mais espaço.
+    _nf_card_html = []
+    for label, value, delta, accent, soft, selected in kpis:
         selected_class = " selected" if selected else ""
-        col.markdown(
+        _nf_card_html.append(
             f'<div class="kpi-card{selected_class}" style="--accent:{accent};--accent-soft:{soft}">'
             f'<div class="kpi-header"><span class="kpi-dot"></span><span class="kpi-label">{label}</span></div>'
-            f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>',
-            unsafe_allow_html=True,
+            f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>'
         )
+    st.markdown(
+        '<div class="nf-kpi-grid">' + "".join(_nf_card_html) + '</div>',
+        unsafe_allow_html=True,
+    )
 
     sent_cards = [
         ("NFs ENVIADAS", nf_sent, "CONFIRMADAS", "#16a34a", "#dcfce7"),
         ("CT-es ENVIADOS", cte_sent, "CONFIRMADOS", "#15803d", "#dcfce7"),
     ]
-    for col, item in zip(st.columns(2), sent_cards):
-        label, value, delta, accent, soft = item
-        col.markdown(
-            f'<div class="kpi-card" style="--accent:{accent};--accent-soft:{soft};margin-top:.7rem">'
-            f'<div class="kpi-header"><span class="kpi-dot"></span><span class="kpi-label">{label}</span></div>'
-            f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>',
-            unsafe_allow_html=True,
-        )
+    _nf_sent_html = [
+        f'<div class="kpi-card" style="--accent:{accent};--accent-soft:{soft}">'
+        f'<div class="kpi-header"><span class="kpi-dot"></span><span class="kpi-label">{label}</span></div>'
+        f'<div class="kpi-value">{value}</div><div class="kpi-delta">{delta}</div></div>'
+        for label, value, delta, accent, soft in sent_cards
+    ]
+    st.markdown(
+        '<div class="nf-kpi-grid nf-kpi-sent">' + "".join(_nf_sent_html) + '</div>',
+        unsafe_allow_html=True,
+    )
 
     st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
     section_band(
