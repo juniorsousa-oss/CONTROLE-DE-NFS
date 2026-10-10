@@ -3403,7 +3403,64 @@ def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _cte_zip_readiness() -> dict:
+    """Reconcilia o CT-e do banco antes de autorizar geração final.
+
+    Um CT-e que referencia uma NF selecionada não pode desaparecer
+    silenciosamente do pacote. Só é dispensado com prova de tomador
+    fora do escopo SETTA; documentos com falha permanecem pendentes.
+    """
+    stats = st.session_state.get("nf_xml_auto_stats") or {}
+    expected = {
+        digits_only(key)
+        for key in (stats.get("cte_expected_keys") or [])
+        if len(digits_only(key)) == 44
+    }
+    linked = {
+        digits_only(item.get("chave_cte"))
+        for item in (st.session_state.get("cte_links") or [])
+        if len(digits_only(item.get("chave_cte"))) == 44
+    }
+    excluded = {
+        digits_only(item.get("chave_cte"))
+        for item in (st.session_state.get("cte_ignored_non_setta") or [])
+        if len(digits_only(item.get("chave_cte"))) == 44
+    }
+    missing = sorted(expected - linked - excluded)
+    errors = []
+    if (
+        st.session_state.get("nf_stage2_search_started")
+        and stats
+        and int(stats.get("match_version") or 0) < 2
+    ):
+        errors.append(
+            "A consulta XML foi feita com uma versão anterior da biblioteca. "
+            "Volte à etapa 2 e clique em RECONSULTAR DOCUMENTOS NO BANCO."
+        )
+    if missing:
+        errors.append(
+            f"{len(missing)} CT-e(s) encontrados na biblioteca ainda não "
+            "foram vinculados nem dispensados por tomador externo. "
+            "Reconsulte os documentos na etapa 2 e confira as exceções."
+        )
+    if expected and int(stats.get("download_errors") or 0):
+        errors.append(
+            "Houve falha na recuperação de XMLs. Reconsulte antes de "
+            "gerar o lote para não deixar CT-es de fora."
+        )
+    return {
+        "expected": len(expected),
+        "linked": len(expected & linked) if expected else len(linked),
+        "excluded": len(expected & excluded),
+        "missing": missing,
+        "errors": errors,
+    }
+
+
 def make_zip_outputs(df: pd.DataFrame):
+    cte_status = _cte_zip_readiness()
+    if cte_status["errors"]:
+        raise ValueError(" | ".join(cte_status["errors"]))
     outputs: dict[str, bytes] = {}
     manifest: list[dict] = []
     batch = f"NF-{now_local():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:5].upper()}"
@@ -3760,6 +3817,8 @@ def make_zip_outputs(df: pd.DataFrame):
 
     _link_stats = st.session_state.get("document_link_stats") or {}
     st.session_state.last_generation_audit = {
+        "cte_localizados_biblioteca": cte_status["expected"],
+        "cte_excluidos_tomador": cte_status["excluded"],
         "nf_recebidas": int(_link_stats.get("nf_classificados") or expected_nf_count),
         "nf_vinculadas": expected_nf_count,
         "nf_geradas": nf_manifest_count,
@@ -7761,6 +7820,7 @@ def render_document_linking_stage() -> None:
                             or "NÃO IDENTIFICADO COMO SETTA"
                         ),
                         "cnpj_tomador": meta.cnpj_tomador,
+                        "chave_cte": meta.chave,
                     })
                     continue
 
@@ -8576,6 +8636,19 @@ def render_ready_file_stage() -> None:
             return
     else:
         st.caption("NENHUM CT-e VINCULADO A ESTE LOTE.")
+
+    cte_readiness = _cte_zip_readiness()
+    if cte_readiness["expected"]:
+        st.caption(
+            f"BIBLIOTECA CT-e · {cte_readiness['expected']} encontrado(s) · "
+            f"{cte_readiness['linked']} vinculado(s) · "
+            f"{cte_readiness['excluded']} fora do escopo do tomador · "
+            f"{len(cte_readiness['missing'])} pendente(s)"
+        )
+    if cte_readiness["errors"]:
+        for message in cte_readiness["errors"]:
+            st.error(message)
+        return
 
     if not st.session_state.get("zip_outputs"):
         if st.button(
