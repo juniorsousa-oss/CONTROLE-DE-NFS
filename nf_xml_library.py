@@ -61,7 +61,7 @@ def _automatic_service_token():
 def library_api(action:str,values:dict|None=None,timeout:int=70):
     # A consulta do lote é automática via credencial de serviço restrita.
     # Para importar, consultar o catálogo ou gerir pessoas, login humano persiste.
-    if action in {"match","download"} and _automatic_service_token():
+    if action in {"match","download","buscar_avulso","cte_avulso"} and _automatic_service_token():
         return _call(action,{
             "service_token":_automatic_service_token(),**(values or {})
         },timeout=timeout)
