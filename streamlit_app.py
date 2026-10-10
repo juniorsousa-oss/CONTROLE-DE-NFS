@@ -2154,7 +2154,9 @@ def _supplier_cnpj_lookup(entries: pd.DataFrame) -> tuple[pd.Series, int]:
                     (score for score, doc in ranked[1:] if doc != best_doc),
                     default=0,
                 )
-                if best_score - runner_up >= 5:
+                # Duas filiais com nomes quase iguais não podem ser
+                # diferenciadas com segurança só pela razão social.
+                if best_score - runner_up >= 10 and runner_up < 82:
                     cnpj = best_doc
 
         cache[cache_key] = cnpj
