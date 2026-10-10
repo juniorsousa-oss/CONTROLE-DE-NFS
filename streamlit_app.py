@@ -3809,20 +3809,10 @@ def make_zip_outputs(df: pd.DataFrame):
         if is_cte_document_type(item.get("tipo_documento"))
     )
 
-    selected_file_ids = {
-        str(value)
-        for value in work.get("file_id", pd.Series(dtype=str)).fillna("").astype(str)
-        if str(value).strip()
-    }
+    # Todos os CT-es ativos devem aparecer no manifesto. Os identificadores
+    # locais não são estáveis após reanálise e não definem a elegibilidade.
     expected_cte_keys = set()
     for cte in st.session_state.get("cte_links") or []:
-        linked_ids = {
-            str(value)
-            for value in (cte.get("linked_file_ids") or [])
-            if str(value).strip()
-        }
-        if not (linked_ids & selected_file_ids):
-            continue
         cte_key = (
             str(cte.get("chave_cte") or "").strip()
             or str(cte.get("cte_id") or "").strip()
