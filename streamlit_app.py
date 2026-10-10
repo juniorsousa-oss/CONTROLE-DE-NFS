@@ -10082,7 +10082,7 @@ setta_shell.render_shell(
 _NF_NAV_PAGES = ["Dashboard"]
 if ENABLE_PENDING_REPORT:
     _NF_NAV_PAGES.append("Pendências")
-_NF_NAV_PAGES.append("Geração de Arquivos")
+_NF_NAV_PAGES.append("Impressão Avulsa")
 _NF_NAV_PAGES.append("Biblioteca XML")
 _NF_NAV_PAGES.append("Configurações")
 
@@ -10116,6 +10116,10 @@ def _set_nf_page(target: str) -> None:
 
 def _current_nf_page() -> str:
     value = str(st.session_state.get("_nf_sidebar_page") or "Dashboard")
+    # Ao atualizar o app, mantém a página aberta nas sessões anteriores.
+    if value == "Geração de Arquivos":
+        value = "Impressão Avulsa"
+        st.session_state["_nf_sidebar_page"] = value
     if value not in _NF_NAV_PAGES:
         value = "Dashboard"
         st.session_state["_nf_sidebar_page"] = value
@@ -10237,7 +10241,7 @@ with st.sidebar:
     )
 
 
-if page in {"Pendências", "Geração de Arquivos"}:
+if page in {"Pendências", "Impressão Avulsa"}:
     try:
         _ensure_operational_reference_data()
     except Exception as exc:
@@ -11605,56 +11609,37 @@ elif page == "Pendências":
         st.stop()
 
 
-elif page == "Geração de Arquivos":
-    st.markdown(
-        '<div class="section-title">GERAÇÃO DE ARQUIVOS</div>',
-        unsafe_allow_html=True,
+elif page == "Impressão Avulsa":
+    # A geração convencional mantém seu acesso próprio no menu lateral.
+    # Sem abas internas: esta página trata exclusivamente impressões avulsas.
+    def _resolve_avulsa_stamp(meta, info):
+        row = {
+            "numero_nf": str(meta.numero_nf),
+            "cnpj_fornecedor": str(meta.cnpj_emitente),
+            "fornecedor_lido": str(meta.emitente),
+            "fornecedor_padrao": supplier_name_from_cnpj(meta.cnpj_emitente)
+            or str(meta.emitente),
+        }
+        pre_match = match_document_to_pre_note(row)
+        pre = pre_match.get("row") if pre_match.get("matched") else None
+        fields = operational_fields_from_nf_load(pre, row)
+        return {
+            "data_chegada": (
+                normalized_business_date(pre.get("data_pre_nota"))
+                if pre else None
+            ),
+            "cr": str(fields.get("cr") or "").strip(),
+            "desc_cr": str(fields.get("desc_cr") or "").strip(),
+            "natureza": str(fields.get("natureza") or "").strip(),
+            "recebido_por": str(pre.get("recebedor") or "").strip() if pre else "",
+        }
+
+    nf_avulsa.render_page(
+        resolve_stamp=_resolve_avulsa_stamp,
+        supplier_resolver=supplier_name_from_cnpj,
+        validate_tomador=cte_tomador_confirmed_setta,
+        company_sigla=company_sigla_from_document,
     )
-    _tab_avulsa, _tab_lote = st.tabs([
-        "IMPRESSÃO AVULSA DE NF-e / CT-e",
-        "GERAÇÃO CONVENCIONAL DE LOTES",
-    ])
-
-    with _tab_avulsa:
-        def _resolve_avulsa_stamp(meta, info):
-            row = {
-                "numero_nf": str(meta.numero_nf),
-                "cnpj_fornecedor": str(meta.cnpj_emitente),
-                "fornecedor_lido": str(meta.emitente),
-                "fornecedor_padrao": supplier_name_from_cnpj(meta.cnpj_emitente)
-                or str(meta.emitente),
-            }
-            pre_match = match_document_to_pre_note(row)
-            pre = pre_match.get("row") if pre_match.get("matched") else None
-            fields = operational_fields_from_nf_load(pre, row)
-            return {
-                "data_chegada": (
-                    normalized_business_date(pre.get("data_pre_nota"))
-                    if pre else None
-                ),
-                "cr": str(fields.get("cr") or "").strip(),
-                "desc_cr": str(fields.get("desc_cr") or "").strip(),
-                "natureza": str(fields.get("natureza") or "").strip(),
-                "recebido_por": str(pre.get("recebedor") or "").strip() if pre else "",
-            }
-
-        nf_avulsa.render_page(
-            resolve_stamp=_resolve_avulsa_stamp,
-            supplier_resolver=supplier_name_from_cnpj,
-            validate_tomador=cte_tomador_confirmed_setta,
-            company_sigla=company_sigla_from_document,
-        )
-
-    with _tab_lote:
-        st.info(
-            "A geração convencional permanece dentro do fluxo de "
-            "Pendências: Pré-notas → Documentos → Arquivo pronto. "
-            "A impressão avulsa não modifica nem conclui esse lote."
-        )
-        if st.button("ABRIR GERAÇÃO CONVENCIONAL", use_container_width=True,
-                     key="nf_avulsa_abrir_lote"):
-            _set_nf_page("Pendências")
-            st.rerun()
 
 
 elif page == "Biblioteca XML":
