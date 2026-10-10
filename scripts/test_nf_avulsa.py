@@ -21,8 +21,8 @@ assert av.parse_br_date("31/02/2026") is None
 
 nfkey="31261012345678000190550010000001231000000000"
 ctekey="31261099887766000190570010000000011000000000"
-nf=SimpleNamespace(chave=nfkey, numero_nf="123", cnpj_emitente="12345678000190", emitente="EMITENTE")
-cte=SimpleNamespace(chave=ctekey, numero="1", refs_nfe=[nfkey], emitente="TRANSPORTADORA", tomador_nome="SETTA", cnpj_tomador="")
+nf=SimpleNamespace(chave=nfkey, numero_nf="123", cnpj_emitente="12345678000190", emitente="EMITENTE", status_codigo="100")
+cte=SimpleNamespace(chave=ctekey, numero="1", refs_nfe=[nfkey], emitente="TRANSPORTADORA", tomador_nome="SETTA", cnpj_tomador="", status_codigo="100")
 record={"chave":nfkey,"numero":"123","cnpj_emitente":"12345678000190"}
 cterecord={"chave":ctekey,"numero":"1"}
 with patch.object(av,"extract_danfe_metadata",return_value=nf), patch.object(av,"extract_nfe_processing_data",return_value={}):
