@@ -270,8 +270,13 @@ Deno.serve(async(req)=>{
    if((confirmed||[]).length!==keys.length)return fail("NFE_NAO_DISPONIVEL_NO_ACERVO");
    const batches=await Promise.all(keys.map((k:string)=>api.from("nf_xml_documentos")
     .select("id,tipo,chave,numero,cnpj_emitente,refs_nfe,arquivo_nome")
-    .eq("tipo","CTE").contains("refs_nfe",[k]).limit(101)));
-   if(batches.some((b:any)=>b.error))return fail("FALHA_BUSCA_CTE_AVULSO",500);
+    // refs_nfe é JSONB, não text[]. Enviar JSON literal na expressão cs.
+    .eq("tipo","CTE").filter("refs_nfe","cs",JSON.stringify([k])).limit(101)));
+   if(batches.some((b:any)=>b.error)){
+    // Registra só o código SQL, sem expor dados fiscais ou credenciais.
+    console.error("FALHA_BUSCA_CTE_AVULSO", batches.filter((b:any)=>b.error).map((b:any)=>b.error?.code||"SEM_CODIGO"));
+    return fail("FALHA_BUSCA_CTE_AVULSO",500);
+   }
    const found=new Map<string,any>();
    for(const batch of batches)for(const item of batch.data||[])found.set(item.id,item);
    if(found.size>40)return fail("LIMITE_CTE_AVULSO_EXCEDIDO");
