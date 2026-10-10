@@ -66,4 +66,25 @@ edge=Path("supabase/functions/nf-xml-library-api/index.ts").read_text()
 assert 'nf_avulsa.render_page(' in app
 assert 'if(action==="buscar_avulso")' in edge
 assert 'if(action==="cte_avulso")' in edge
+# O botão original continua atendendo os lotes, com o rótulo configurável.
+assert '_NF_NAV_PAGES.append("Pendências")' in app
+assert 'if _page == "Pendências"' in app
+assert '_control_docs_label.upper()' in app
+assert '_NF_NAV_PAGES.append("Impressão Avulsa")' in app
+assert '_NF_NAV_PAGES.append("Geração de Arquivos")' not in app
+
+# A navegação antiga é migrada para o novo título, sem jogar o operador no dashboard.
+assert 'if value == "Geração de Arquivos":' in app
+assert 'value = "Impressão Avulsa"' in app
+
+# Impressão avulsa não possui mais aba duplicada nem retorno à geração convencional.
+start = app.index('elif page == "Impressão Avulsa":')
+end = app.index('elif page == "Biblioteca XML":', start)
+avulsa_page = app[start:end]
+assert 'nf_avulsa.render_page(' in avulsa_page
+assert 'st.tabs(' not in avulsa_page
+assert 'GERAÇÃO CONVENCIONAL DE LOTES' not in avulsa_page
+assert 'ABRIR GERAÇÃO CONVENCIONAL' not in avulsa_page
+assert 'nf_avulsa_abrir_lote' not in avulsa_page
+
 print("NFS_IMPRESSAO_AVULSA_OK")
