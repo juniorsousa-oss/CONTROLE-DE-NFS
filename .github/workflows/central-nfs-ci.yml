@@ -25,6 +25,10 @@ jobs:
         run: python -m scripts.test_nf_mrp_index
       - name: Testar catálogo de fornecedores por código e loja
         run: python -m scripts.test_nf_supplier_index
+      - name: Testar cadastro CNPJ e estabilidade dos cards/sidebar
+        run: python -m scripts.test_nf_supplier_cnpj_sidebar_ui
+      - name: Testar lote congelado até a geração dos PDFs
+        run: python -m scripts.test_nf_stage3_batch_snapshot
       - name: Testar transição explícita para busca na etapa 2
         run: python -m scripts.test_nf_stage2_explicit_lookup
       - name: Testar biblioteca XML privada
