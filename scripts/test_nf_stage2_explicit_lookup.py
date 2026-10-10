@@ -98,7 +98,7 @@ assert state.document_upload_cache[0]["name"]=="NF_4699.xml"
 # A nova seleção difere do LOTE ANTERIOR, mesmo quando o formulário já
 # atualizou nf_selected_flow_keys.
 assert '"nf_stage2_batch_keys": set()' in source
-assert 'st.session_state.nf_stage2_batch_keys = set(_new_selection)' in source
+assert 'st.session_state.nf_stage2_batch_keys = set(keys)' in source
 assert 'st.session_state.get("nf_stage2_batch_keys") or set()' in source
 assert 'st.session_state.nf_stage2_search_started = False' in source
 assert 'st.session_state.pop("nf_xml_auto_stats", None)' in source
