@@ -274,8 +274,14 @@ Deno.serve(async(req)=>{
     }else missing.push(item.numero+(matches.length>1?" (AMBÍGUA)":""));
    }
    let linkedCte:any[]=[];
-   if(selected.length){
-    const keys=new Set(selected.map(x=>x.chave));
+   // Incluir também a chave das NF-e localizadas pelo número e nome:
+   // a validação fiscal do emitente acontece no cliente antes do vínculo.
+   // Antes este grupo ficava FORA da busca de CT-e.
+   const keys=new Set(
+    [...selected,...candidatosSemCnpj].map((x:any)=>digits(x.chave))
+     .filter((k:string)=>k.length===44&&k.slice(20,22)==="55")
+   );
+   if(keys.size){
     const {data:cte,error:ce}=await api.from("nf_xml_documentos")
      .select("id,tipo,chave,numero,refs_nfe,arquivo_nome").eq("tipo","CTE")
      .order("importado_em",{ascending:false}).limit(3000);
