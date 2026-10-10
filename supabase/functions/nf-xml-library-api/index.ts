@@ -97,7 +97,7 @@ Deno.serve(async(req)=>{
   const serviceToken=trim(payload.service_token);
   let user="",profile="";
   if(serviceToken){
-   if(!["match","download"].includes(action))return fail("SERVICE_ACTION_DENIED",403);
+   if(!["match","download","buscar_avulso","cte_avulso"].includes(action))return fail("SERVICE_ACTION_DENIED",403);
    if(serviceToken.length<50||serviceToken.length>200)return fail("SERVICE_TOKEN_INVALID",401);
    const hash=Array.from(
     new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(serviceToken)))
@@ -245,6 +245,37 @@ Deno.serve(async(req)=>{
    }
    await api.from("nf_xml_importacoes").insert({documento_id:record.id,arquivo_nome:nome,resultado:"INCLUIDO",origem:"MANUAL",usuario_id:user});
    return json({ok:true,data:{resultado:"INCLUIDO",chave:info.chave,tipo:info.tipo}});
+  }
+  if(action==="buscar_avulso"){
+   // Busca EXATA pelo número, sem associar fornecedor/CNPJ por aproximação.
+   // O operador escolhe explicitamente entre documentos homônimos.
+   const incoming=trim(payload.numero);
+   if(!/^[0-9]{1,9}$/.test(incoming))return fail("NUMERO_NF_INVALIDO");
+   const numero=fiscalNumber(incoming);
+   const {data,error}=await api.from("nf_xml_documentos")
+    .select("id,tipo,chave,numero,cnpj_emitente,cnpj_destinatario,arquivo_nome")
+    .eq("tipo","NFE").eq("numero",numero)
+    .order("importado_em",{ascending:false}).limit(101);
+   if(error)return fail("FALHA_BUSCA_AVULSA",500);
+   if((data||[]).length>100)return fail("LIMITE_BUSCA_AVULSA_EXCEDIDO");
+   return json({ok:true,data:{nfe:data||[]}});
+  }
+  if(action==="cte_avulso"){
+   const keys=[...new Set(array(payload.chaves_nfe).map((x:any)=>digits(x)))];
+   if(!keys.length||keys.length>20||keys.some((k:string)=>k.length!==44||k.slice(20,22)!=="55"))
+    return fail("CHAVES_NFE_INVALIDAS");
+   const {data:confirmed,error:ne}=await api.from("nf_xml_documentos")
+    .select("chave").eq("tipo","NFE").in("chave",keys).limit(20);
+   if(ne)return fail("FALHA_CONFERENCIA_NFE",500);
+   if((confirmed||[]).length!==keys.length)return fail("NFE_NAO_DISPONIVEL_NO_ACERVO");
+   const batches=await Promise.all(keys.map((k:string)=>api.from("nf_xml_documentos")
+    .select("id,tipo,chave,numero,cnpj_emitente,refs_nfe,arquivo_nome")
+    .eq("tipo","CTE").contains("refs_nfe",[k]).limit(101)));
+   if(batches.some((b:any)=>b.error))return fail("FALHA_BUSCA_CTE_AVULSO",500);
+   const found=new Map<string,any>();
+   for(const batch of batches)for(const item of batch.data||[])found.set(item.id,item);
+   if(found.size>40)return fail("LIMITE_CTE_AVULSO_EXCEDIDO");
+   return json({ok:true,data:{cte:[...found.values()]}});
   }
   if(action==="match"){
    const items=array(payload.nfs).slice(0,500);
