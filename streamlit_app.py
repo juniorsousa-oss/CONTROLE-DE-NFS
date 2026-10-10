@@ -1513,7 +1513,7 @@ def match_mrp_to_pre_note(
     result = {
         "matched": False,
         "situacao": "AUSENTE NAS PRÉ-NOTAS",
-        "score_fornecedor": 0,
+        "score_fornecedor": None,
         "row": None,
     }
     if not isinstance(pre_notes, pd.DataFrame) or pre_notes.empty:
@@ -2127,8 +2127,16 @@ def _supplier_cnpj_lookup(entries: pd.DataFrame) -> tuple[pd.Series, int]:
         group = by_code.get(code) or ()
         cnpj = ""
         docs = {doc for doc, _ in group if doc}
-        if len(docs) == 1:
-            cnpj = next(iter(docs))
+        if len(docs) == 1 and desc:
+            # Mesmo código não prova a identidade do fornecedor: códigos
+            # importados podem divergir entre filiais e bases do TOTVS.
+            supplier_doc, variants = group[0]
+            name_score = max(
+                (supplier_similarity(desc, variant) for variant in variants),
+                default=0,
+            )
+            if name_score >= 80:
+                cnpj = supplier_doc
         elif len(docs) > 1 and desc:
             # Um código pode possuir vários CNPJs/lojas. Desambiguar
             # somente com nome fortemente aderente e vencedor isolado.
@@ -2208,15 +2216,14 @@ def _build_mrp_impact(
         .set_index("cnpj")["nome_padrao"].to_dict()
         if not _supplier_base.empty else {}
     )
-    _fallback_names = {}
     def _supplier_canonical(row):
         cnpj = digits_only(row.get("cnpj"))
         if cnpj in _master_names:
             return _master_names[cnpj]
         raw = str(row.get("fornecedor") or "").strip()
-        if raw not in _fallback_names:
-            _fallback_names[raw] = standard_supplier_name(raw) if raw else ""
-        return _fallback_names[raw] or raw
+        # Não transformar fornecedor sem CNPJ em outro fornecedor apenas por
+        # similaridade fuzzy: o XML fará a conferência da identidade fiscal.
+        return raw
     detail["fornecedor_validacao"] = detail.apply(
         _supplier_canonical, axis=1
     )
@@ -6233,8 +6240,11 @@ def _refresh_missing_mrp_analysis() -> pd.DataFrame:
                 item["situacao_vinculo"] = str(
                     match.get("situacao") or "AUSENTE NAS PRÉ-NOTAS"
                 )
-                item["score_fornecedor"] = int(
-                    match.get("score_fornecedor") or 0
+                # Sem pré-nota correspondente não há aderência a calcular.
+                # Mostrar 0% nesta situação sugeria comparação malsucedida.
+                _score = match.get("score_fornecedor")
+                item["score_fornecedor"] = (
+                    int(_score) if _score is not None else None
                 )
                 rows.append(item)
 
@@ -6285,6 +6295,16 @@ def render_mrp_missing_pre_treatments(missing: pd.DataFrame | None = None) -> No
     ]
     visible_cols = [col for col in visible_cols if col in missing.columns]
     view = missing[visible_cols].copy()
+    view["cadastro_fornecedor"] = (
+        view.get("cnpj", pd.Series("", index=view.index))
+        .map(digits_only)
+        .map(lambda v: "CNPJ IDENTIFICADO" if len(v) == 14 else "CNPJ PENDENTE / VALIDAR LOJA")
+    )
+    st.caption(
+        "ADERÊNCIA À PRÉ-NOTA: só é calculada quando há uma pré-nota "
+        "correspondente para comparar. Sem vínculo, o campo fica em branco; "
+        "não significa 0% de aderência ao cadastro."
+    )
     if "recebedor" not in view.columns:
         view["recebedor"] = ""
     # Seletores fora do formulário disparavam rerun de TODA a página,
@@ -6340,8 +6360,11 @@ def render_mrp_missing_pre_treatments(missing: pd.DataFrame | None = None) -> No
                     width="large",
                 ),
                 "score_fornecedor": st.column_config.NumberColumn(
-                    "ADERÊNCIA FORNECEDOR",
+                    "ADERÊNCIA À PRÉ-NOTA",
                     format="%d%%",
+                ),
+                "cadastro_fornecedor": st.column_config.TextColumn(
+                    "CADASTRO FORNECEDOR", width="medium",
                 ),
             },
         )
