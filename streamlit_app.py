@@ -511,6 +511,7 @@ def init():
         "nf_flow_stage": 1,
         "nf_selected_flow_keys": set(),
         "nf_stage2_batch_keys": set(),
+        "nf_stage2_batch_snapshot": pd.DataFrame(),
         "nf_stage1_selection": None,
         "nf_stage1_selection_draft": None,
         "nf_stage1_selection_saved": False,
@@ -4290,6 +4291,7 @@ def _reset_nf_session_flow() -> None:
     st.session_state.last_generation_audit = {}
     st.session_state.nf_selected_flow_keys = set()
     st.session_state.nf_stage2_batch_keys = set()
+    st.session_state.nf_stage2_batch_snapshot = pd.DataFrame()
     st.session_state.nf_stage1_selection = None
     st.session_state.nf_stage1_selection_draft = None
     st.session_state.nf_stage1_selection_saved = False
@@ -4380,7 +4382,9 @@ def _audit_selected_nf_batch(selected: pd.DataFrame, processed: pd.DataFrame) ->
 def _selected_nf_selection_gaps() -> list[str]:
     """Identifica NFs selecionadas que sumiram da base pendente entre etapas."""
     active=set(st.session_state.get("nf_selected_flow_keys") or set())
-    base=current_pending_pre_notes()
+    # A base dinâmica de pendências pode ocultar a NF após processamento.
+    # Somente a remoção real da base original caracteriza seleção ausente.
+    base=st.session_state.get("pre_notes")
     available={
         flow_nf_key(row)
         for _,row in base.iterrows()
@@ -4424,17 +4428,72 @@ def _show_nf_batch_audit(audit:dict) -> None:
                 use_container_width=True,hide_index=True)
 
 
-def selected_pending_pre_notes() -> pd.DataFrame:
-    base = current_pending_pre_notes()
-    if base.empty:
-        return base
+def _activate_nf_document_batch(selection: set[str]) -> bool:
+    """Congela o lote aprovado antes de qualquer alteração no histórico.
 
+    O conjunto da etapa 2/3 não pode depender do filtro dinâmico de pendências
+    depois que PDFs são gerados ou registrados.
+    """
+    keys = {str(key) for key in selection if str(key).strip()}
+    base = st.session_state.get("pre_notes")
+    if not keys or not isinstance(base, pd.DataFrame) or base.empty:
+        return False
+    snapshot = base.loc[base.apply(flow_nf_key, axis=1).isin(keys)].copy()
+    found = set(snapshot.apply(flow_nf_key, axis=1))
+    if not keys.issubset(found):
+        return False
+
+    previous = set(st.session_state.get("nf_stage2_batch_keys") or set())
+    if keys != previous:
+        st.session_state.analysis = pd.DataFrame()
+        st.session_state.pdfs = {}
+        st.session_state.zip_outputs = {}
+        st.session_state.prefilter_rejected = []
+        st.session_state.prefilter_resolved = []
+        st.session_state.prefilter_files = {}
+        st.session_state.prefilter_stats = {}
+        st.session_state.cte_links = []
+        st.session_state.cte_rejected = []
+        st.session_state.cte_outputs = {}
+        st.session_state.cte_ignored_non_setta = []
+        st.session_state.document_ignored_items = []
+        st.session_state.document_link_stats = {}
+        st.session_state.document_upload_cache = []
+        st.session_state.document_reprocess_needed = False
+        st.session_state.nf_stage2_search_started = False
+        st.session_state.pop("nf_xml_auto_signature", None)
+        st.session_state.pop("nf_xml_auto_stats", None)
+        st.session_state.nf_documents_analyzed_signature = ""
+        st.session_state.nf_documents_current_signature = ""
+        st.session_state.pop("pending_fiscal_documents", None)
+
+    st.session_state.nf_selected_flow_keys = set(keys)
+    st.session_state.nf_stage2_batch_keys = set(keys)
+    st.session_state.nf_stage2_batch_snapshot = snapshot.reset_index(drop=True)
+    st.session_state.nf_stage1_selection = set(keys)
+    st.session_state.nf_stage1_selection_saved = True
+    _set_nf_flow_stage(2)
+    return True
+
+
+def selected_pending_pre_notes() -> pd.DataFrame:
     selected = set(st.session_state.get("nf_selected_flow_keys") or set())
     if not selected:
-        return pd.DataFrame(columns=base.columns)
+        return pd.DataFrame()
 
-    mask = base.apply(flow_nf_key, axis=1).isin(selected)
-    return base.loc[mask].copy().reset_index(drop=True)
+    # Referência fiscal do lote atual. Não retirar notas automaticamente após
+    # um processamento mudar o status da tabela de histórico.
+    snapshot = st.session_state.get("nf_stage2_batch_snapshot")
+    if isinstance(snapshot, pd.DataFrame) and not snapshot.empty:
+        return snapshot.loc[
+            snapshot.apply(flow_nf_key, axis=1).isin(selected)
+        ].copy().reset_index(drop=True)
+
+    # Compatibilidade com sessões antigas, antes da migração do fluxo.
+    base = st.session_state.get("pre_notes")
+    if not isinstance(base, pd.DataFrame) or base.empty:
+        return pd.DataFrame()
+    return base.loc[base.apply(flow_nf_key, axis=1).isin(selected)].copy().reset_index(drop=True)
 
 
 def current_pending_pre_notes() -> pd.DataFrame:
@@ -7940,6 +7999,11 @@ def render_document_linking_stage() -> None:
                     else:
                         st.session_state.nf_selected_flow_keys = _remaining
                         st.session_state.nf_stage2_batch_keys = set(_remaining)
+                        _snapshot = st.session_state.get("nf_stage2_batch_snapshot")
+                        if isinstance(_snapshot, pd.DataFrame):
+                            st.session_state.nf_stage2_batch_snapshot = _snapshot.loc[
+                                _snapshot.apply(flow_nf_key, axis=1).isin(_remaining)
+                            ].copy().reset_index(drop=True)
                         st.session_state.nf_stage1_selection = set(_remaining)
                         st.session_state.nf_stage1_selection_draft = None
                         st.session_state.nf_stage1_selection_saved = True
@@ -11165,7 +11229,7 @@ elif page == "Pendências":
                 st.caption(f"SELECIONADAS: {len(selected_pending)} DE {len(editor_view)}")
                 s1,s2,s3,s4 = st.columns([2,1,1,2])
                 save_receivers = s1.form_submit_button(
-                    "SALVAR DADOS E SELEÇÃO",type="primary",use_container_width=True,
+                    "SALVAR SELEÇÃO E CONTINUAR",type="primary",use_container_width=True,
                 )
                 mark_all_stage1 = s2.form_submit_button("MARCAR TODAS",use_container_width=True)
                 unmark_all_stage1 = s3.form_submit_button("DESMARCAR TODAS",use_container_width=True)
@@ -11179,7 +11243,7 @@ elif page == "Pendências":
                 st.session_state["_nf_stage1_editor_rev"] += 1
                 st.rerun()
             if not (save_receivers or exclude_selected):
-                st.caption("ALTERAÇÕES NA TABELA SÓ SÃO APLICADAS AO CLICAR EM SALVAR DADOS E SELEÇÃO.")
+                st.caption("DADOS E SELEÇÃO SERÃO GRAVADOS AO CLICAR EM SALVAR SELEÇÃO E CONTINUAR.")
 
             if save_receivers:
                 receiver_map = {
@@ -11255,7 +11319,15 @@ elif page == "Pendências":
                         apply_cross_checks(analysis)
                     )
 
-                st.rerun()
+                if _activate_nf_document_batch(
+                    set(st.session_state.nf_stage1_selection)
+                ):
+                    st.rerun()
+                else:
+                    st.error(
+                        "NÃO FOI POSSÍVEL FORMAR O LOTE. Revise as NFs "
+                        "selecionadas e confirme novamente."
+                    )
 
             if exclude_selected:
                 selected_keys = set(
@@ -11388,52 +11460,8 @@ elif page == "Pendências":
             ):
                 render_mrp_missing_pre_treatments(_not_linked)
 
-        st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
-        if st.button(
-            "VALIDAR BASE E CONTINUAR",
-            type="primary",
-            use_container_width=True,
-            disabled=(
-                not st.session_state.get("base_analysis_ready")
-                or not st.session_state.get("nf_stage1_selection_saved")
-                or not st.session_state.get("nf_stage1_selection")
-            ),
-            key="flow_to_documents",
-        ):
-            _new_selection = set(st.session_state.get("nf_stage1_selection") or set())
-            # A seleção é atualizada no formulário antes deste botão.
-            # Comparar com nf_selected_flow_keys esconderia mudanças no lote
-            # e reaproveitaria documentos da seleção anterior.
-            _old_selection = set(
-                st.session_state.get("nf_stage2_batch_keys") or set()
-            )
-            if _new_selection != _old_selection:
-                st.session_state.analysis = pd.DataFrame()
-                st.session_state.pdfs = {}
-                st.session_state.zip_outputs = {}
-                st.session_state.prefilter_rejected = []
-                st.session_state.prefilter_resolved = []
-                st.session_state.prefilter_files = {}
-                st.session_state.prefilter_stats = {}
-                st.session_state.cte_links = []
-                st.session_state.cte_rejected = []
-                st.session_state.cte_outputs = {}
-                st.session_state.cte_ignored_non_setta = []
-                st.session_state.document_ignored_items = []
-                st.session_state.document_link_stats = {}
-                st.session_state.document_upload_cache = []
-                st.session_state.document_reprocess_needed = False
-                st.session_state.nf_stage2_search_started = False
-                st.session_state.pop("nf_xml_auto_signature", None)
-                st.session_state.pop("nf_xml_auto_stats", None)
-                st.session_state.nf_documents_analyzed_signature = ""
-                st.session_state.nf_documents_current_signature = ""
-                st.session_state.pop("pending_fiscal_documents", None)
-
-            st.session_state.nf_selected_flow_keys = _new_selection
-            st.session_state.nf_stage2_batch_keys = set(_new_selection)
-            _set_nf_flow_stage(2)
-            st.rerun()
+        # A confirmação da base ocorre junto ao salvamento da seleção.
+        # Um segundo botão gerava rerun extra e permitia avanço com estado antigo.
 
         st.stop()
 
