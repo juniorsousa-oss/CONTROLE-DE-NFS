@@ -3649,6 +3649,18 @@ def make_zip_outputs(df: pd.DataFrame):
         for _, row in work.iterrows()
         if str(row.get("file_id") or "").strip()
     }
+    key_companies: dict[str, set[str]] = {}
+    number_companies: dict[str, set[str]] = {}
+    for _, nf_row in work.iterrows():
+        company = str(nf_row.get("empresa_sigla") or "").upper().strip()
+        key = digits_only(nf_row.get("chave_nfe"))
+        number = normalized_nf(nf_row.get("numero_nf"))
+        if company not in {"SEN", "SEE", "STA"}:
+            continue
+        if len(key) == 44 and key[20:22] == "55":
+            key_companies.setdefault(key, set()).add(company)
+        if number:
+            number_companies.setdefault(number, set()).add(company)
 
     ctes_by_company: dict[str, list[dict]] = {
         "SEN": [],
@@ -3671,6 +3683,24 @@ def make_zip_outputs(df: pd.DataFrame):
             for company in companies
             if company in {"SEN", "SEE", "STA"}
         }
+        if not companies:
+            # IDs internos podem mudar em reprocessamentos; a chave fiscal
+            # (44 dígitos, modelo 55) é a referência estável primária.
+            for key in (cte.get("refs_nfe") or []):
+                companies.update(key_companies.get(digits_only(key), set()))
+        if not companies:
+            # Número da NF só pode suprir a chave quando resolve a uma única
+            # empresa neste lote. Nunca misturar notas homônimas entre filiais.
+            for number in (cte.get("linked_nf_numbers") or []):
+                options = number_companies.get(normalized_nf(number), set())
+                if len(options) == 1:
+                    companies.update(options)
+        if not companies:
+            raise ValueError(
+                f"CT-e {cte.get('numero_cte') or 'SEM NÚMERO'} possui DACTE "
+                "vinculado, mas sua NF-e não foi localizada com segurança "
+                "no lote atual. Revise a chave fiscal na etapa 2."
+            )
 
         for company in companies:
             ctes_by_company[company].append(cte)
