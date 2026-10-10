@@ -37,6 +37,8 @@ jobs:
         run: python -m scripts.test_nf_xml_incremental
       - name: Testar fornecedor TOTVS e fallback XML seguro
         run: python -m scripts.test_nf_supplier_xml_fallback
+      - name: Testar CT-e elegível, DACTE e conteúdo do ZIP final
+        run: python -m scripts.test_nf_cte_zip_generation
       - name: Testar autorização da API XML implantada
         run: python -m scripts.smoke_nf_xml_api
       - name: Testar Dashboard ao abrir o menu SETTA
