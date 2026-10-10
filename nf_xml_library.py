@@ -614,8 +614,14 @@ def prefill_stage2(pending_pre: pd.DataFrame):
             str(x.get("library_id") or "")
             for x in cached if x.get("library_id")
         }
+        cte_candidates = list(matched.get("cte") or [])
+        cte_expected_keys = sorted({
+            re.sub(r"\D", "", str(item.get("chave") or ""))
+            for item in cte_candidates
+            if len(re.sub(r"\D", "", str(item.get("chave") or ""))) == 44
+        })
         records = [
-            item for item in (matched.get("nfe") or []) + (matched.get("cte") or [])
+            item for item in (matched.get("nfe") or []) + cte_candidates
             if str(item.get("id") or "") not in existing_ids
         ]
         fallback = [
@@ -657,7 +663,9 @@ def prefill_stage2(pending_pre: pd.DataFrame):
         st.session_state.nf_xml_auto_signature = target
         st.session_state.nf_xml_auto_stats = {
             "nfe": len(matched.get("nfe") or []),
-            "cte": len(matched.get("cte") or []),
+            "cte": len(cte_candidates),
+            "cte_expected_keys": cte_expected_keys,
+            "match_version": 2,
             "missing": len(matched.get("nao_encontradas") or []),
             "download_errors": len(failures),
             "pending_name": len(pending_name),
