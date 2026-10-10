@@ -6295,6 +6295,10 @@ def render_mrp_missing_pre_treatments(missing: pd.DataFrame | None = None) -> No
     ]
     visible_cols = [col for col in visible_cols if col in missing.columns]
     view = missing[visible_cols].copy()
+    view["score_fornecedor"] = pd.to_numeric(
+        view.get("score_fornecedor", pd.Series(index=view.index, dtype=object)),
+        errors="coerce",
+    ).astype("Float64")
     view["cadastro_fornecedor"] = (
         view.get("cnpj", pd.Series("", index=view.index))
         .map(digits_only)
