@@ -244,7 +244,14 @@ section[data-testid="stSidebar"] .block-container{{
   padding-left:16px!important;
   padding-right:16px!important;
 }}
-section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{{gap:0!important;row-gap:0!important}}
+/* Seções e status precisam de altura real: gap zero provocava a
+   sobreposição de STATUS GERAL com o cartão de atualização. */
+section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{{gap:7px!important;row-gap:7px!important;align-content:start!important}}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]{{min-height:0!important;height:auto!important;flex-shrink:0!important}}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-section-label){{min-height:24px!important;margin:10px 0 5px!important;padding:0!important;display:block!important}}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-divider){{min-height:12px!important;margin:6px 0 2px!important}}
+section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-status-card){{margin:0!important;min-height:88px!important}}
+section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"]{{overflow:visible!important}}
 .sidebar-brand{{
   width:100%!important;
   background:#f8fafc!important;
@@ -262,11 +269,11 @@ section[data-testid="stSidebar"] [data-testid="stVerticalBlock"]{{gap:0!importan
   line-height:16px!important;color:#6b7280!important;
 }}
 .sidebar-section-label{{
-  display:block!important;margin:0 0 8px 0!important;padding:0!important;color:#374151!important;
-  font-size:12px!important;line-height:15px!important;font-weight:800!important;
+  display:block!important;min-height:18px!important;margin:0 0 8px 0!important;padding:0!important;color:#374151!important;
+  font-size:12px!important;line-height:18px!important;font-weight:800!important;
   text-transform:uppercase!important;letter-spacing:.055em!important;
 }}
-section[data-testid="stSidebar"] div[data-testid="stElementContainer"]:has(.sidebar-section-label){{margin:0!important;padding:0!important}}
+/* Espaçamento de títulos controlado pelo container acima. */
 section[data-testid="stSidebar"] [class*="st-key-setta_nav_"]{{margin:0 0 2px 0!important;padding:0!important}}
 section[data-testid="stSidebar"] .st-key-setta_nav_0{{margin-top:8px!important}}
 section[data-testid="stSidebar"] [class*="st-key-setta_nav_"] button{{
