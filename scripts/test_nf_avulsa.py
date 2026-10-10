@@ -66,6 +66,11 @@ edge=Path("supabase/functions/nf-xml-library-api/index.ts").read_text()
 assert 'nf_avulsa.render_page(' in app
 assert 'if(action==="buscar_avulso")' in edge
 assert 'if(action==="cte_avulso")' in edge
+# refs_nfe é JSONB. O operador 'cs' precisa receber array JSON, não
+# sintaxe de array SQL (cs.{chave}), que retorna HTTP 400 no PostgREST.
+assert '.filter("refs_nfe","cs",JSON.stringify([k]))' in edge
+assert '.contains("refs_nfe",[k])' not in edge
+
 # O botão original continua atendendo os lotes, com o rótulo configurável.
 assert '_NF_NAV_PAGES.append("Pendências")' in app
 assert 'if _page == "Pendências"' in app
