@@ -1888,6 +1888,38 @@ def refresh_mrp_from_materials_api(force: bool = False) -> dict:
     }
 
 
+def _stsup01_operational_date(value):
+    """Datas STSUP01: suporta célula Excel, texto e número serial da Central.
+
+    O normalizador SheetJS usa cellDates=False, entregando datas Excel como
+    dias desde 1899-12-30. Não tratar esses valores como Unix timestamps.
+    """
+    if value is None or isinstance(value, bool):
+        return pd.NaT
+    if isinstance(value, (int, float)):
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return pd.NaT
+        if 20000 <= number <= 90000:
+            return pd.to_datetime(number, unit="D", origin="1899-12-30", errors="coerce")
+        return pd.NaT
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return pd.NaT
+        if re.fullmatch(r"\d{4,5}(?:[.,]\d+)?", text):
+            try:
+                number = float(text.replace(",", "."))
+            except ValueError:
+                return pd.NaT
+            if 20000 <= number <= 90000:
+                return pd.to_datetime(number, unit="D", origin="1899-12-30", errors="coerce")
+            return pd.NaT
+        value = text
+    return pd.to_datetime(value, errors="coerce", dayfirst=True)
+
+
 def _stsup01_tes_cell(row) -> str:
     """Coluna AE do STSUP01; coluna omitida/vazia significa TES não informado."""
     if len(row) <= 30:
@@ -1927,11 +1959,11 @@ def _clean_mrp_nf_cached(
         total_raw += 1
 
         tes = str(values[9] or "").strip()
-        if re.fullmatch(r"\d{3}", tes):
+        if re.fullmatch(r"\d{3}(?:\.0+)?", tes):
             dropped_tes += 1
             return
 
-        parsed = pd.to_datetime(values[0], errors="coerce", dayfirst=True)
+        parsed = _stsup01_operational_date(values[0])
         if pd.isna(parsed):
             invalid_date += 1
             return
@@ -1987,6 +2019,12 @@ def _clean_mrp_nf_cached(
                 row[7], row[8], row[11], row[12], _stsup01_tes_cell(row),
             ))
 
+    # Evita persistir uma fotografia MRP vazia após falha de interpretação.
+    if total_raw and invalid_date and not rows and dropped_date == 0:
+        raise ValueError(
+            "STSUP01 com datas inválidas: o cálculo anterior foi preservado. "
+            "Confirme o formato da coluna A."
+        )
     base = pd.DataFrame(rows, columns=columns)
     stats = {
         "linhas_origem": total_raw,
@@ -9679,7 +9717,7 @@ def _clean_mrp_nf_pack(
             dropped_tes += 1
             continue
 
-        parsed = pd.to_datetime(row[0], errors="coerce", dayfirst=True)
+        parsed = _stsup01_operational_date(row[0])
         if pd.isna(parsed):
             invalid_date += 1
             continue
@@ -9710,6 +9748,12 @@ def _clean_mrp_nf_pack(
             "tes": tes,
         })
 
+    # Evita persistir uma fotografia MRP vazia após falha de interpretação.
+    if total_raw and invalid_date and not rows and dropped_date == 0:
+        raise ValueError(
+            "STSUP01 com datas inválidas: o cálculo anterior foi preservado. "
+            "Confirme o formato da coluna A."
+        )
     base = pd.DataFrame(rows, columns=columns)
     stats = {
         "linhas_origem": total_raw,
