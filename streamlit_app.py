@@ -9857,7 +9857,7 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
         if source_key == "nf":
             # Migração de regra: reavaliar a base já carregada mesmo sem novo
             # upload, corrigindo confirmações antigas que ignoravam TES.
-            token = f"{token}|lancamento_tes_ae_v2"
+            token = f"{token}|mrp_excel_date_serial_v3"
         previous = sync_state.get(source_key) or {}
         if (
             not force
