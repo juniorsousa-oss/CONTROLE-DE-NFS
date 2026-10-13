@@ -1998,6 +1998,14 @@ def _clean_mrp_nf_cached(
         wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
         try:
             ws = wb[wb.sheetnames[0]]
+            if "SALDOS EM ESTOQUE" in normalize_text(ws.title):
+                raise ValueError(
+                    "ARQUIVO INCORRETO NA FONTE NF: a planilha recebida contém "
+                    f"a aba '{ws.title}' ({ws.max_column} colunas), "
+                    "não o relatório de NFs STSUP01. "
+                    "Corrija o arquivo de origem na Central SETTA; "
+                    "o MRP anterior foi preservado."
+                )
             for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
                 if idx <= 2:
                     continue
@@ -9693,6 +9701,15 @@ def _clean_mrp_nf_pack(
     reference_date = date.fromisoformat(reference_date_iso)
     cutoff = reference_date - timedelta(days=29)
     raw_frame = central_data.source_raw_frame(pack, 0)
+    sheet_names = central_data.source_sheet_names(pack)
+    sheet_name = sheet_names[0] if sheet_names else ""
+    if "SALDOS EM ESTOQUE" in normalize_text(sheet_name):
+        raise ValueError(
+            "ARQUIVO INCORRETO NA FONTE NF: a fonte normalizada contém "
+            f"a aba '{sheet_name}' ({raw_frame.shape[1]} colunas), "
+            "não o relatório de NFs STSUP01. "
+            "Corrija a fonte no sistema de origem."
+        )
 
     columns = [
         "data_pre_nota", "numero_nf", "fornecedor_codigo", "fornecedor",
