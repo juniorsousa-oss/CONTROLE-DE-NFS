@@ -5,7 +5,7 @@ import io
 import re
 import unicodedata
 from dataclasses import asdict, dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Iterable
 
 import fitz  # PyMuPDF
@@ -431,8 +431,10 @@ def parse_operational_due_date(value: object) -> date | None:
     except (TypeError, ValueError):
         pass
 
-    if isinstance(value, (pd.Timestamp, date)):
-        return value.date() if isinstance(value, pd.Timestamp) else value
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.date()
+    if isinstance(value, date):
+        return value
 
     raw = str(value).strip()
     if not raw:
