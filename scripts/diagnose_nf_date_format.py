@@ -62,6 +62,9 @@ try:
     print("ORIGINAL", "EXTENSAO", name.rsplit(".",1)[-1].lower(), "BYTES", len(raw))
     wb = load_workbook(BytesIO(raw), read_only=True, data_only=True)
     try:
+        print("TOTAL_ABAS", len(wb.worksheets))
+        for idx, candidate in enumerate(wb.worksheets):
+            print("ABA_META", idx, "NOME", candidate.title[:70], "COLUNAS", candidate.max_column, "LINHAS", candidate.max_row)
         ws = wb.worksheets[0]
         print("ORIGINAL", "ABA", ws.title, "TOTAL_COLUNAS", ws.max_column, "TOTAL_LINHAS", ws.max_row)
         values = []
