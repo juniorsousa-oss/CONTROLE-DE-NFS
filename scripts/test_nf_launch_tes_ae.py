@@ -109,6 +109,7 @@ def excel_frame_rows():
 raw_xlsx, rows_excel = excel_frame_rows()
 scope = {
     "pd": pd, "Path": Path, "io": io, "load_workbook": load_workbook, "re": re,
+    "normalize_text": normalize,
     "normalized_nf": code, "_supplier_code_norm": code,
     "supplier_validation_name": normalize,
     "_read_uploaded_table_cached": lambda raw, filename, a, b:
@@ -157,7 +158,10 @@ for frame in (pack_without_ae, table_without_ae):
 clean_pack_scope = {
     **scope,
     "date": __import__("datetime").date, "timedelta": __import__("datetime").timedelta,
-    "central_data": SimpleNamespace(source_raw_frame=lambda pack, i: pd.DataFrame(pack["rows"])),
+    "central_data": SimpleNamespace(
+        source_raw_frame=lambda pack, i: pd.DataFrame(pack["rows"]),
+        source_sheet_names=lambda pack: ["STSUP01"],
+    ),
     "normalized_material_code": lambda value: str(value or "").strip(),
     "re": re,
 }
@@ -203,6 +207,35 @@ assert len(serial_rows) == 1, serial_stats
 assert serial_rows.iloc[0]["data_pre_nota"].isoformat() == "2026-10-13"
 assert serial_stats["datas_invalidas"] == 0, serial_stats
 assert serial_stats["linhas_30_dias_tes"] == 1
+
+# Regressão do arquivo indevido publicado em NF: 1-Saldos em Estoque.
+bad_scope = {
+    **clean_pack_scope,
+    "central_data": SimpleNamespace(
+        source_raw_frame=lambda pack, i: pd.DataFrame(pack["rows"]),
+        source_sheet_names=lambda pack: ["1-Saldos em Estoque"],
+    ),
+}
+bad_pack = extract_ast("_clean_mrp_nf_pack", bad_scope)
+try:
+    bad_pack({"rows": serial_matrix}, "2026-10-13")
+    raise AssertionError("Planilha de estoque não pode ser interpretada como NF")
+except ValueError as exc:
+    assert "ARQUIVO INCORRETO NA FONTE NF" in str(exc)
+
+wrong_book = Workbook()
+wrong_book.active.title = "1-Saldos em Estoque"
+wrong_book.active.append(["Coluna"] * 13)
+wrong_book.active.append(["Cabeçalho"] * 13)
+wrong_book.active.append([None] * 13)
+wrong_buffer = io.BytesIO()
+wrong_book.save(wrong_buffer)
+bad_raw = extract_ast("_clean_mrp_nf_cached", clean_pack_scope)
+try:
+    bad_raw(wrong_buffer.getvalue(), "07 - N.F.xltx", "2026-10-13")
+    raise AssertionError("Planilha de estoque não pode ser processada como STSUP01")
+except ValueError as exc:
+    assert "ARQUIVO INCORRETO NA FONTE NF" in str(exc)
 
 # Data realmente inválida: impedir esvaziamento silencioso da base MRP.
 serial_matrix[-1][0] = "DATA_INCORRETA"
