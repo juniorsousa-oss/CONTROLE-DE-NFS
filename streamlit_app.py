@@ -53,6 +53,7 @@ from openpyxl import load_workbook
 import db
 import central_nfs_data as central_data
 from nf_launch_validation import validar_lancamento_nf
+from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
 import setta_shell
@@ -11028,15 +11029,25 @@ elif page == "Pendências":
                 key="nf_recovery_batch_select",
             )
             _batch_id,_batch_group=_batch_options[_batch_label]
+            _batch_view = add_cte_links_to_batch_view(_batch_group)
             _view_cols=[
                 _c for _c in (
-                    "tipo_documento","numero_nf","numero_cte","fornecedor_padrao",
+                    "tipo_documento","numero_nf","numero_cte",
+                    "nfs_vinculadas","ctes_vinculados","fornecedor_padrao",
                     "arquivo_final","status","pdf_criado_em"
-                ) if _c in _batch_group.columns
+                ) if _c in _batch_view.columns
             ]
             _setta_dataframe(
-                _batch_group[_view_cols].copy(),
+                _batch_view[_view_cols].copy(),
                 hide_index=True,use_container_width=True,height=300,
+                column_config={
+                    "nfs_vinculadas": st.column_config.TextColumn(
+                        "NFs VINCULADAS", width="medium"
+                    ),
+                    "ctes_vinculados": st.column_config.TextColumn(
+                        "CT-es VINCULADOS", width="medium"
+                    ),
+                },
             )
             st.caption(
                 "A confirmação de envio deve ser usada SOMENTE quando os arquivos "
