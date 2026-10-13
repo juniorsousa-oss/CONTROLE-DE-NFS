@@ -58,6 +58,7 @@ import nf_avulsa
 import setta_shell
 from nf_processor import (
     build_final_name,
+    parse_operational_due_date,
     digits_only,
     extract_pdf_text,
     inspect_nf_pdf_identity,
@@ -761,24 +762,11 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
         return str(value).strip()
 
     out = df.copy()
-    names, stats, issues = [], [], []
+    names, stats, issues, normalized_dues = [], [], [], []
 
     for _, row in out.iterrows():
-        due = row.get("vencimento")
-
-        # Pandas transforma datas ausentes em NaT. NaT se comporta como data em
-        # alguns testes de tipo, mas lança ValueError ao chamar strftime().
-        try:
-            if due is None or pd.isna(due):
-                due = None
-        except Exception:
-            pass
-
-        if isinstance(due, (pd.Timestamp, datetime)):
-            due = due.date()
-        elif isinstance(due, str) and due.strip():
-            parsed = pd.to_datetime(due, errors="coerce", dayfirst=True)
-            due = None if pd.isna(parsed) else parsed.date()
+        due = parse_operational_due_date(row.get("vencimento"))
+        normalized_dues.append(due)
 
         num = cell_text(row.get("numero_nf"))
         cnpj = digits_only(cell_text(row.get("cnpj_fornecedor")))
@@ -834,6 +822,8 @@ def recalc(df: pd.DataFrame) -> pd.DataFrame:
             if missing else ""
         )
 
+    # Data usada no nome é a mesma registrada no manifesto e no banco.
+    out["vencimento"] = normalized_dues
     out["nome_sugerido"] = names
     out["status"] = stats
     out["validacao"] = issues
@@ -3552,6 +3542,15 @@ def make_zip_outputs(df: pd.DataFrame):
                     raise ValueError(
                         f"Nome final vazio para a NF {row.numero_nf}."
                     )
+                parsed_due = parse_operational_due_date(row.get("vencimento"))
+                expected_name = build_final_name(
+                    parsed_due, row.get("numero_nf"), row.get("fornecedor_padrao")
+                )
+                if not parsed_due or final_name != expected_name:
+                    raise ValueError(
+                        f"NF {row.numero_nf}: vencimento divergente do nome do arquivo. "
+                        "Volte à Etapa 2 e confirme a data no formato DD/MM/AAAA."
+                    )
 
                 if package == "MP":
                     folder = (
@@ -3620,11 +3619,7 @@ def make_zip_outputs(df: pd.DataFrame):
                         "chave_nfe": str(row.chave_nfe),
                         "cnpj_fornecedor": str(row.cnpj_fornecedor),
                         "fornecedor_padrao": str(row.fornecedor_padrao),
-                        "vencimento": (
-                            row.vencimento.isoformat()
-                            if isinstance(row.vencimento, date)
-                            else None
-                        ),
+                        "vencimento": parsed_due.isoformat(),
                         "natureza": nature,
                         "prioridade_mrp": bool(
                             row.get("prioridade_mrp")
@@ -6884,10 +6879,9 @@ def render_xml_linking_stage() -> None:
 
     new_frame = pd.DataFrame(rows)
     if not new_frame.empty:
-        new_frame["vencimento"] = pd.to_datetime(
-            new_frame["vencimento"],
-            errors="coerce",
-        ).dt.date
+        new_frame["vencimento"] = new_frame["vencimento"].map(
+            parse_operational_due_date
+        )
         new_frame = apply_cross_checks(new_frame)
         new_frame = recalc(new_frame)
 
@@ -7789,10 +7783,9 @@ def render_document_linking_stage() -> None:
 
         new_frame = pd.DataFrame(rows)
         if not new_frame.empty:
-            new_frame["vencimento"] = pd.to_datetime(
-                new_frame["vencimento"],
-                errors="coerce",
-            ).dt.date
+            new_frame["vencimento"] = new_frame["vencimento"].map(
+                parse_operational_due_date
+            )
             new_frame = apply_cross_checks(new_frame)
             new_frame = recalc(new_frame)
 
