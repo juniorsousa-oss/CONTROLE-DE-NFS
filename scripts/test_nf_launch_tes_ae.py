@@ -108,7 +108,7 @@ def excel_frame_rows():
 
 raw_xlsx, rows_excel = excel_frame_rows()
 scope = {
-    "pd": pd, "Path": Path, "io": io, "load_workbook": load_workbook,
+    "pd": pd, "Path": Path, "io": io, "load_workbook": load_workbook, "re": re,
     "normalized_nf": code, "_supplier_code_norm": code,
     "supplier_validation_name": normalize,
     "_read_uploaded_table_cached": lambda raw, filename, a, b:
