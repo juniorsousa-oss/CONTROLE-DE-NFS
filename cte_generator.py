@@ -570,12 +570,22 @@ def cte_output_name(
 ) -> str:
     cte_number = _digits(meta.numero) or "SEM_CTE"
     carrier = _safe_name(meta.emitente)
-    nfs = [str(x).strip() for x in linked_nf_numbers if str(x).strip()]
-    if not nfs:
-        nf_label = "SEM_NF"
-    elif len(nfs) == 1:
-        nf_label = nfs[0]
-    else:
-        nf_label = f"{nfs[0]} +{len(nfs) - 1}"
+    # Todas as NFs vinculadas são identificadas no arquivo, sem abreviar
+    # a segunda ou as demais como "+1", "+2" etc.
+    nfs = list(dict.fromkeys(
+        (raw.lstrip("0") or "0")
+        for x in linked_nf_numbers
+        if (raw := _digits(x))
+    ))
+    nf_label = " + ".join(nfs) if nfs else "SEM_NF"
     supplier = _safe_name(supplier_name) if supplier_name else "FORNECEDOR"
-    return f"{cte_number} - {carrier} - {nf_label} - {supplier}.pdf"
+    name = f"{cte_number} - {carrier} - {nf_label} - {supplier}.pdf"
+    if len(name.encode("utf-8")) > 240:
+        # Evita nome inválido/truncado em ZIP/Windows, sem ocultar números.
+        name = f"{cte_number} - {nf_label}.pdf"
+    if len(name.encode("utf-8")) > 240:
+        raise ValueError(
+            f"CT-e {cte_number} possui NFs demais para um nome de arquivo seguro. "
+            "Divida o lote ou revise os vínculos."
+        )
+    return name
