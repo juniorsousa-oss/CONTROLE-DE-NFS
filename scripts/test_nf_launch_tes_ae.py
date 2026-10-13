@@ -115,6 +115,7 @@ scope = {
         (pd.DataFrame(rows_excel[2:]), []),
 }
 scope["_stsup01_tes_cell"] = extract_ast("_stsup01_tes_cell", scope)
+scope["_stsup01_operational_date"] = extract_ast("_stsup01_operational_date", scope)
 read_manual = extract_ast("_extract_launch_report_cached", scope)
 read_pack = extract_ast("_extract_launch_report_pack", {
     **scope, "central_data": SimpleNamespace(source_raw_frame=lambda pack, i: pd.DataFrame(pack["rows"])),
@@ -160,6 +161,7 @@ clean_pack_scope = {
     "normalized_material_code": lambda value: str(value or "").strip(),
     "re": re,
 }
+clean_pack_scope["_stsup01_operational_date"] = scope["_stsup01_operational_date"]
 read_clean_pack = extract_ast("_clean_mrp_nf_pack", clean_pack_scope)
 # Simular uma linha operacional com dados de A a M, sem coluna AE.
 matrix = [list("HEAD" for _ in range(13)), ["" for _ in range(13)]]
@@ -173,6 +175,42 @@ record[12] = "PARAFUSO"
 matrix.append(record)
 mrp_rows, _ = read_clean_pack({"rows": matrix}, "2026-10-13")
 assert len(mrp_rows) == 1 and mrp_rows.iloc[0]["tes"] == ""
+
+# Regressão real: normalizador SheetJS usa cellDates=False e converte datas
+# para número serial, diferentemente do openpyxl.
+from openpyxl.utils.datetime import to_excel
+
+excel_serial = to_excel(datetime(2026, 10, 13))
+assert excel_serial > 46000
+parsed_serial = scope["_stsup01_operational_date"](excel_serial)
+assert parsed_serial.date().isoformat() == "2026-10-13"
+assert scope["_stsup01_operational_date"](str(excel_serial)).date().isoformat() == "2026-10-13"
+assert scope["_stsup01_operational_date"]("13/10/2026").date().isoformat() == "2026-10-13"
+assert pd.isna(scope["_stsup01_operational_date"]("INDEFINIDA"))
+
+serial_matrix = [list("HEADER" for _ in range(31)), ["" for _ in range(31)]]
+serial_row = [None] * 31
+serial_row[0] = excel_serial
+serial_row[3] = 123
+serial_row[4] = "00031"
+serial_row[5] = "ALFA COMPONENTES"
+serial_row[11] = "1005"
+serial_row[12] = "PARAFUSO"
+serial_row[30] = None
+serial_matrix.append(serial_row)
+serial_rows, serial_stats = read_clean_pack({"rows": serial_matrix}, "2026-10-13")
+assert len(serial_rows) == 1, serial_stats
+assert serial_rows.iloc[0]["data_pre_nota"].isoformat() == "2026-10-13"
+assert serial_stats["datas_invalidas"] == 0, serial_stats
+assert serial_stats["linhas_30_dias_tes"] == 1
+
+# Data realmente inválida: impedir esvaziamento silencioso da base MRP.
+serial_matrix[-1][0] = "DATA_INCORRETA"
+try:
+    read_clean_pack({"rows": serial_matrix}, "2026-10-13")
+    raise AssertionError("Datas inválidas não podem produzir MRP com status ATUALIZADO")
+except ValueError as exc:
+    assert "datas inválidas" in str(exc)
 
 
 # Testar reconciliação no modo de testes: uma confirmação antiga é revogada
