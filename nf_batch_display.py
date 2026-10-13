@@ -6,7 +6,7 @@ import pandas as pd
 
 
 def _nf(value: object) -> str:
-    text = re.sub(r"\\D", "", str(value or ""))
+    text = re.sub(r"\D", "", str(value or ""))
     return text.lstrip("0") or ("0" if text else "")
 
 
