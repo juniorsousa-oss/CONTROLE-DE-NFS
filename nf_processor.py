@@ -438,14 +438,14 @@ def parse_operational_due_date(value: object) -> date | None:
     if not raw:
         return None
     # ISO 8601 é SEMPRE ano-mês-dia, inclusive com horário.
-    if re.match(r"^\\d{4}-\\d{2}-\\d{2}(?:[T\\s].*)?$", raw):
+    if re.match(r"^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$", raw):
         try:
             return date.fromisoformat(raw[:10])
         except ValueError:
             return None
 
     # Campos inseridos pelos operadores seguem padrão brasileiro dia/mês/ano.
-    match = re.fullmatch(r"(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4})", raw)
+    match = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", raw)
     if match:
         try:
             return date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
