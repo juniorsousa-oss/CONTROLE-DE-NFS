@@ -1888,6 +1888,20 @@ def refresh_mrp_from_materials_api(force: bool = False) -> dict:
     }
 
 
+def _stsup01_tes_cell(row) -> str:
+    """Coluna AE do STSUP01; coluna omitida/vazia significa TES não informado."""
+    if len(row) <= 30:
+        return ""
+    value = row[30]
+    try:
+        if pd.isna(value):
+            return ""
+    except (ValueError, TypeError):
+        pass
+    text = str(value).strip()
+    return "" if text.lower() in {"none", "nan", "nat", "null", "<na>"} else text
+
+
 @st.cache_data(show_spinner=False, max_entries=8)
 def _clean_mrp_nf_cached(
     raw: bytes,
@@ -1955,22 +1969,22 @@ def _clean_mrp_nf_cached(
             for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
                 if idx <= 2:
                     continue
-                if len(row) < 31:
+                if len(row) < 13:
                     continue
                 accept((
                     row[0], row[3], row[4], row[5], row[6],
-                    row[7], row[8], row[11], row[12], row[30],
+                    row[7], row[8], row[11], row[12], _stsup01_tes_cell(row),
                 ))
         finally:
             wb.close()
     else:
         temp, _ = _read_uploaded_table_cached(raw, name, None, None)
-        if temp.shape[1] < 31:
-            raise ValueError("O relatório de NFs precisa conter pelo menos as colunas A até AE.")
+        if temp.shape[1] < 13:
+            raise ValueError("STSUP01 sem colunas mínimas de A até M.")
         for row in temp.itertuples(index=False, name=None):
             accept((
                 row[0], row[3], row[4], row[5], row[6],
-                row[7], row[8], row[11], row[12], row[30],
+                row[7], row[8], row[11], row[12], _stsup01_tes_cell(row),
             ))
 
     base = pd.DataFrame(rows, columns=columns)
@@ -2009,20 +2023,20 @@ def _extract_launch_report_cached(
         wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
         try:
             ws = wb[wb.sheetnames[0]]
-            if ws.max_column < 31:
-                raise ValueError("STSUP01 sem coluna AE (TES). Confirme o layout do relatório.")
+            if ws.max_column < 13:
+                raise ValueError("STSUP01 sem colunas mínimas de A até M.")
             for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
                 if idx <= 2:
                     continue
-                append_row((row[3], row[4], row[5], row[30]))
+                append_row((row[3], row[4], row[5], _stsup01_tes_cell(row)))
         finally:
             wb.close()
     else:
         temp, _ = _read_uploaded_table_cached(raw, name, None, None)
-        if temp.shape[1] < 31:
-            raise ValueError("STSUP01 precisa conter a coluna AE (TES) para confirmar lançamento.")
+        if temp.shape[1] < 13:
+            raise ValueError("STSUP01 sem colunas mínimas de A até M.")
         for row in temp.itertuples(index=False, name=None):
-            append_row((row[3], row[4], row[5], row[30]))
+            append_row((row[3], row[4], row[5], _stsup01_tes_cell(row)))
 
     if not rows:
         return pd.DataFrame(
@@ -9656,11 +9670,11 @@ def _clean_mrp_nf_pack(
         raw_frame.itertuples(index=False, name=None),
         start=1,
     ):
-        if idx <= 2 or len(row) < 31:
+        if idx <= 2 or len(row) < 13:
             continue
         total_raw += 1
 
-        tes = str(row[30] or "").strip()
+        tes = _stsup01_tes_cell(row)
         if re.fullmatch(r"\d{3}", tes):
             dropped_tes += 1
             continue
@@ -9712,8 +9726,8 @@ def _clean_mrp_nf_pack(
 def _extract_launch_report_pack(pack: dict) -> pd.DataFrame:
     """Mesma regra de leitura para STSUP01 normalizado da Central SETTA."""
     raw_frame = central_data.source_raw_frame(pack, 0)
-    if raw_frame.shape[1] < 31:
-        raise ValueError("STSUP01 normalizado sem coluna AE (TES).")
+    if raw_frame.shape[1] < 13:
+        raise ValueError("STSUP01 normalizado sem colunas mínimas de A até M.")
     rows = []
     for idx, row in enumerate(
         raw_frame.itertuples(index=False, name=None),
@@ -9727,7 +9741,7 @@ def _extract_launch_report_pack(pack: dict) -> pd.DataFrame:
                 "numero_nf": nf,
                 "fornecedor_codigo": _supplier_code_norm(row[4]),
                 "fornecedor": str(row[5] or "").strip(),
-                "tes": row[30],
+                "tes": _stsup01_tes_cell(row),
             })
 
     if not rows:
@@ -9809,7 +9823,9 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
             continue
 
         try:
-            source, remote_meta = central_data.download_preferred_source(source_key)
+            source, remote_meta = central_data.download_preferred_source(
+                source_key, required_columns=31 if source_key == "nf" else 0
+            )
             filename = str(
                 remote_meta.get("last_file_name")
                 or meta.get("last_file_name")
@@ -9828,6 +9844,15 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
                 rows_count = len(pre_valid)
 
             else:
+                if source.get("tes_unavailable"):
+                    st.session_state["_central_nf_tes_info"] = (
+                        "A fonte normalizada não disponibilizou a coluna AE (TES) "
+                        "e o Excel original não pôde ser recuperado. "
+                        "As NFs serão mantidas sem confirmação de lançamento "
+                        "até uma conferência com TES disponível."
+                    )
+                else:
+                    st.session_state.pop("_central_nf_tes_info", None)
                 if source.get("normalized"):
                     entries, nf_stats = _clean_mrp_nf_pack(
                         source["pack"],
