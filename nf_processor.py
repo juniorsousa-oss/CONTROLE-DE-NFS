@@ -416,6 +416,44 @@ def match_supplier(cnpj: str, emitter_name: str, suppliers: pd.DataFrame) -> dic
     return {"nome_padrao": emitter_name.strip(), "metodo": "Não vinculado", "score": 0}
 
 
+def parse_operational_due_date(value: object) -> date | None:
+    """Interpreta datas brasileiras e ISO sem trocar dia e mês.
+
+    Ex.: '02/11/2026' e '2026-11-02' são a mesma data (2 de novembro).
+    Não usar pandas dayfirst=True para ISO: em datas ambíguas como
+    2026-11-02, isso pode inverter novembro e fevereiro.
+    """
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+
+    if isinstance(value, (pd.Timestamp, date)):
+        return value.date() if isinstance(value, pd.Timestamp) else value
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+    # ISO 8601 é SEMPRE ano-mês-dia, inclusive com horário.
+    if re.match(r"^\\d{4}-\\d{2}-\\d{2}(?:[T\\s].*)?$", raw):
+        try:
+            return date.fromisoformat(raw[:10])
+        except ValueError:
+            return None
+
+    # Campos inseridos pelos operadores seguem padrão brasileiro dia/mês/ano.
+    match = re.fullmatch(r"(\\d{1,2})[/.-](\\d{1,2})[/.-](\\d{4})", raw)
+    if match:
+        try:
+            return date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        except ValueError:
+            return None
+    return None
+
+
 def build_final_name(vencimento: date | None, numero_nf: str, fornecedor: str) -> str:
     # NaT/NaN podem chegar aqui depois da montagem do DataFrame.
     try:
