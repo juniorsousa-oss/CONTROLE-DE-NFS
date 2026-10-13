@@ -138,7 +138,15 @@ manifest = [{
     "tipo_documento": "NF-e", "enviado_em": (now - timedelta(hours=2)).isoformat(),
     "lancado_em": now.isoformat(), "lancamento_verificado_em": None,
 }]
-session_state = {"current_test_manifest": manifest}
+class AttrState(dict):
+    def __getattr__(self, name):
+        return self[name]
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+
+session_state = AttrState({"current_test_manifest": manifest})
 st = SimpleNamespace(session_state=session_state)
 reconcile_scope = {
     "pd": pd, "st": st, "db": SimpleNamespace(configured=lambda: False),
