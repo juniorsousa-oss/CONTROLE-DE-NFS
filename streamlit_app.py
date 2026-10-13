@@ -52,6 +52,7 @@ from openpyxl import load_workbook
 
 import db
 import central_nfs_data as central_data
+from nf_launch_validation import validar_lancamento_nf
 import nf_xml_library
 import nf_avulsa
 import setta_shell
@@ -1263,131 +1264,98 @@ def supplier_similarity(name_a: object, name_b: object) -> int:
 
 
 def reconcile_launch_report(launch_report: pd.DataFrame) -> dict:
-    """Confere NFs enviadas contra o STSUP01 recém-atualizado."""
-    if not isinstance(launch_report, pd.DataFrame):
-        launch_report = pd.DataFrame()
+    """Confere somente NFs enviadas: identidade do fornecedor + TES AE completo.
+
+    Só é executado após leitura de um STSUP01 válido. Não confirma por
+    similaridade e revalida também as confirmações antigas.
+    """
+    if not isinstance(launch_report, pd.DataFrame) or launch_report.empty:
+        # Não alterar confirmações existentes por falha ou base vazia.
+        return {"lancados": 0, "verificados": 0, "revisao": 0}
+
+    required = {"numero_nf", "fornecedor_codigo", "fornecedor", "tes"}
+    if not required.issubset(launch_report.columns):
+        raise ValueError("STSUP01 sem colunas necessárias para validação de TES (AE).")
 
     if SAVE_NF_HISTORY and db.configured():
-        try:
-            records = pd.DataFrame(_cached_db_process_records())
-        except Exception:
-            records = pd.DataFrame()
+        records = pd.DataFrame(_cached_db_process_records())
     else:
-        records = pd.DataFrame(
-            st.session_state.get("current_test_manifest") or []
-        )
+        records = pd.DataFrame(st.session_state.get("current_test_manifest") or [])
 
     if records.empty or "enviado_em" not in records.columns:
-        return {"lancados": 0, "verificados": 0}
+        return {"lancados": 0, "verificados": 0, "revisao": 0}
 
-    type_series = records.get(
-        "tipo_documento",
-        pd.Series("NF-e", index=records.index),
+    types = records.get(
+        "tipo_documento", pd.Series("NF-e", index=records.index)
     ).fillna("NF-e")
     sent = records[
-        ~type_series.map(is_cte_document_type)
-        & pd.to_datetime(
-            records["enviado_em"],
-            errors="coerce",
-            utc=True,
-        ).notna()
+        ~types.map(is_cte_document_type)
+        & pd.to_datetime(records["enviado_em"], errors="coerce", utc=True).notna()
     ].copy()
     if sent.empty:
-        return {"lancados": 0, "verificados": 0}
+        return {"lancados": 0, "verificados": 0, "revisao": 0}
 
-    checked_ids = (
-        sent.get("id", pd.Series("", index=sent.index))
-        .fillna("")
-        .astype(str)
-        .loc[lambda values: values.ne("")]
-        .tolist()
-    )
-    launched_ids = []
-
-    if not launch_report.empty:
-        report = launch_report.copy()
-        report["numero_nf"] = report["numero_nf"].map(normalized_nf)
-        report["_supplier_norm"] = report.get(
-            "fornecedor",
-            pd.Series("", index=report.index),
-        ).map(supplier_validation_name)
-
-        for _, row in sent.iterrows():
-            record_id = str(row.get("id") or "").strip()
-            nf = normalized_nf(row.get("numero_nf"))
-            if not record_id or not nf:
-                continue
-
-            candidates = report[
-                report["numero_nf"].eq(nf)
-            ].copy()
-            if candidates.empty:
-                continue
-
-            process_supplier = str(
-                row.get("fornecedor_padrao") or ""
-            ).strip()
-            process_supplier_norm = supplier_validation_name(
-                process_supplier
-            )
-
-            matched = False
-            if process_supplier_norm:
-                exact = candidates[
-                    candidates["_supplier_norm"].eq(
-                        process_supplier_norm
-                    )
-                ]
-                if not exact.empty:
-                    matched = True
-                else:
-                    best_score = max(
-                        [
-                            supplier_similarity(
-                                process_supplier,
-                                candidate,
-                            )
-                            for candidate in candidates.get(
-                                "fornecedor",
-                                pd.Series("", index=candidates.index),
-                            ).tolist()
-                        ]
-                        or [0]
-                    )
-                    matched = best_score >= 82
-            elif len(candidates) == 1:
-                matched = True
-
-            if matched:
-                launched_ids.append(record_id)
+    report = launch_report.copy()
+    report["numero_nf"] = report["numero_nf"].map(normalized_nf)
+    # O cadastro SETTA só associa CNPJ a código+fornecedor quando consegue
+    # desambiguar filiais/lojas; quando não consegue, aplica nome exato.
+    report["cnpj_resolvido"], _ = _supplier_cnpj_lookup(report)
+    report_by_nf = {
+        nf: group.to_dict(orient="records")
+        for nf, group in report.groupby("numero_nf", sort=False)
+        if nf
+    }
+    checked_ids, launched_ids, review_ids = [], [], []
+    for _, row in sent.iterrows():
+        record_id = str(row.get("id") or row.get("file_id") or "").strip()
+        if not record_id:
+            continue
+        checked_ids.append(record_id)
+        nf = normalized_nf(row.get("numero_nf"))
+        if not nf:
+            continue
+        outcome = validar_lancamento_nf(
+            row.to_dict(),
+            report_by_nf.get(nf, []),
+            normalizar_nome=supplier_validation_name,
+            similaridade=supplier_similarity,
+            normalizar_codigo=_supplier_code_norm,
+            somente_digitos=digits_only,
+        )
+        if outcome == "CONFIRMADO":
+            launched_ids.append(record_id)
+        elif outcome == "CONFERIR_FORNECEDOR":
+            review_ids.append(record_id)
 
     if SAVE_NF_HISTORY and db.configured():
-        return db.reconcile_launches(
-            launched_ids,
-            checked_ids,
-        )
+        result = db.reconcile_launches(launched_ids, checked_ids, review_ids)
+        try:
+            _cached_db_process_records.clear()
+        except Exception:
+            pass
+        return result
 
     now_iso = now_local().isoformat(timespec="seconds")
-    launched_set = set(launched_ids)
-    checked_set = set(checked_ids)
-    manifest = list(
-        st.session_state.get("current_test_manifest") or []
+    launched_set, checked_set, review_set = (
+        set(launched_ids), set(checked_ids), set(review_ids)
     )
-    launched_count = 0
-    checked_count = 0
+    manifest = list(st.session_state.get("current_test_manifest") or [])
     for row in manifest:
-        row_id = str(row.get("id") or row.get("file_id") or "")
-        if row_id in checked_set:
-            row["lancamento_verificado_em"] = now_iso
-            checked_count += 1
+        row_id = str(row.get("id") or row.get("file_id") or "").strip()
+        if row_id not in checked_set:
+            continue
+        row["lancamento_verificado_em"] = now_iso
+        row["lancamento_conferencia_pendente"] = row_id in review_set
         if row_id in launched_set:
-            if not row.get("lancado_em"):
-                row["lancado_em"] = now_iso
-            launched_count += 1
+            row["lancado_em"] = row.get("lancado_em") or now_iso
+        else:
+            # Corrigir inclusive confirmação antiga feita com TES vazio.
+            row["lancado_em"] = None
     st.session_state.current_test_manifest = manifest
     return {
-        "lancados": launched_count,
-        "verificados": checked_count,
+        "lancados": len(launched_set),
+        "verificados": len(checked_set),
+        "revisao": len(review_set),
     }
 
 
@@ -2023,50 +1991,48 @@ def _extract_launch_report_cached(
     raw: bytes,
     name: str,
 ) -> pd.DataFrame:
-    """Extrai todas as NFs do STSUP01 para confirmar lançamento, sem filtro de TES."""
+    """Extrai STSUP01 completo, inclusive TES (AE), sem filtro de 30 dias/TES."""
     suffix = Path(name.lower()).suffix.lower()
     rows = []
 
     def append_row(values):
-        nf = normalized_nf(values[0] if len(values) > 0 else "")
-        supplier_code = _supplier_code_norm(values[1] if len(values) > 1 else "")
-        supplier = str(values[2] if len(values) > 2 else "").strip()
+        nf = normalized_nf(values[0])
         if nf:
             rows.append({
                 "numero_nf": nf,
-                "fornecedor_codigo": supplier_code,
-                "fornecedor": supplier,
+                "fornecedor_codigo": _supplier_code_norm(values[1]),
+                "fornecedor": str(values[2] or "").strip(),
+                "tes": values[3],
             })
 
     if suffix in {".xlsx", ".xltx"}:
         wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
         try:
             ws = wb[wb.sheetnames[0]]
+            if ws.max_column < 31:
+                raise ValueError("STSUP01 sem coluna AE (TES). Confirme o layout do relatório.")
             for idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                if idx <= 2 or len(row) < 6:
+                if idx <= 2:
                     continue
-                append_row((row[3], row[4], row[5]))
+                append_row((row[3], row[4], row[5], row[30]))
         finally:
             wb.close()
     else:
         temp, _ = _read_uploaded_table_cached(raw, name, None, None)
-        if temp.shape[1] < 6:
-            raise ValueError(
-                "O relatório de NFs / STSUP01 precisa conter pelo menos as colunas A até F."
-            )
+        if temp.shape[1] < 31:
+            raise ValueError("STSUP01 precisa conter a coluna AE (TES) para confirmar lançamento.")
         for row in temp.itertuples(index=False, name=None):
-            append_row((row[3], row[4], row[5]))
+            append_row((row[3], row[4], row[5], row[30]))
 
     if not rows:
         return pd.DataFrame(
-            columns=["numero_nf", "fornecedor_codigo", "fornecedor"]
+            columns=["numero_nf", "fornecedor_codigo", "fornecedor", "tes"]
         )
-
     frame = pd.DataFrame(rows)
     frame["_supplier_norm"] = frame["fornecedor"].map(supplier_validation_name)
     return (
         frame.drop_duplicates(
-            ["numero_nf", "_supplier_norm"],
+            ["numero_nf", "fornecedor_codigo", "_supplier_norm", "tes"],
             keep="last",
         )
         .drop(columns="_supplier_norm")
@@ -9726,35 +9692,37 @@ def _clean_mrp_nf_pack(
 
 
 def _extract_launch_report_pack(pack: dict) -> pd.DataFrame:
+    """Mesma regra de leitura para STSUP01 normalizado da Central SETTA."""
     raw_frame = central_data.source_raw_frame(pack, 0)
+    if raw_frame.shape[1] < 31:
+        raise ValueError("STSUP01 normalizado sem coluna AE (TES).")
     rows = []
     for idx, row in enumerate(
         raw_frame.itertuples(index=False, name=None),
         start=1,
     ):
-        if idx <= 2 or len(row) < 6:
+        if idx <= 2:
             continue
         nf = normalized_nf(row[3])
-        supplier_code = _supplier_code_norm(row[4])
-        supplier = str(row[5] or "").strip()
         if nf:
             rows.append({
                 "numero_nf": nf,
-                "fornecedor_codigo": supplier_code,
-                "fornecedor": supplier,
+                "fornecedor_codigo": _supplier_code_norm(row[4]),
+                "fornecedor": str(row[5] or "").strip(),
+                "tes": row[30],
             })
 
     if not rows:
         return pd.DataFrame(
-            columns=["numero_nf", "fornecedor_codigo", "fornecedor"]
+            columns=["numero_nf", "fornecedor_codigo", "fornecedor", "tes"]
         )
+    frame = pd.DataFrame(rows)
+    frame["_supplier_norm"] = frame["fornecedor"].map(supplier_validation_name)
     return (
-        pd.DataFrame(rows)
-        .drop_duplicates(
-            ["numero_nf", "fornecedor_codigo", "fornecedor"],
+        frame.drop_duplicates(
+            ["numero_nf", "fornecedor_codigo", "_supplier_norm", "tes"],
             keep="last",
-        )
-        .reset_index(drop=True)
+        ).drop(columns="_supplier_norm").reset_index(drop=True)
     )
 
 
