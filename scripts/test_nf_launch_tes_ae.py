@@ -114,6 +114,7 @@ scope = {
     "_read_uploaded_table_cached": lambda raw, filename, a, b:
         (pd.DataFrame(rows_excel[2:]), []),
 }
+scope["_stsup01_tes_cell"] = extract_ast("_stsup01_tes_cell", scope)
 read_manual = extract_ast("_extract_launch_report_cached", scope)
 read_pack = extract_ast("_extract_launch_report_pack", {
     **scope, "central_data": SimpleNamespace(source_raw_frame=lambda pack, i: pd.DataFrame(pack["rows"])),
@@ -127,6 +128,51 @@ for result in (manual, normalized):
     assert tes_preenchida(result[result["numero_nf"] == "123"]["tes"].iloc[1])
     assert verify(base, [{**r, "cnpj_resolvido": "11111111000191"} for r in
                          result[result["numero_nf"] == "123"].to_dict("records")]) == "AGUARDANDO_LANCAMENTO"
+
+
+# A normalização pode eliminar AE quando todos os TES estão em branco:
+# esta ausência deve gerar base pendente e não falha da Central.
+raw_without_ae = [line[:30] for line in rows_excel]
+missing_ae_scope = {
+    **scope,
+    "central_data": SimpleNamespace(
+        source_raw_frame=lambda pack, i: pd.DataFrame(pack["rows"]),
+    ),
+    "_read_uploaded_table_cached": lambda raw, filename, a, b:
+        (pd.DataFrame(raw_without_ae[2:]), []),
+}
+read_pack_missing = extract_ast("_extract_launch_report_pack", missing_ae_scope)
+read_manual_missing = extract_ast("_extract_launch_report_cached", missing_ae_scope)
+pack_without_ae = read_pack_missing({"rows": raw_without_ae})
+table_without_ae = read_manual_missing(b"irrelevant", "STSUP01.csv")
+for frame in (pack_without_ae, table_without_ae):
+    assert not frame.empty
+    assert frame["tes"].eq("").all()
+    rows_match = [{**row, "cnpj_resolvido": "11111111000191"}
+                  for row in frame[frame["numero_nf"] == "123"].to_dict("records")]
+    assert verify(base, rows_match) == "AGUARDANDO_LANCAMENTO"
+
+# O parser de MRP deve manter NFs com TES omitida, e não esvaziar a base.
+clean_pack_scope = {
+    **scope,
+    "date": __import__("datetime").date, "timedelta": __import__("datetime").timedelta,
+    "central_data": SimpleNamespace(source_raw_frame=lambda pack, i: pd.DataFrame(pack["rows"])),
+    "normalized_material_code": lambda value: str(value or "").strip(),
+    "re": re,
+}
+read_clean_pack = extract_ast("_clean_mrp_nf_pack", clean_pack_scope)
+# Simular uma linha operacional com dados de A a M, sem coluna AE.
+matrix = [list("HEAD" for _ in range(13)), ["" for _ in range(13)]]
+record = [None] * 13
+record[0] = datetime(2026, 10, 13)
+record[3] = 123
+record[4] = "00031"
+record[5] = "ALFA COMPONENTES"
+record[11] = "1005"
+record[12] = "PARAFUSO"
+matrix.append(record)
+mrp_rows, _ = read_clean_pack({"rows": matrix}, "2026-10-13")
+assert len(mrp_rows) == 1 and mrp_rows.iloc[0]["tes"] == ""
 
 
 # Testar reconciliação no modo de testes: uma confirmação antiga é revogada
