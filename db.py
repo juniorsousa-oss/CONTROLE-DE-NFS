@@ -299,18 +299,22 @@ def mark_sent(ids: Iterable[str], operator: str = "") -> dict:
 def reconcile_launches(
     launched_ids: Iterable[str],
     checked_ids: Iterable[str],
+    review_ids: Iterable[str] = (),
 ) -> dict:
+    """Grava confirmação somente após identidade válida + TES AE completo."""
     launched_ids = [str(x) for x in launched_ids if str(x).strip()]
     checked_ids = [str(x) for x in checked_ids if str(x).strip()]
-    if not checked_ids and not launched_ids:
-        return {"lancados": 0, "verificados": 0}
+    review_ids = [str(x) for x in review_ids if str(x).strip()]
+    if not checked_ids:
+        return {"lancados": 0, "verificados": 0, "revisao": 0}
     if not configured():
         raise RuntimeError("Supabase não configurado.")
     return rpc(
-        "nf_conciliar_lancamentos",
+        "nf_conciliar_lancamentos_v2",
         {
             "p_lancados": launched_ids,
             "p_verificados": checked_ids,
+            "p_revisao": review_ids,
         },
         timeout=60,
     ) or {}
