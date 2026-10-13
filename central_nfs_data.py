@@ -139,13 +139,46 @@ def source_raw_frame(pack: dict, sheet_name: str | int = 0) -> pd.DataFrame:
     return pd.DataFrame(selected.get("rows") or [])
 
 
-def download_preferred_source(source_key: str) -> tuple[dict, dict]:
+def download_preferred_source(
+    source_key: str, *, required_columns: int = 0
+) -> tuple[dict, dict]:
+    """Prefere o normalizado, mas recupera Excel bruto se faltarem colunas.
+
+    Alguns pacotes normalizados omitem colunas finais inteiramente vazias.
+    Para o STSUP01, a coluna AE (TES) é necessária para confirmar lançamento.
+    Se o arquivo bruto também não tiver AE, o consumidor deve tratá-la como
+    vazia, nunca como confirmação automática.
+    """
     try:
         pack, meta = download_normalized_source(source_key)
-        return {"normalized": True, "pack": pack}, meta
     except Exception:
         raw, meta = download_source_bytes(source_key)
         return {"normalized": False, "raw": raw}, meta
+
+    if required_columns:
+        try:
+            count = source_raw_frame(pack, 0).shape[1]
+        except (ValueError, IndexError, TypeError):
+            count = 0
+        if count < required_columns:
+            try:
+                raw, raw_meta = download_source_bytes(source_key)
+                return {
+                    "normalized": False,
+                    "raw": raw,
+                    "fallback_original": True,
+                    "normalized_columns": count,
+                }, raw_meta
+            except Exception:
+                # Sem confirmação fiscal automática enquanto a AE não existe.
+                # Permite processar a base normalizada com TES em branco.
+                return {
+                    "normalized": True,
+                    "pack": pack,
+                    "tes_unavailable": True,
+                    "normalized_columns": count,
+                }, meta
+    return {"normalized": True, "pack": pack}, meta
 
 
 def load_visual_config() -> dict:
