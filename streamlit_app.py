@@ -4001,11 +4001,17 @@ def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
         utc=True,
     ).dt.tz_convert(TZ)
     frame["_deadline"] = frame["_sent"] + pd.Timedelta(hours=24)
+    frame["_review"] = frame.get(
+        "lancamento_conferencia_pendente",
+        pd.Series(False, index=frame.index),
+    ).fillna(False).eq(True)
     current = pd.Timestamp(now_local())
 
     def status(row):
         if pd.notna(row["_launched"]):
             return "LANÇAMENTO CONFIRMADO"
+        if row["_review"]:
+            return "CONFERIR FORNECEDOR"
         if (
             pd.notna(row["_checked"])
             and row["_checked"] > row["_deadline"]
@@ -4013,6 +4019,8 @@ def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
             return "ATRASADO - COBRAR LANÇAMENTO"
         if current > row["_deadline"]:
             return "AGUARDANDO NOVO RELATÓRIO"
+        if pd.notna(row["_checked"]):
+            return "AGUARDANDO LANÇAMENTO"
         return "DENTRO DO PRAZO"
 
     frame["situacao_lancamento"] = frame.apply(status, axis=1)
@@ -4022,9 +4030,11 @@ def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
     frame["verificado_em_local"] = frame["_checked"].dt.tz_localize(None)
     order = {
         "ATRASADO - COBRAR LANÇAMENTO": 0,
-        "AGUARDANDO NOVO RELATÓRIO": 1,
-        "DENTRO DO PRAZO": 2,
-        "LANÇAMENTO CONFIRMADO": 3,
+        "CONFERIR FORNECEDOR": 1,
+        "AGUARDANDO NOVO RELATÓRIO": 2,
+        "AGUARDANDO LANÇAMENTO": 3,
+        "DENTRO DO PRAZO": 4,
+        "LANÇAMENTO CONFIRMADO": 5,
     }
     frame["_ord_lanc"] = (
         frame["situacao_lancamento"].map(order).fillna(9)
@@ -4056,6 +4066,14 @@ def render_launch_tracking_panel(
         st.error(
             f"{len(overdue)} NF(s) ultrapassaram 24 horas e continuam sem "
             "lançamento no último STSUP01 verificado. Cobrar o lançamento."
+        )
+    supplier_review = frame[
+        frame["situacao_lancamento"].eq("CONFERIR FORNECEDOR")
+    ]
+    if not supplier_review.empty:
+        st.warning(
+            f"{len(supplier_review)} NF(s) exigem conferência do fornecedor "
+            "antes de confirmar o lançamento; similaridade de nome não basta."
         )
 
     cols = [
@@ -9778,6 +9796,10 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
             continue
 
         token = central_data.source_token(meta)
+        if source_key == "nf":
+            # Migração de regra: reavaliar a base já carregada mesmo sem novo
+            # upload, corrigindo confirmações antigas que ignoravam TES.
+            token = f"{token}|lancamento_tes_ae_v2"
         previous = sync_state.get(source_key) or {}
         if (
             not force
@@ -9819,6 +9841,12 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
                         now_local().date().isoformat(),
                     )
                     launch_report = _extract_launch_report_cached(source["raw"], filename)
+
+                # Conferência de lançamentos independente de sucesso do cálculo
+                # MRP: TES e fornecedor são validados diretamente no STSUP01.
+                st.session_state["last_launch_reconciliation"] = (
+                    reconcile_launch_report(launch_report)
+                )
 
                 api_payload = _load_materials_api_current_cached()
                 if not bool(
@@ -9872,9 +9900,6 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
                 if not bool(persisted.get("ok", True)):
                     raise RuntimeError("SUPABASE NÃO CONFIRMOU A CARGA NF/MRP.")
 
-                st.session_state["last_launch_reconciliation"] = (
-                    reconcile_launch_report(launch_report)
-                )
                 rows_count = len(entries)
 
             central_data.commit_sync(
