@@ -10079,6 +10079,8 @@ def _render_nfs_sources_status():
         st.success("FONTES ATUALIZADAS · " + str(st.session_state.pop("_central_nfs_success")))
     if st.session_state.get("_central_nfs_error"):
         st.warning(str(st.session_state.get("_central_nfs_error")))
+    if st.session_state.get("_central_nf_tes_info"):
+        st.info(st.session_state["_central_nf_tes_info"])
 
     if st.button(
         "REPROCESSAR FONTES",
