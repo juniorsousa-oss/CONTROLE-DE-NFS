@@ -82,6 +82,42 @@ def run() -> None:
     assert "render_accounting_email_preview()" in app
     assert "BAIXAR PRÉVIA DO E-MAIL · HTML" in app
     assert "ENVIO DESATIVADO EM HOMOLOGAÇÃO" in app
+    from nf_email_delivery import acesso_teste_configurado, verificar_pin_operador
+    from unittest.mock import patch
+    with patch("nf_email_delivery.db._secret", side_effect=lambda x: {
+        "NFS_EMAIL_API_TOKEN": "a" * 40,
+        "NFS_EMAIL_OPERATOR_PIN": "autorizacao-somente-teste",
+    }.get(x, "")):
+        assert acesso_teste_configurado()
+        assert verificar_pin_operador("autorizacao-somente-teste")
+        assert not verificar_pin_operador("senha-errada")
+    with patch("nf_email_delivery.db._secret", return_value=""):
+        assert not acesso_teste_configurado()
+        assert not verificar_pin_operador("qualquer-coisa")
+    assert "ENVIAR E-MAIL DE TESTE" in app
+    assert 'render_accounting_email_preview()' in app
+    assert "NFS_EMAIL_OPERATOR_PIN" in app
+    from pathlib import Path
+    edge = (Path(__file__).resolve().parents[1] /
+        "supabase/functions/nf-email-api/index.ts").read_text("utf-8")
+    sql = (Path(__file__).resolve().parents[1] /
+        "supabase/migrations/20261014_nf_email_notifications_queue.sql").read_text("utf-8")
+    assert '"x-nfs-notification-token"' in edge
+    assert 'NFS_EMAIL_PRODUCTION_ENABLED' in edge
+    assert 'mode === "TESTE" ? testAddress : productionTo' in edge
+    assert 'mode === "TESTE" ? "" : productionCc' in edge
+    assert 'NFS_EMAIL_WORKFLOW_URL' in edge
+    assert 'secureMatch(shared,supplied)' in edge
+    assert 'html:body' in edge
+    assert 'nf_email_claim' in edge and 'nf_email_finish' in edge
+    assert "version_token = v_config.versao_baseline" in sql
+    assert "source_key='nf'" in sql
+    assert "producao_ativa boolean not null default false" in sql
+    assert "v_limit := case when p_modo='TESTE' then 4 else 2 end" in sql
+    assert "lancamento_verificado_em > public.nf_prazo_vencimento_24h" in sql
+    assert "lancado_em is null" in sql
+    assert "where modo='PRODUCAO' and source_version=v_sync.version_token" in sql
+
     print("NF_ACCOUNTING_EMAIL_PREVIEW_OK")
 
 
