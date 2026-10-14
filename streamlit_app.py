@@ -55,6 +55,9 @@ import central_nfs_data as central_data
 from nf_launch_validation import validar_lancamento_nf
 from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento
 from nf_email_notifications import preparar_cobrancas, montar_email_html, assunto_cobranca
+from nf_email_delivery import (
+    acesso_teste_configurado, enviar_teste_contabilidade,
+)
 from nf_prazo_dashboard import (
     indexar_historico_ocorrencias,
     aplicar_historico_na_consulta,
@@ -4241,8 +4244,52 @@ def render_accounting_email_preview() -> None:
     )
     st.caption(
         "Abra o HTML para validar o modelo de tabela antes de habilitar "
-        "envios de teste. Nenhuma mensagem foi enviada."
+        "envios de teste."
     )
+
+    st.markdown("#### DISPARO DE HOMOLOGAÇÃO")
+    st.caption(
+        "O servidor utilizará somente o destinatário de TESTE definido "
+        "nos segredos do Supabase. Não é possível alterar o destinatário "
+        "na página. Nenhuma mensagem irá para a contabilidade."
+    )
+    if not acesso_teste_configurado():
+        st.info(
+            "Disparo indisponível até configurar NFS_EMAIL_API_TOKEN e "
+            "NFS_EMAIL_OPERATOR_PIN nos segredos do Streamlit, além do "
+            "fluxo do Microsoft 365 e do destinatário de teste no Supabase."
+        )
+    else:
+        with st.form("nf_email_teste", enter_to_submit=False):
+            _pin = st.text_input(
+                "PIN DO OPERADOR AUTORIZADO", type="password",
+                max_chars=256,
+            )
+            _confirm = st.checkbox(
+                "Confirmo o envio de uma mensagem de TESTE "
+                "somente ao destinatário de homologação."
+            )
+            _send = st.form_submit_button(
+                "ENVIAR E-MAIL DE TESTE",
+                type="primary", use_container_width=True,
+                disabled=not _confirm,
+            )
+        if _send:
+            try:
+                _response = enviar_teste_contabilidade(_pin)
+                _test_status = str(_response.get("status") or "")
+                if _test_status == "ACEITO":
+                    st.success(
+                        "O fluxo do Microsoft 365 aceitou a notificação "
+                        "de teste. Confirme o recebimento na caixa de e-mail."
+                    )
+                else:
+                    st.warning(
+                        "Teste não enviado: " + _test_status.replace("_", " ")
+                    )
+            except Exception as exc:
+                st.error("Teste não confirmado: " + str(exc))
+
 
 
 def persist_pre_notes_current(source_name: str = "app") -> dict:
