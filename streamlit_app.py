@@ -10829,6 +10829,8 @@ if page == "Dashboard":
                 "pdf_criado_em",
                 "enviado_em",
                 "acompanhamento_lancamento",
+                "historico_atraso_24h",
+                "primeiro_atraso_em",
                 "lancado_em",
                 "arquivo_final",
             ]
@@ -10888,6 +10890,8 @@ if page == "Dashboard":
                     "ACOMPANHAMENTO",
                     width="large",
                 ),
+                "historico_atraso_24h": "JÁ TEVE ATRASO 24H",
+                "primeiro_atraso_em": "PRIMEIRO ATRASO EM",
                 "lancado_em": "LANÇAMENTO CONFIRMADO",
                 "arquivo_final": st.column_config.TextColumn(
                     "ARQUIVO",
