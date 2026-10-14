@@ -55,6 +55,8 @@ jobs:
         run: python -m scripts.test_nf_launch_tes_ae
       - name: Testar prazo 24h com fins de semana excluídos e natureza elegível
         run: python -m scripts.test_nf_launch_deadline
+      - name: Testar prévia de e-mail para contabilidade (sem envio)
+        run: python -m scripts.test_nf_email_notifications
       - name: Validar integração
         run: |
           python - <<'PY'
