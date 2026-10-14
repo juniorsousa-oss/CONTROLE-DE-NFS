@@ -1,0 +1,89 @@
+"""Teste do modelo de e-mail contábil em homologação (nenhum envio real)."""
+from datetime import datetime
+
+import pandas as pd
+
+from nf_email_notifications import (
+    LIMITE_DIARIO_PREVISTO,
+    STATUS_COBRANCA,
+    assunto_cobranca,
+    montar_email_html,
+    preparar_cobrancas,
+)
+
+
+def run() -> None:
+    assert LIMITE_DIARIO_PREVISTO == 2
+    source = pd.DataFrame([
+        {
+            "numero_nf": "001234", "fornecedor_padrao": "Metal & Cia",
+            "natureza": "COMPRA DE MATERIA PRIMA",
+            "enviado_em_local": "2026-10-09 15:00:00",
+            "arquivo_final": "NF_1234.pdf",
+            "prazo_lancamento": "2026-10-12 15:00:00",
+            "situacao_lancamento": STATUS_COBRANCA,
+            "lancado_em_local": None,
+        },
+        {
+            "numero_nf": "009999", "fornecedor_padrao": "Já lançado",
+            "natureza": "COMPRA DE MATERIA PRIMA",
+            "enviado_em_local": "2026-10-09 15:00:00",
+            "arquivo_final": "NF_9999.pdf",
+            "prazo_lancamento": "2026-10-12 15:00:00",
+            "situacao_lancamento": "LANÇAMENTO CONFIRMADO",
+            "lancado_em_local": "2026-10-13 12:00:00",
+        },
+        {
+            "numero_nf": "007777", "fornecedor_padrao": "Sem relatório atualizado",
+            "natureza": "COMPRA DE MATERIA PRIMA",
+            "enviado_em_local": "2026-10-09 15:00:00",
+            "arquivo_final": "NF_7777.pdf",
+            "prazo_lancamento": "2026-10-12 15:00:00",
+            "situacao_lancamento": "AGUARDANDO NOVO RELATÓRIO",
+            "lancado_em_local": None,
+        },
+        {
+            "numero_nf": "008888", "fornecedor_padrao": "Inconsistência",
+            "natureza": "COMPRA DE MATERIA PRIMA",
+            "enviado_em_local": "2026-10-09 15:00:00",
+            "arquivo_final": "NF_8888.pdf",
+            "prazo_lancamento": "2026-10-12 15:00:00",
+            "situacao_lancamento": STATUS_COBRANCA,
+            "lancado_em_local": "2026-10-12 14:00:00",
+        },
+    ])
+    selected = preparar_cobrancas(source)
+    assert selected["NF"].tolist() == ["001234"]
+    assert list(selected.columns) == [
+        "NF", "FORNECEDOR", "NATUREZA", "DATA DE ENVIO", "NOME DO ARQUIVO"
+    ]
+    assert selected.iloc[0]["DATA DE ENVIO"] == "09/10/2026 15:00"
+    html = montar_email_html(selected, datetime(2026, 10, 14))
+    assert "<table" in html and "</table>" in html
+    assert "001234" in html and "NF_1234.pdf" in html
+    assert "Metal &amp; Cia" in html and "Metal & Cia" not in html
+    assert "009999" not in html and "007777" not in html
+    assert "008888" not in html
+    assert "marcos.rodrigues@" not in html
+    assert "mailto:" not in html
+    assert assunto_cobranca(datetime(2026, 10, 14)) == (
+        "SETTA | Cobrança de lançamento de NFs vencidas — 14/10/2026"
+    )
+    assert preparar_cobrancas(pd.DataFrame()).empty
+    try:
+        montar_email_html(pd.DataFrame(), datetime(2026, 10, 14))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Uma prévia vazia não pode ser enviada.")
+    # A tela deve deixar explícito que não realiza nenhum disparo.
+    from pathlib import Path
+    app = (Path(__file__).resolve().parents[1] / "streamlit_app.py").read_text("utf-8")
+    assert "render_accounting_email_preview()" in app
+    assert "BAIXAR PRÉVIA DO E-MAIL · HTML" in app
+    assert "ENVIO DESATIVADO EM HOMOLOGAÇÃO" in app
+    print("NF_ACCOUNTING_EMAIL_PREVIEW_OK")
+
+
+if __name__ == "__main__":
+    run()
