@@ -55,6 +55,11 @@ import central_nfs_data as central_data
 from nf_launch_validation import validar_lancamento_nf
 from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento
 from nf_email_notifications import preparar_cobrancas, montar_email_html, assunto_cobranca
+from nf_prazo_dashboard import (
+    indexar_historico_ocorrencias,
+    aplicar_historico_na_consulta,
+    cartoes_prazo_html,
+)
 from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
@@ -4127,11 +4132,7 @@ def render_launch_tracking_panel(
             "ATRASADO - COBRAR LANÇAMENTO"
         )
     ]
-    if not overdue.empty:
-        st.error(
-            f"{len(overdue)} NF(s) ultrapassaram 24 horas e continuam sem "
-            "lançamento no último STSUP01 verificado. Cobrar o lançamento."
-        )
+    # As pendências vencidas ficam nos indicadores e no relatório consolidado.
     supplier_review = frame[
         frame["situacao_lancamento"].eq("CONFERIR FORNECEDOR")
     ]
