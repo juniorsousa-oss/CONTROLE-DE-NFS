@@ -10742,8 +10742,6 @@ if page == "Dashboard":
                 "prioridade_mrp",
                 "pdf_criado_em",
                 "enviado_em",
-                "inicio_prazo_lancamento",
-                "prazo_lancamento",
                 "acompanhamento_lancamento",
                 "lancado_em",
                 "arquivo_final",
