@@ -105,6 +105,11 @@ def run() -> None:
     assert '"x-nfs-notification-token"' in edge
     assert 'NFS_EMAIL_PRODUCTION_ENABLED' in edge
     assert 'mode === "TESTE" ? testAddress : productionTo' in edge
+    assert '.from("nf_email_controle").select("destinatario_teste")' in edge
+    assert "NFS_EMAIL_TEST_RECIPIENT" not in edge
+    recipient_migration = (Path(__file__).resolve().parents[1] /
+        "supabase/migrations/20261014_nf_email_test_recipient.sql").read_text("utf-8")
+    assert "destinatario_teste" in recipient_migration
     assert 'mode === "TESTE" ? "" : productionCc' in edge
     assert 'NFS_EMAIL_WORKFLOW_URL' in edge
     assert 'secureMatch(shared,supplied)' in edge
