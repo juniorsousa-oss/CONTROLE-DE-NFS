@@ -742,10 +742,10 @@ div[data-testid="stForm"]:has(.st-key-nf_dash_search) [data-testid="column"]{
 /* Uma grade CSS substitui st.columns, evitando cards pulando de fila no
    rerun de abertura/fechamento da sidebar. Mantém dimensões mínimas nulas. */
 .nf-kpi-grid{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:.8rem!important;width:100%!important;min-width:0!important;margin:.5rem 0 .8rem!important}
-.nf-kpi-grid.nf-kpi-sent{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.nf-kpi-grid.nf-kpi-sent{grid-template-columns:repeat(4,minmax(0,1fr))!important}
 .nf-kpi-grid .kpi-card{min-width:0!important;width:100%!important;height:100%!important;box-sizing:border-box!important;overflow-wrap:anywhere!important;margin:0!important}
 .nf-kpi-grid .kpi-label{white-space:normal!important;overflow-wrap:anywhere!important}
-@media(max-width:980px){.nf-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+@media(max-width:980px){.nf-kpi-grid,.nf-kpi-grid.nf-kpi-sent{grid-template-columns:repeat(2,minmax(0,1fr))!important}}
 @media(max-width:540px){.nf-kpi-grid{grid-template-columns:minmax(0,1fr)!important}.nf-kpi-grid.nf-kpi-sent{grid-template-columns:minmax(0,1fr)!important}}
 .footer{text-align:center!important;color:#9298a1!important;font-size:.72rem!important;padding-top:1.2rem!important}
 @media(max-width:900px){
