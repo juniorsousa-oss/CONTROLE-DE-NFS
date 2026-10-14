@@ -51,6 +51,9 @@ assert "PENDÊNCIAS ATUAIS" in html
 assert "HISTÓRICO PERMANENTE" in html
 assert '<div class="nf-kpi-grid">' in html
 assert html.count('class="kpi-card"') == 2
+inner_html = cartoes_prazo_html(1, 2, apenas_cartoes=True)
+assert inner_html.count('class="kpi-card"') == 2
+assert '<div class="nf-kpi-grid">' not in inner_html
 
 app = (ROOT / "streamlit_app.py").read_text("utf-8")
 db = (ROOT / "db.py").read_text("utf-8")
@@ -58,6 +61,19 @@ sql = (ROOT / "supabase/migrations/20261014_nf_prazo_atrasos_historico.sql").rea
 assert "db.list_nf_prazo_atrasos()" in app
 assert "aplicar_historico_na_consulta(" in app
 assert "cartoes_prazo_html(" in app
+# Layout: ambos os indicadores ficam com os seis existentes ANTES da
+# faixa DOCUMENTOS FINALIZADOS, sem repetir os cartões abaixo da faixa.
+dashboard = app[app.index('if page == "Dashboard":'):]
+section_documents = dashboard.index('    section_band(\n        "02 · DOCUMENTOS"')
+sla_position = dashboard.index('        + cartoes_prazo_html(')
+assert sla_position < section_documents
+assert dashboard.count('cartoes_prazo_html(') == 1
+assert 'apenas_cartoes=True' in dashboard[:section_documents]
+assert dashboard.count('nf-kpi-grid nf-kpi-sent') == 1
+assert '.nf-kpi-grid.nf-kpi-sent{grid-template-columns:repeat(4,minmax(0,1fr))!important}' in app
+assert 'launch_tracking_frame(_tracking_source)' in dashboard[:section_documents]
+assert '.dt.tz_localize(TZ)' in dashboard[:section_documents]
+assert 'finalized_records = aplicar_historico_na_consulta(' in dashboard[section_documents:]
 assert '"historico_atraso_24h",' in app
 assert '"primeiro_atraso_em",' in app
 assert '"historico_atraso_24h": "JÁ TEVE ATRASO 24H"' in app
