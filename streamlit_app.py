@@ -10674,11 +10674,7 @@ if page == "Dashboard":
             .eq("ATRASADO - COBRAR LANÇAMENTO")
             .sum()
         )
-        if _overdue_count:
-            st.error(
-                f"{_overdue_count} NF(s) ultrapassaram 24 horas sem confirmação "
-                "de lançamento no último STSUP01."
-            )
+        # As ocorrências vencidas passam a ser acompanhadas nos cartões de indicadores.
 
         # O menu lateral também provoca rerun no Streamlit. Apenas o botão
         # APLICAR FILTROS pode atualizar a consulta; navegação e abertura de
