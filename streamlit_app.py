@@ -53,6 +53,7 @@ from openpyxl import load_workbook
 import db
 import central_nfs_data as central_data
 from nf_launch_validation import validar_lancamento_nf
+from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento
 from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
@@ -4014,20 +4015,19 @@ def current_process_records_for_tests() -> pd.DataFrame:
 
 
 def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
-    """Monta a situação das NFs enviadas frente ao prazo de 24 horas."""
+    """Acompanha NF-e de matéria-prima no prazo de 24h excluindo finais de semana."""
     if not isinstance(records, pd.DataFrame):
         records = current_process_records_for_tests()
     if not isinstance(records, pd.DataFrame) or records.empty:
         return pd.DataFrame()
 
     frame = records.copy()
-    type_series = frame.get(
-        "tipo_documento",
-        pd.Series("NF-e", index=frame.index),
-    ).fillna("NF-e")
-    frame = frame[
-        ~type_series.map(is_cte_document_type)
-    ].copy()
+    _eligible = frame.apply(
+        lambda r: acompanha_lancamento(
+            r.get("tipo_documento", "NF-e"), r.get("natureza", "")
+        ), axis=1,
+    )
+    frame = frame[_eligible].copy()
     if frame.empty or "enviado_em" not in frame.columns:
         return pd.DataFrame()
 
@@ -4056,7 +4056,14 @@ def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
         errors="coerce",
         utc=True,
     ).dt.tz_convert(TZ)
-    frame["_deadline"] = frame["_sent"] + pd.Timedelta(hours=24)
+    frame["_start"] = pd.to_datetime(
+        frame["_sent"].map(lambda dt: inicio_valido_envio(dt.to_pydatetime())),
+        errors="coerce", utc=True,
+    ).dt.tz_convert(TZ)
+    frame["_deadline"] = pd.to_datetime(
+        frame["_sent"].map(lambda dt: prazo_lancamento(dt.to_pydatetime())),
+        errors="coerce", utc=True,
+    ).dt.tz_convert(TZ)
     frame["_review"] = frame.get(
         "lancamento_conferencia_pendente",
         pd.Series(False, index=frame.index),
@@ -4081,6 +4088,7 @@ def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
 
     frame["situacao_lancamento"] = frame.apply(status, axis=1)
     frame["prazo_lancamento"] = frame["_deadline"].dt.tz_localize(None)
+    frame["inicio_prazo_lancamento"] = frame["_start"].dt.tz_localize(None)
     frame["enviado_em_local"] = frame["_sent"].dt.tz_localize(None)
     frame["lancado_em_local"] = frame["_launched"].dt.tz_localize(None)
     frame["verificado_em_local"] = frame["_checked"].dt.tz_localize(None)
@@ -4137,6 +4145,7 @@ def render_launch_tracking_panel(
             "numero_nf",
             "fornecedor_padrao",
             "enviado_em_local",
+            "inicio_prazo_lancamento",
             "prazo_lancamento",
             "verificado_em_local",
             "lancado_em_local",
@@ -4158,8 +4167,12 @@ def render_launch_tracking_panel(
                 "ENVIADO EM",
                 format="DD/MM/YYYY HH:mm",
             ),
+            "inicio_prazo_lancamento": st.column_config.DatetimeColumn(
+                "INÍCIO CONSIDERADO",
+                format="DD/MM/YYYY HH:mm",
+            ),
             "prazo_lancamento": st.column_config.DatetimeColumn(
-                "PRAZO 24H",
+                "PRAZO 24H · SEM FINS DE SEMANA",
                 format="DD/MM/YYYY HH:mm",
             ),
             "verificado_em_local": st.column_config.DatetimeColumn(
@@ -10555,31 +10568,52 @@ if page == "Dashboard":
             ),
             errors="coerce",
         )
-        _deadline = _sent + pd.Timedelta(hours=24)
-        _now = pd.Timestamp(now_local().replace(tzinfo=None))
-        _is_cte_final = (
-            finalized_records.get(
-                "tipo_documento",
-                pd.Series("NF-e", index=finalized_records.index),
-            )
-            .fillna("NF-e")
-            .map(is_cte_document_type)
+        # Somente a janela de INÍCIO limita o horário; as noites de dias
+        # úteis contam integralmente. Sábados e domingos não contam.
+        _eligible_final = finalized_records.apply(
+            lambda r: acompanha_lancamento(
+                r.get("tipo_documento", "NF-e"), r.get("natureza", "")
+            ), axis=1,
         )
+        _deadline = _sent.map(
+            lambda dt: (
+                pd.Timestamp(prazo_lancamento(dt.to_pydatetime()).replace(tzinfo=None))
+                if pd.notna(dt) else pd.NaT
+            )
+        )
+        _start = _sent.map(
+            lambda dt: (
+                pd.Timestamp(inicio_valido_envio(dt.to_pydatetime()).replace(tzinfo=None))
+                if pd.notna(dt) else pd.NaT
+            )
+        )
+        _now = pd.Timestamp(now_local().replace(tzinfo=None))
+        _review = finalized_records.get(
+            "lancamento_conferencia_pendente",
+            pd.Series(False, index=finalized_records.index),
+        ).fillna(False).eq(True)
 
         _launch_status = []
         for idx in finalized_records.index:
-            if bool(_is_cte_final.loc[idx]):
+            if not bool(_eligible_final.loc[idx]):
                 _launch_status.append("NÃO SE APLICA")
+            elif pd.isna(_sent.loc[idx]):
+                _launch_status.append("SEM REGISTRO DE ENVIO")
             elif pd.notna(_launched.loc[idx]):
                 _launch_status.append("LANÇAMENTO CONFIRMADO")
+            elif bool(_review.loc[idx]):
+                _launch_status.append("CONFERIR FORNECEDOR")
             elif pd.notna(_checked.loc[idx]) and _checked.loc[idx] > _deadline.loc[idx]:
                 _launch_status.append("ATRASADO - COBRAR LANÇAMENTO")
             elif pd.notna(_deadline.loc[idx]) and _now > _deadline.loc[idx]:
                 _launch_status.append("AGUARDANDO NOVO RELATÓRIO")
+            elif pd.notna(_checked.loc[idx]):
+                _launch_status.append("AGUARDANDO LANÇAMENTO")
             else:
                 _launch_status.append("DENTRO DO PRAZO")
 
         finalized_records["acompanhamento_lancamento"] = _launch_status
+        finalized_records["inicio_prazo_lancamento"] = _start
         finalized_records["prazo_lancamento"] = _deadline
 
         _overdue_count = int(
@@ -10708,6 +10742,8 @@ if page == "Dashboard":
                 "prioridade_mrp",
                 "pdf_criado_em",
                 "enviado_em",
+                "inicio_prazo_lancamento",
+                "prazo_lancamento",
                 "acompanhamento_lancamento",
                 "lancado_em",
                 "arquivo_final",
@@ -10719,6 +10755,7 @@ if page == "Dashboard":
         for _dt_col in [
             "pdf_criado_em",
             "enviado_em",
+            "inicio_prazo_lancamento",
             "prazo_lancamento",
             "lancado_em",
             "lancamento_verificado_em",
@@ -10761,6 +10798,8 @@ if page == "Dashboard":
                 "prioridade_mrp": "PRIORIDADE",
                 "pdf_criado_em": "PDF CRIADO EM",
                 "enviado_em": "ENVIADO EM",
+                "inicio_prazo_lancamento": "INÍCIO CONSIDERADO",
+                "prazo_lancamento": "PRAZO 24H",
                 "acompanhamento_lancamento": st.column_config.TextColumn(
                     "ACOMPANHAMENTO",
                     width="large",
