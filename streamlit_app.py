@@ -54,6 +54,7 @@ import db
 import central_nfs_data as central_data
 from nf_launch_validation import validar_lancamento_nf
 from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento
+from nf_email_notifications import preparar_cobrancas, montar_email_html, assunto_cobranca
 from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
@@ -4188,6 +4189,58 @@ def render_launch_tracking_panel(
                 width="medium",
             ),
         },
+    )
+
+
+def render_accounting_email_preview() -> None:
+    """Homologação: visualizar a cobrança sem emitir e-mail ou expor destinatários."""
+    st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
+    section_band(
+        "NOTIFICAÇÕES · CONTABILIDADE",
+        "PRÉVIA DE COBRANÇA DE NFs VENCIDAS",
+        "HOMOLOGAÇÃO · NENHUM E-MAIL SERÁ ENVIADO",
+    )
+    st.caption(
+        "Esta prévia considera somente NF-e de COMPRA DE MATERIA PRIMA com "
+        "24h vencidas e ausência de lançamento verificada no STSUP01. "
+        "Uma base antiga, sem verificação posterior ao vencimento, "
+        "não gera cobrança."
+    )
+    st.info(
+        "ENVIO DESATIVADO EM HOMOLOGAÇÃO. O disparo automático dependerá "
+        "de nova versão validada do STSUP01, limite de até 2 mensagens por "
+        "dia, registro de auditoria e integração autenticada com a conta "
+        "de e-mail da SETTA. Os destinatários definitivos ainda não são utilizados."
+    )
+    try:
+        tracking = launch_tracking_frame()
+        pendencias = preparar_cobrancas(tracking)
+    except Exception as exc:
+        st.error("Não foi possível preparar a prévia: " + str(exc))
+        return
+
+    st.metric("NFs ELEGÍVEIS PARA COBRANÇA", len(pendencias))
+    if pendencias.empty:
+        st.success("Nenhuma NF vencida e verificada no STSUP01 para cobrar.")
+        return
+
+    _setta_dataframe(pendencias, use_container_width=True, hide_index=True)
+    data_ref = now_local()
+    try:
+        html = montar_email_html(pendencias, data_ref)
+        assunto = assunto_cobranca(data_ref)
+    except Exception as exc:
+        st.error("Falha ao montar a mensagem: " + str(exc))
+        return
+    st.text_input("ASSUNTO DO E-MAIL", value=assunto, disabled=True)
+    st.download_button(
+        "BAIXAR PRÉVIA DO E-MAIL · HTML",
+        data=html.encode("utf-8"), file_name="previsao_cobranca_nfs.html",
+        mime="text/html", use_container_width=True,
+    )
+    st.caption(
+        "Abra o HTML para validar o modelo de tabela antes de habilitar "
+        "envios de teste. Nenhuma mensagem foi enviada."
     )
 
 
@@ -11774,6 +11827,7 @@ elif page == "Configurações":
         unsafe_allow_html=True,
     )
     render_file_processing()
+    render_accounting_email_preview()
 
 
 st.markdown(f'<div class="footer">{cfg["footer"]}</div>', unsafe_allow_html=True)
