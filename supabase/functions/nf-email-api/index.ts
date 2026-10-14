@@ -142,7 +142,11 @@ Deno.serve(async req => {
   const subject = (test ? "[TESTE] " : "") +
     "SETTA | Cobrança de lançamento de NFs vencidas — " + isoDateBrazil(new Date());
   const body = buildHtml(rows,test);
+  // Envelope compatível com o gatilho padrão de webhook do Teams
+  // (sem conector HTTP Premium). O fluxo pode usar html/subject nas
+  // ações do Outlook, sem publicar mensagem em chat/canal.
   const payload = {
+    type:"message",attachments:[],
     to,cc,subject,html:body,kind:mode,
     notification_id:claim.id,version_token:claim.source_version,
   };
