@@ -10550,6 +10550,30 @@ if page == "Dashboard":
         ).notna().sum()
     )
 
+    # Calcula os vencimentos antes dos cartões: todos ficam juntos no bloco
+    # 01 · INDICADORES DO FLUXO, e não mais em DOCUMENTOS FINALIZADOS.
+    # O Dashboard já converteu UTC para horário local SEM timezone.
+    # Reintroduzir TZ preserva o instante ao reutilizar a mesma regra de
+    # acompanhamento da tela operacional; evita diferença de três horas.
+    _overdue_count = 0
+    if not finalized_records.empty:
+        _tracking_source = finalized_records.copy()
+        for _tracking_col in (
+            "enviado_em", "lancado_em", "lancamento_verificado_em",
+        ):
+            if _tracking_col in _tracking_source.columns:
+                _tracking_source[_tracking_col] = (
+                    pd.to_datetime(
+                        _tracking_source[_tracking_col], errors="coerce",
+                    ).dt.tz_localize(TZ)
+                )
+        _tracking_status = launch_tracking_frame(_tracking_source)
+        if not _tracking_status.empty:
+            _overdue_count = int(
+                _tracking_status["situacao_lancamento"]
+                .eq("ATRASADO - COBRAR LANÇAMENTO").sum()
+            )
+
     kpis = [
         ("NFs RECEBIDAS", nf_received, "VINCULADAS", "#2563eb", "#dbeafe", False),
         ("CT-es VINCULADOS", cte_received, "NO CONTROLE", "#7c3aed", "#ede9fe", False),
