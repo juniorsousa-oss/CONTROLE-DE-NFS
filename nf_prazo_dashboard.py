@@ -41,7 +41,9 @@ def aplicar_historico_na_consulta(
     return view
 
 
-def cartoes_prazo_html(atual: int, historico: int | str) -> str:
+def cartoes_prazo_html(
+    atual: int, historico: int | str, *, apenas_cartoes: bool = False,
+) -> str:
     """Mesmo componente visual de cartões já utilizado no Dashboard SETTA."""
     cards = (
         ("NFs VENCIDAS AGORA", int(atual), "PENDÊNCIAS ATUAIS", "#b45309", "#fef3c7"),
@@ -56,4 +58,5 @@ def cartoes_prazo_html(atual: int, historico: int | str) -> str:
             f'<div class="kpi-value">{escape(str(value))}</div>'
             f'<div class="kpi-delta">{escape(info)}</div></div>'
         )
-    return '<div class="nf-kpi-grid">' + "".join(pieces) + '</div>'
+    conteudo = "".join(pieces)
+    return conteudo if apenas_cartoes else '<div class="nf-kpi-grid">' + conteudo + '</div>'
