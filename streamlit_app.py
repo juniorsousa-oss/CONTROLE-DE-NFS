@@ -10716,25 +10716,10 @@ if page == "Dashboard":
         finalized_records["inicio_prazo_lancamento"] = _start
         finalized_records["prazo_lancamento"] = _deadline
 
-        _overdue_count = int(
-            finalized_records["acompanhamento_lancamento"]
-            .eq("ATRASADO - COBRAR LANÇAMENTO")
-            .sum()
-        )
+        # O histórico segue na grade e no Excel; seus cartões estão no bloco
+        # 01 · INDICADORES DO FLUXO com os demais indicadores operacionais.
         finalized_records = aplicar_historico_na_consulta(
             finalized_records, _prazo_history, TZ, _prazo_history_ok,
-        )
-        st.markdown(
-            cartoes_prazo_html(
-                _overdue_count,
-                len(_prazo_history) if _prazo_history_ok else "—",
-            ),
-            unsafe_allow_html=True,
-        )
-        st.caption(
-            "ATUAIS: NF-e de matéria-prima vencidas, sem lançamento no "
-            "STSUP01 verificado. HISTÓRICO: documentos que já apresentaram "
-            "atraso desde a implantação do controle, sem duplicidades."
         )
 
         # O menu lateral também provoca rerun no Streamlit. Apenas o botão
