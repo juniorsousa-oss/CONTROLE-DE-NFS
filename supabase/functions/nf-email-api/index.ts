@@ -96,7 +96,22 @@ Deno.serve(async req => {
   const endpointRaw = (Deno.env.get("NFS_EMAIL_WORKFLOW_URL") || "").trim();
   const url = authorizedEndpoint(endpointRaw);
   if (!url) return json({ok:true,data:{status:"WEBHOOK_NAO_CONFIGURADO"}});
-  const testAddress = (Deno.env.get("NFS_EMAIL_TEST_RECIPIENT") || "").trim();
+
+  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (!supabaseUrl || !serviceKey) return json({ok:false,error:"SUPABASE_NAO_CONFIGURADO"},500);
+  const admin = createClient(supabaseUrl, serviceKey, {
+    auth:{persistSession:false,autoRefreshToken:false},
+  });
+
+  // Endereço de homologação configurado no banco por administração.
+  // Não é recebido no JSON, na interface nem como cabeçalho do solicitante.
+  const testConfig = mode === "TESTE"
+    ? await admin.from("nf_email_controle").select("destinatario_teste")
+      .eq("singleton",true).maybeSingle()
+    : null;
+  if (testConfig?.error) return json({ok:false,error:"CONFIG_TESTE_INDISPONIVEL"},500);
+  const testAddress = String(testConfig?.data?.destinatario_teste || "").trim();
   const productionTo = (Deno.env.get("NFS_EMAIL_PROD_TO") || "").trim();
   const productionCc = (Deno.env.get("NFS_EMAIL_PROD_CC") || "").trim();
   const to = mode === "TESTE" ? testAddress : productionTo;
@@ -107,13 +122,6 @@ Deno.serve(async req => {
         (cc && cc.split(";").some(s => !validEmail(s.trim())))))) {
     return json({ok:true,data:{status:"DESTINATARIOS_NAO_CONFIGURADOS"}});
   }
-
-  const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
-  if (!supabaseUrl || !serviceKey) return json({ok:false,error:"SUPABASE_NAO_CONFIGURADO"},500);
-  const admin = createClient(supabaseUrl, serviceKey, {
-    auth:{persistSession:false,autoRefreshToken:false},
-  });
   let claim: any;
   try {
     const claimed = await admin.rpc("nf_email_claim", {
