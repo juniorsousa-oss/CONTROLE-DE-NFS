@@ -10430,6 +10430,22 @@ if page == "Dashboard":
 
     records = enrich_cte_records_with_nf_data(records)
 
+    # O histórico é imutável e independe dos filtros da consulta.
+    # O trigger do Supabase grava as ocorrências na atualização do STSUP01.
+    _prazo_history = {}
+    _prazo_history_ok = True
+    if SAVE_NF_HISTORY and db.configured():
+        try:
+            _prazo_history = indexar_historico_ocorrencias(
+                db.list_nf_prazo_atrasos()
+            )
+        except Exception:
+            _prazo_history_ok = False
+            st.warning(
+                "Não foi possível consultar o histórico de atrasos. "
+                "O indicador atual permanece disponível."
+            )
+
     if records.empty:
         records = pd.DataFrame(columns=[
             "id", "processado_em", "tipo_documento", "numero_nf", "numero_cte",
