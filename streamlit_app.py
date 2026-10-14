@@ -10606,7 +10606,13 @@ if page == "Dashboard":
         for label, value, delta, accent, soft in sent_cards
     ]
     st.markdown(
-        '<div class="nf-kpi-grid nf-kpi-sent">' + "".join(_nf_sent_html) + '</div>',
+        '<div class="nf-kpi-grid nf-kpi-sent">' + "".join(_nf_sent_html)
+        + cartoes_prazo_html(
+            _overdue_count,
+            len(_prazo_history) if _prazo_history_ok else "—",
+            apenas_cartoes=True,
+        )
+        + '</div>',
         unsafe_allow_html=True,
     )
 
