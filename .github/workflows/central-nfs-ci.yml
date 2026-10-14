@@ -57,6 +57,11 @@ jobs:
         run: python -m scripts.test_nf_launch_deadline
       - name: Testar prévia de e-mail para contabilidade (sem envio)
         run: python -m scripts.test_nf_email_notifications
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Validar Edge Function de envio por e-mail
+        run: deno check supabase/functions/nf-email-api/index.ts
       - name: Testar histórico de atrasos e cartões de Dashboard
         run: python -m scripts.test_nf_overdue_history
       - name: Validar integração
