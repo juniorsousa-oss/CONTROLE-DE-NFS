@@ -10596,6 +10596,12 @@ if page == "Dashboard":
         st.caption("SUPABASE NÃO CONECTADO.")
 
     if finalized_records.empty:
+        st.markdown(
+            cartoes_prazo_html(
+                0, len(_prazo_history) if _prazo_history_ok else "—",
+            ),
+            unsafe_allow_html=True,
+        )
         st.caption("NENHUM DOCUMENTO FINALIZADO.")
     else:
         finalized_records["parte"] = finalized_records.apply(
