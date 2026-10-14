@@ -10697,7 +10697,21 @@ if page == "Dashboard":
             .eq("ATRASADO - COBRAR LANÇAMENTO")
             .sum()
         )
-        # As ocorrências vencidas passam a ser acompanhadas nos cartões de indicadores.
+        finalized_records = aplicar_historico_na_consulta(
+            finalized_records, _prazo_history, TZ, _prazo_history_ok,
+        )
+        st.markdown(
+            cartoes_prazo_html(
+                _overdue_count,
+                len(_prazo_history) if _prazo_history_ok else "—",
+            ),
+            unsafe_allow_html=True,
+        )
+        st.caption(
+            "ATUAIS: NF-e de matéria-prima vencidas, sem lançamento no "
+            "STSUP01 verificado. HISTÓRICO: documentos que já apresentaram "
+            "atraso desde a implantação do controle, sem duplicidades."
+        )
 
         # O menu lateral também provoca rerun no Streamlit. Apenas o botão
         # APLICAR FILTROS pode atualizar a consulta; navegação e abertura de
