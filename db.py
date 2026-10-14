@@ -211,6 +211,23 @@ def list_process_records(limit: int = 10000) -> list[dict]:
     )[:limit]
 
 
+def list_nf_prazo_atrasos(limit: int = 50000) -> list[dict]:
+    """Histórico permanente de NFs com atraso verificado no STSUP01.
+
+    Leitura somente; o registro de novas ocorrências é realizado por trigger
+    no Supabase, sem depender de alguém abrir o Dashboard.
+    """
+    if not configured():
+        return []
+    return _select_all(
+        "nf_prazo_atrasos",
+        select="nf_id,registrado_em",
+        order="registrado_em.desc",
+        page_size=1000,
+        max_rows=limit,
+    )
+
+
 def save_mrp_load(
     detail: Iterable[dict],
     summary: Iterable[dict],
