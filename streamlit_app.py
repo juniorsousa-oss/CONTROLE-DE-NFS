@@ -4275,11 +4275,13 @@ def render_accounting_email_preview() -> None:
         "não gera cobrança."
     )
     st.info(
-        "ENVIO AUTOMÁTICO DESATIVADO EM HOMOLOGAÇÃO. A homologação permite " 
-        "apenas disparo manual autorizado. A produção dependerá "
-        "de nova versão validada do STSUP01, limite de até 2 mensagens por "
-        "dia, registro de auditoria e integração autenticada com a conta "
-        "de e-mail da SETTA. Os destinatários definitivos ainda não são utilizados."
+        "PRODUÇÃO DEFINITIVA DESATIVADA. Um piloto automático independente "
+        "pode acompanhar NFs reais por até 48 horas, somente após autorização "
+        "e ativação do agendador. No piloto, apenas NFs vencidas e ainda "
+        "sem lançamento confirmado no STSUP01 atualizado geram mensagem; "
+        "sem pendências, não há envio. Limite: 2 mensagens por dia, "
+        "com registros de auditoria e encerramento automático. "
+        "Destinatários: grupo atualmente autorizado no Power Automate."
     )
     st.markdown("#### HOMOLOGAÇÃO DE E-MAIL · DADOS FICTÍCIOS")
     from nf_email_notifications import gerar_previa_visual_ficticia
