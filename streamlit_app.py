@@ -56,7 +56,7 @@ from nf_launch_validation import validar_lancamento_nf
 from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento
 from nf_email_notifications import preparar_cobrancas, montar_email_html, assunto_cobranca
 from nf_email_delivery import (
-    acesso_teste_configurado, enviar_teste_contabilidade,
+    acesso_teste_configurado, enviar_teste_contabilidade, enviar_simulacao_contabilidade,
 )
 from nf_prazo_dashboard import (
     indexar_historico_ocorrencias,
@@ -4217,6 +4217,49 @@ def render_accounting_email_preview() -> None:
         "dia, registro de auditoria e integração autenticada com a conta "
         "de e-mail da SETTA. Os destinatários definitivos ainda não são utilizados."
     )
+    st.markdown("#### SIMULAÇÃO DE E-MAIL · DADOS FICTÍCIOS")
+    st.caption(
+        "Envia uma NF fictícia, claramente marcada como SIMULAÇÃO, "
+        "somente a Júnior e Washington. Não cria nem altera notas reais. "
+        "A produção permanece bloqueada."
+    )
+    if not acesso_teste_configurado():
+        st.info(
+            "Simulação indisponível: configure NFS_EMAIL_API_TOKEN e "
+            "NFS_EMAIL_OPERATOR_PIN nos segredos do Streamlit."
+        )
+    else:
+        with st.form("nf_email_simulacao", enter_to_submit=False):
+            _pin_sim = st.text_input(
+                "PIN DO OPERADOR · SIMULAÇÃO", type="password",
+                max_chars=256, key="nf_sim_pin",
+            )
+            _confirm_sim = st.checkbox(
+                "Autorizo UM envio real de e-mail com dados fictícios "
+                "apenas para Júnior e Washington.",
+                key="nf_sim_confirm",
+            )
+            _send_sim = st.form_submit_button(
+                "ENVIAR SIMULAÇÃO PARA HOMOLOGAÇÃO",
+                type="primary", use_container_width=True,
+                disabled=not _confirm_sim,
+            )
+        if _send_sim:
+            try:
+                _result_sim = enviar_simulacao_contabilidade(_pin_sim)
+                _status_sim = str(_result_sim.get("status") or "")
+                if _status_sim == "ACEITO":
+                    st.success(
+                        "O fluxo aceitou a simulação. Verifique o histórico "
+                        "do Power Automate e o recebimento pelos dois destinatários."
+                    )
+                else:
+                    st.warning(
+                        "Simulação não enviada: " + _status_sim.replace("_", " ")
+                    )
+            except Exception as exc:
+                st.error("Simulação não confirmada: " + str(exc))
+
     try:
         tracking = launch_tracking_frame()
         pendencias = preparar_cobrancas(tracking)

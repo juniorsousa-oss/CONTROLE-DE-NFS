@@ -62,8 +62,8 @@ jobs:
           deno-version: v2.x
       - name: Validar Edge Function de envio por e-mail
         run: deno check supabase/functions/nf-email-api/index.ts
-      - name: Testar validação de destinatários de homologação (sem envio)
-        run: deno test supabase/functions/nf-email-api/recipients.test.ts
+      - name: Testar destinatários e dados fictícios de homologação (sem envio)
+        run: deno test supabase/functions/nf-email-api/recipients.test.ts supabase/functions/nf-email-api/simulation.test.ts
       - name: Testar histórico de atrasos e cartões de Dashboard
         run: python -m scripts.test_nf_overdue_history
       - name: Validar integração

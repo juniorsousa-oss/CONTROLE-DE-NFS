@@ -97,6 +97,41 @@ def run() -> None:
     assert "ENVIAR E-MAIL DE TESTE" in app
     assert 'render_accounting_email_preview()' in app
     assert "NFS_EMAIL_OPERATOR_PIN" in app
+    assert "ENVIAR SIMULAÇÃO PARA HOMOLOGAÇÃO" in app
+    assert "enviar_simulacao_contabilidade(_pin_sim)" in app
+    assert app.index('st.form("nf_email_simulacao"') < app.index("if pendencias.empty:")
+    assert 'nf_email_claim_simulation' in edge
+    assert 'simulationRows()' in edge
+    assert '[SIMULAÇÃO / NÃO COBRAR]' in edge
+    from nf_email_delivery import enviar_simulacao_contabilidade
+    from unittest.mock import Mock
+    with patch("nf_email_delivery.db._secret", side_effect=lambda x: {
+        "NFS_EMAIL_API_TOKEN": "a" * 40,
+        "NFS_EMAIL_OPERATOR_PIN": "autorizacao-somente-teste",
+    }.get(x, "")), patch("nf_email_delivery.db.supabase_url",
+    return_value="https://example.supabase.co"), patch(
+        "nf_email_delivery.requests.post",
+        return_value=Mock(ok=True, json=lambda: {
+            "ok": True, "data": {"status": "ACEITO", "mode": "SIMULACAO"}
+        }),
+    ) as mock_post:
+        assert enviar_simulacao_contabilidade("autorizacao-somente-teste")["status"] == "ACEITO"
+        assert mock_post.call_args.kwargs["json"] == {"mode": "SIMULACAO"}
+    with patch("nf_email_delivery.db._secret", return_value=""):
+        try:
+            enviar_simulacao_contabilidade("PIN_INCORRETO")
+        except PermissionError:
+            pass
+        else:
+            raise AssertionError("Simulação sem autorização não pode ser enviada.")
+    simulation_sql = (Path(__file__).resolve().parents[1] /
+        "supabase/migrations/20261015_nf_email_simulation.sql").read_text("utf-8")
+    assert "producao_ativa" in simulation_sql
+    assert "where modo='TESTE'" in simulation_sql
+    assert "nf_email_claim_simulation" in simulation_sql
+    assert "source_version" in simulation_sql
+    assert "revoke all on function" in simulation_sql
+
     from pathlib import Path
     edge = (Path(__file__).resolve().parents[1] /
         "supabase/functions/nf-email-api/index.ts").read_text("utf-8")
@@ -104,7 +139,7 @@ def run() -> None:
         "supabase/migrations/20261014_nf_email_notifications_queue.sql").read_text("utf-8")
     assert '"x-nfs-notification-token"' in edge
     assert 'NFS_EMAIL_PRODUCTION_ENABLED' in edge
-    assert 'mode === "TESTE" ? testAddress : productionTo' in edge
+    assert 'mode !== "PRODUCAO" ? testAddress : productionTo' in edge
     assert 'normalizeTestRecipients(testConfig?.data?.destinatario_teste)' in edge
     assert 'import { normalizeTestRecipients } from "./recipients.ts";' in edge
     assert "os dois destinatários de TESTE" in app
@@ -113,7 +148,7 @@ def run() -> None:
     recipient_migration = (Path(__file__).resolve().parents[1] /
         "supabase/migrations/20261014_nf_email_test_recipient.sql").read_text("utf-8")
     assert "destinatario_teste" in recipient_migration
-    assert 'mode === "TESTE" ? "" : productionCc' in edge
+    assert 'mode !== "PRODUCAO" ? "" : productionCc' in edge
     assert 'NFS_EMAIL_WORKFLOW_URL' in edge
     assert 'secureMatch(shared,supplied)' in edge
     assert 'html:body' in edge
