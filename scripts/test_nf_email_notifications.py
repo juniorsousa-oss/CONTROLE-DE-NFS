@@ -66,6 +66,11 @@ def run() -> None:
     assert "color:#ffffff" in html
     assert "sem confirmação de lançamento." in html
     assert "Controle de NFs Almoxarifado | SETTA" in html
+    assert "ALMOXARIFADO · CONTROLE DE NFs" in html
+    assert "NOTAS FISCAIS EM ACOMPANHAMENTO" in html
+    assert "max-width:920px" in html
+    assert 'width="920"' in html
+    assert "Referência: 14/10/2026" in html
     assert "009999" not in html and "007777" not in html
     assert "008888" not in html
     assert "marcos.rodrigues@" not in html

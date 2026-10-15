@@ -83,50 +83,103 @@ def preparar_cobrancas(tracking: pd.DataFrame | None) -> pd.DataFrame:
 
 
 def montar_email_html(rows: pd.DataFrame, date_ref: datetime) -> str:
-    """Prévia com o mesmo conteúdo e estilos do disparo real."""
+    """Prévia com identidade visual equivalente ao e-mail gerado pela Edge Function."""
     if rows is None or rows.empty:
         raise ValueError("Nenhuma NF vencida apta à cobrança.")
     if list(rows.columns) != [label for _, label in COLUNAS_EMAIL]:
         raise ValueError("Colunas inesperadas na prévia da cobrança.")
 
-    header_style = ("padding:10px;border:1px solid #73859a;"
-                    "text-align:left;background:#2b415b;color:#ffffff;")
     headers = "".join(
-        f'<th bgcolor="#2b415b" style="{header_style}">{escape(col)}</th>'
-        for col in rows.columns
+        '<th bgcolor="#263f60" scope="col" style="padding:12px 10px;'
+        'border-bottom:2px solid #5a7798;background:#263f60;color:#ffffff;'
+        'font:700 11px Arial,sans-serif;text-align:left;">'
+        f'{escape(col)}</th>' for col in rows.columns
     )
-    trs = []
-    for i, row in rows.iterrows():
-        bg = "#182b40" if i % 2 == 0 else "#273d54"
-        cells = "".join(
-            f'<td bgcolor="{bg}" style="padding:10px;border:1px solid #73859a;'
-            f'vertical-align:top;background:{bg};color:#ffffff;">'
-            f"{escape(_texto(value))}</td>"
-            for value in row.tolist()
-        )
-        trs.append(f'<tr bgcolor="{bg}">{cells}</tr>')
+    lines = []
+    for i, (_, record) in enumerate(rows.iterrows()):
+        bg = "#1c314e" if i % 2 else "#152943"
+        values = record.tolist()
+        cells = []
+        for col, value in zip(rows.columns, values):
+            content = escape(_texto(value))
+            if col == "NF":
+                content = f'<strong style="color:#ffffff;">{content}</strong>'
+            if col == "DIAS DE ATRASO":
+                content = ('<span style="display:inline-block;padding:4px 9px;'
+                           'border-radius:10px;background:#8c3d1a;color:#ffffff;'
+                           f'font-weight:700;">{content}</span>')
+            cells.append(
+                f'<td bgcolor="{bg}" style="padding:13px 10px;background:{bg};'
+                'border-bottom:1px solid #425875;color:#ffffff;'
+                'font:12px/1.55 Arial,sans-serif;vertical-align:top;'
+                f'overflow-wrap:anywhere;word-break:break-word;">{content}</td>'
+            )
+        lines.append(f'<tr bgcolor="{bg}">{"".join(cells)}</tr>')
+
     total = len(rows)
+    referencia = escape(date_ref.strftime("%d/%m/%Y"))
     return (
-        '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"></head>'
-        '<body style="margin:0;padding:0;background:#112238;color:#ffffff;'
-        'font:14px Arial,sans-serif;line-height:1.6;">'
-        '<table role="presentation" cellpadding="0" cellspacing="0" '
-        'width="100%" bgcolor="#112238" style="background:#112238;color:#ffffff;">'
-        '<tr><td bgcolor="#112238" style="padding:20px;background:#112238;'
-        'color:#ffffff;">'
-        '<p style="color:#ffffff;">Prezados,</p>'
-        f'<p style="color:#ffffff;">Segue a relação de <strong>{total} NF(s)</strong> '
-        'de compra de matéria-prima com prazo de lançamento vencido, '
+        '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="color-scheme" content="dark">'
+        '<style>@media screen and (max-width:640px){'
+        '.shell-pad{padding:10px!important}.pad-main{padding:20px 14px!important}'
+        '.head-pad{padding:22px 16px!important}'
+        '.email-title{font-size:21px!important}'
+        '.records-table th,.records-table td{padding:8px 6px!important;'
+        'font-size:11px!important}}</style></head>'
+        '<body bgcolor="#0d192b" style="margin:0;padding:0;background:#0d192b;'
+        'color:#ffffff;font-family:Arial,Helvetica,sans-serif;">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"'
+        ' bgcolor="#0d192b" style="width:100%;background:#0d192b;'
+        'border-collapse:collapse;"><tr><td class="shell-pad" align="center"'
+        ' style="padding:26px 18px;">'
+        '<table role="presentation" width="920" cellpadding="0" cellspacing="0"'
+        ' bgcolor="#162a45" style="width:100%;max-width:920px;'
+        'border-collapse:collapse;border:1px solid #3a5171;">'
+        '<tr><td class="head-pad" bgcolor="#1c3553" style="padding:27px 32px 25px;'
+        'border-top:5px solid #e54545;background:#1c3553;color:#ffffff;">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">'
+        '<tr><td style="color:#ffffff;font:800 22px Arial,sans-serif;'
+        'letter-spacing:1.5px;">SETTA</td>'
+        '<td align="right" style="color:#ffffff;font:700 11px Arial,sans-serif;">'
+        'ALMOXARIFADO · CONTROLE DE NFs</td></tr></table>'
+        '<h1 class="email-title" style="margin:23px 0 8px;color:#ffffff;'
+        'font:700 24px/1.3 Arial,sans-serif;">'
+        'Acompanhamento de lançamento de NFs</h1>'
+        '<p style="margin:0;color:#dce8f6;font:13px/1.5 Arial,sans-serif;">'
+        f'Referência: {referencia}</p></td></tr>'
+        '<tr><td class="pad-main" bgcolor="#162a45"'
+        ' style="padding:28px 32px 30px;background:#162a45;color:#ffffff;">'
+        '<p style="margin:0 0 15px;color:#ffffff;'
+        'font:14px/1.6 Arial,sans-serif;">Prezados,</p>'
+        '<p style="margin:0 0 23px;color:#ffffff;font:14px/1.75 Arial,sans-serif;">'
+        f'Segue a relação de <strong>{total} NF(s)</strong> de compra de '
+        'matéria-prima com prazo de lançamento vencido, '
         'sem confirmação de lançamento.</p>'
-        '<table role="table" cellpadding="0" cellspacing="0" '
-        'style="border-collapse:collapse;width:100%;font:13px Arial,sans-serif;'
-        'color:#ffffff;">'
-        f'<thead><tr>{headers}</tr></thead><tbody>{"".join(trs)}</tbody></table>'
-        '<p style="color:#ffffff;">Solicitamos verificar os lançamentos pendentes '
-        'e providenciar a regularização.</p>'
-        '<p style="color:#ffffff;">Atenciosamente,<br>'
-        'Controle de NFs Almoxarifado | SETTA</p>'
-        '</td></tr></table></body></html>'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0"'
+        ' style="margin:0 0 22px;border-collapse:collapse;">'
+        '<tr><td bgcolor="#233d5c" style="padding:15px 19px;'
+        'border-left:4px solid #e54545;background:#233d5c;color:#ffffff;">'
+        '<span style="color:#ffffff;font:700 12px Arial,sans-serif;">'
+        'NOTAS FISCAIS EM ACOMPANHAMENTO&nbsp;&nbsp;</span>'
+        f'<span style="color:#ffffff;font:700 22px Arial,sans-serif;">{total}</span>'
+        '</td></tr></table>'
+        '<table class="records-table" role="table" width="100%" cellpadding="0"'
+        ' cellspacing="0" style="width:100%;border-collapse:collapse;'
+        'border:1px solid #425875;">'
+        f'<thead><tr>{headers}</tr></thead><tbody>{"".join(lines)}</tbody></table>'
+        '<p style="margin:26px 0 24px;color:#ffffff;font:14px/1.7 Arial,sans-serif;">'
+        'Solicitamos verificar os lançamentos pendentes e providenciar '
+        'a regularização.</p>'
+        '<p style="margin:0;color:#ffffff;font:14px/1.7 Arial,sans-serif;">'
+        'Atenciosamente,<br><strong style="color:#ffffff;">'
+        'Controle de NFs Almoxarifado | SETTA</strong></p>'
+        '</td></tr><tr><td bgcolor="#0f2035" style="padding:16px 32px;'
+        'background:#0f2035;border-top:1px solid #3a5171;'
+        'color:#ffffff;font:12px/1.5 Arial,sans-serif;">'
+        'SETTA · Acompanhamento operacional de notas fiscais'
+        '</td></tr></table></td></tr></table></body></html>'
     )
 
 

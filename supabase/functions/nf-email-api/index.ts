@@ -3,6 +3,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { normalizeTestRecipients } from "./recipients.ts";
 import { simulationRows, realisticSimulationRows } from "./simulation.ts";
 import { checkWorkflowUrl } from "./webhook_validation.ts";
+import { renderSettaEmail } from "./email_layout.ts";
 
 type Item = {
   id: string;
@@ -32,44 +33,7 @@ function isoDateBrazil(date: Date) {
     timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric",
   }).format(date);
 }
-function buildHtml(rows: Item[], testMode: boolean, simulated=false, realistic=false): string {
-  const headers = ["NF", "FORNECEDOR", "NATUREZA", "DATA DE ENVIO", "DIAS DE ATRASO", "NOME DO ARQUIVO"];
-  const th = headers.map(h => '<th bgcolor="#2b415b" style="padding:10px;border:1px solid #73859a;text-align:left;background:#2b415b;color:#ffffff;">' + h + '</th>').join("");
-  const trs = rows.map((row, i) => {
-    const fields = [row.nf, row.fornecedor, row.natureza, row.enviado_em, String(row.dias_atraso ?? 0), row.arquivo];
-    const shade = i % 2 ? "#273d54" : "#182b40";
-    const cells = fields.map(value => '<td bgcolor="' + shade +
-      '" style="padding:10px;border:1px solid #73859a;vertical-align:top;background:' +
-      shade + ';color:#ffffff;">' + escaped(value || "") + "</td>").join("");
-    return '<tr bgcolor="' + shade + '">' + cells + "</tr>";
-  }).join("");
-  const prefix = realistic
-    ? '<p style="color:#b91c1c;font-weight:bold;border:1px solid #f3b3b3;padding:10px;">[HOMOLOGAÇÃO / DADOS FICTÍCIOS] EXEMPLO DO E-MAIL REAL. NÃO REALIZAR COBRANÇA OU LANÇAMENTO.</p>'
-    : simulated
-      ? '<p style="color:#b91c1c;font-weight:bold;">[SIMULAÇÃO / HOMOLOGAÇÃO] DADOS 100% FICTÍCIOS. NÃO REALIZAR COBRANÇA OU LANÇAMENTO.</p>'
-      : testMode
-      ? '<p style="color:#a16207;font-weight:bold;">[TESTE / HOMOLOGAÇÃO] Não representa uma cobrança real.</p>'
-      : "";
-  const intro = simulated
-    ? '<p>Mensagem fictícia para validar a integração SETTA → Power Automate → Outlook. Nenhuma nota fiscal real foi utilizada.</p>'
-    : '<p>Segue a relação de <strong>' + rows.length +
-      ' NF(s)</strong> de compra de matéria-prima com prazo de lançamento vencido, ' +
-      'sem confirmação de lançamento.</p>';
-  const closing = simulated
-    ? '<p><strong>Não tomar providências:</strong> este e-mail é exclusivamente um teste de entrega e formatação.</p>'
-    : '<p>Solicitamos verificar os lançamentos pendentes e providenciar a regularização.</p>';
-  const whiteText = (content: string) => content.replaceAll("<p>", '<p style="color:#ffffff;">');
-  return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"></head>' +
-    '<body style="margin:0;padding:0;font:14px Arial,sans-serif;background:#112238;color:#ffffff;line-height:1.6;">' +
-    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" bgcolor="#112238" style="background:#112238;color:#ffffff;">' +
-    '<tr><td bgcolor="#112238" style="padding:20px;background:#112238;color:#ffffff;">' +
-    prefix + '<p style="color:#ffffff;">Prezados,</p>' + whiteText(intro) +
-    '<table role="table" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:13px Arial,sans-serif;color:#ffffff;">' +
-    "<thead><tr>" + th + "</tr></thead><tbody>" + trs + "</tbody></table>" +
-    whiteText(closing) +
-    '<p style="color:#ffffff;">Atenciosamente,<br>Controle de NFs Almoxarifado | SETTA</p>' +
-    "</td></tr></table></body></html>";
-}
+
 function secureMatch(a: string, b: string): boolean {
   const x = new TextEncoder().encode(a);
   const y = new TextEncoder().encode(b);
@@ -167,7 +131,7 @@ Deno.serve(async req => {
       : (test ? "[TESTE] " : "") + normalSubject;
   // A prévia utiliza o MESMO texto, tabela e estilo da cobrança de produção;
   // somente o aviso superior e o sufixo do assunto a distinguem.
-  const body = buildHtml(rows,realistic ? false : test,simulated,realistic);
+  const body = renderSettaEmail(rows,{testMode:realistic ? false : test,simulated,realistic,dateLabel:isoDateBrazil(new Date())});
   // Envelope compatível com o gatilho padrão de webhook do Teams
   // (sem conector HTTP Premium). O fluxo pode usar html/subject nas
   // ações do Outlook, sem publicar mensagem em chat/canal.
