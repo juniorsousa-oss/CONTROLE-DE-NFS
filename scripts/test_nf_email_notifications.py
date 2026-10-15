@@ -100,6 +100,11 @@ def run() -> None:
     assert "ENVIAR SIMULAÇÃO PARA HOMOLOGAÇÃO" in app
     assert "enviar_simulacao_contabilidade(_pin_sim)" in app
     assert app.index('st.form("nf_email_simulacao"') < app.index("if pendencias.empty:")
+    from pathlib import Path
+    edge = (Path(__file__).resolve().parents[1] /
+        "supabase/functions/nf-email-api/index.ts").read_text("utf-8")
+    sql = (Path(__file__).resolve().parents[1] /
+        "supabase/migrations/20261014_nf_email_notifications_queue.sql").read_text("utf-8")
     assert 'nf_email_claim_simulation' in edge
     assert 'simulationRows()' in edge
     assert '[SIMULAÇÃO / NÃO COBRAR]' in edge
@@ -132,11 +137,6 @@ def run() -> None:
     assert "source_version" in simulation_sql
     assert "revoke all on function" in simulation_sql
 
-    from pathlib import Path
-    edge = (Path(__file__).resolve().parents[1] /
-        "supabase/functions/nf-email-api/index.ts").read_text("utf-8")
-    sql = (Path(__file__).resolve().parents[1] /
-        "supabase/migrations/20261014_nf_email_notifications_queue.sql").read_text("utf-8")
     assert '"x-nfs-notification-token"' in edge
     assert 'NFS_EMAIL_PRODUCTION_ENABLED' in edge
     assert 'mode !== "PRODUCAO" ? testAddress : productionTo' in edge
