@@ -64,7 +64,8 @@ Deno.serve(async req => {
   const mode = data?.mode === "PRODUCAO" ? "PRODUCAO"
     : data?.mode === "TESTE" ? "TESTE"
     : data?.mode === "SIMULACAO" ? "SIMULACAO"
-    : data?.mode === "PREVIA_REALISTA" ? "PREVIA_REALISTA" : "";
+    : data?.mode === "PREVIA_REALISTA" ? "PREVIA_REALISTA"
+    : data?.mode === "PILOTO" ? "PILOTO" : "";
   if (!mode) return json({ok:false,error:"MODO_INVALIDO"},400);
   if (mode === "PRODUCAO" && Deno.env.get("NFS_EMAIL_PRODUCTION_ENABLED") !== "true") {
     return json({ok:true,data:{status:"PRODUCAO_DESATIVADA"}});
@@ -121,13 +122,14 @@ Deno.serve(async req => {
   const realistic = mode === "PREVIA_REALISTA";
   const rows = realistic ? realisticSimulationRows()
     : simulated ? simulationRows() : (claim.items || []) as Item[];
-  const test = mode !== "PRODUCAO";
+  const test = mode !== "PRODUCAO" && mode !== "PILOTO";
   const normalSubject = "SETTA | Acompanhamento de lançamento de NFs vencidas — " +
     isoDateBrazil(new Date());
   const subject = realistic
     ? normalSubject + " [HOMOLOGAÇÃO — DADOS FICTÍCIOS]"
     : simulated
       ? "[SIMULAÇÃO / NÃO COBRAR] SETTA | Teste de notificação de NFs — " + isoDateBrazil(new Date())
+      : mode === "PILOTO" ? normalSubject + " [PILOTO — ACOMPANHAMENTO 48H]"
       : (test ? "[TESTE] " : "") + normalSubject;
   // A prévia utiliza o MESMO texto, tabela e estilo da cobrança de produção;
   // somente o aviso superior e o sufixo do assunto a distinguem.

@@ -158,6 +158,22 @@ def run() -> None:
     assert 'realisticSimulationRows()' in edge
     assert 'mode === "PREVIA_REALISTA"' in edge
     assert 'mode === "SIMULACAO" || mode === "PREVIA_REALISTA"' in edge
+    assert 'data?.mode === "PILOTO" ? "PILOTO"' in edge
+    assert 'normalSubject + " [PILOTO — ACOMPANHAMENTO 48H]"' in edge
+    assert 'mode !== "PRODUCAO" && mode !== "PILOTO"' in edge
+    pilot_sql = (Path(__file__).resolve().parents[1] /
+        "supabase/migrations/20261015_nf_email_piloto_48h.sql").read_text("utf-8")
+    assert "interval '48 hours'" in pilot_sql
+    assert "piloto_ativo boolean not null default false" in pilot_sql
+    assert "v_limit := case when p_modo='TESTE' then 4 else 2 end" in pilot_sql
+    assert "p.lancado_em is null" in pilot_sql
+    assert "if not exists(" in pilot_sql
+    assert "synced_at < v_controle.piloto_inicio" in pilot_sql
+    assert "where modo='PILOTO' and source_version=v_sync.version_token" in pilot_sql
+    assert "where modo='PILOTO' and data_local=v_hoje" in pilot_sql
+    assert "now()>=v_controle.piloto_ate" in pilot_sql
+    assert "AGUARDANDO_TOKEN_NO_VAULT" in pilot_sql
+    assert "body => '{\"mode\":\"PILOTO\"}'::jsonb" in pilot_sql
     assert 'renderSettaEmail(rows,' in edge
     assert 'normalSubject + " [HOMOLOGAÇÃO — DADOS FICTÍCIOS]"' in edge
     assert '[SIMULAÇÃO / NÃO COBRAR]' in edge
