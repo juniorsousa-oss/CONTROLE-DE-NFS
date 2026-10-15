@@ -200,6 +200,16 @@ def save_process_records(rows: Iterable[dict]) -> dict:
     return rpc("nf_registrar_processamentos", {"p_rows": rows}, timeout=90) or {}
 
 
+def register_avulsa_records(rows: Iterable[dict]) -> dict:
+    """Registra somente chaves fiscais ausentes, em transação atômica no banco."""
+    data = list(rows)
+    if not data:
+        raise ValueError("Nenhum documento avulso foi informado.")
+    if not configured():
+        raise RuntimeError("Supabase indisponível para registrar os documentos.")
+    return rpc("nf_registrar_avulsos", {"p_rows": data}, timeout=90) or {}
+
+
 def list_process_records(limit: int = 10000) -> list[dict]:
     if not configured():
         return []

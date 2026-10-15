@@ -12016,13 +12016,20 @@ elif page == "Impressão Avulsa":
             "desc_cr": str(fields.get("desc_cr") or "").strip(),
             "natureza": str(fields.get("natureza") or "").strip(),
             "recebido_por": str(pre.get("recebedor") or "").strip() if pre else "",
+            "pre_nota_status": str(pre.get("status") or "").strip() if pre else "",
         }
+
+    def _register_avulsa_records(rows):
+        result = db.register_avulsa_records(rows)
+        _invalidate_process_cache()
+        return result
 
     nf_avulsa.render_page(
         resolve_stamp=_resolve_avulsa_stamp,
         supplier_resolver=supplier_name_from_cnpj,
         validate_tomador=cte_tomador_confirmed_setta,
         company_sigla=company_sigla_from_document,
+        register_records=_register_avulsa_records,
     )
 
 

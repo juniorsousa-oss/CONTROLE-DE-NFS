@@ -92,4 +92,52 @@ assert 'GERAÇÃO CONVENCIONAL DE LOTES' not in avulsa_page
 assert 'ABRIR GERAÇÃO CONVENCIONAL' not in avulsa_page
 assert 'nf_avulsa_abrir_lote' not in avulsa_page
 
+# A impressão avulsa só registra quando os PDFs do lote estão gerados.
+date_values={nfkey:date(2026,10,21)}
+doc={"record":record,"raw":b"xml","meta":nf,
+     "info":{"destinatario":"SETTA ENERGY","cnpj_destinatario":"12345678000190"}}
+with patch.object(av,"cte_output_name",return_value="DACTE.pdf"):
+    rows=av.build_avulsa_manifest(
+        [doc], [{"record":cterecord,"raw":b"xml","meta":cte}],
+        date_values,{},lambda _: "FORNECEDOR",
+        lambda *a: {"data_chegada":date(2026,10,9),
+                    "natureza":"COMPRA DE MATERIA PRIMA",
+                    "recebido_por":"TESTE","pre_nota_status":"PRE-NOTA LANCADA"},
+        lambda *a:"SEN",
+        {av.build_final_name(date(2026,10,21),"123","FORNECEDOR"):b"PDF",
+         "DACTE.pdf":b"CTE"},"AVULSA-TST")
+assert len(rows)==2 and rows[0]["tipo_documento"]=="NF-e"
+assert rows[0]["status"]=="REALIZADO" and rows[1]["status"]=="REALIZADO"
+assert all("enviado_em" not in row for row in rows)
+assert rows[0]["chave_nfe"]==nfkey and rows[1]["chave_cte"]==ctekey
+assert rows[1]["nfs_vinculadas"]=="123"
+assert rows[0]["empresa_sigla"]=="SEN" and rows[1]["empresa_sigla"]=="SEN"
+assert rows[0]["natureza"]=="COMPRA DE MATERIA PRIMA"
+assert rows[0]["pre_nota_em"]=="2026-10-09"
+assert rows[0]["carimbo_aplicado"] is False
+assert rows[0]["arquivo_final"] in (
+    av.build_final_name(date(2026,10,21),"123","FORNECEDOR"),
+)
+try:
+    av.build_avulsa_manifest(
+        [doc], [], date_values, {}, lambda _: "FORNECEDOR",
+        lambda *a:{},lambda *a:"SEN",{},"AVULSA-TST")
+except ValueError: pass
+else: raise AssertionError("PDF ausente não pode gerar registro.")
+
+migration=Path("supabase/migrations/20261015_nf_avulsa_registro.sql").read_text("utf-8")
+assert "create unique index if not exists nf_processamentos_nfe_chave_uniq" in migration
+assert "nf_processamentos_cte_chave_uniq" in migration
+assert "on conflict do nothing" in migration
+assert "nf_registrar_avulsos" in migration
+assert "'REALIZADO'" in migration
+assert "enviado_em" in migration
+assert "db.register_avulsa_records(rows)" in app
+assert "register_records=_register_avulsa_records" in app
+avsource=Path("nf_avulsa.py").read_text("utf-8")
+assert 'build_avulsa_manifest(' in avsource
+assert 'result = register_records(manifest)' in avsource
+assert 'st.session_state["avulsa_outputs"] = outputs' in avsource
+assert avsource.index('result = register_records(manifest)') < avsource.index('st.session_state["avulsa_outputs"] = outputs')
+
 print("NFS_IMPRESSAO_AVULSA_OK")

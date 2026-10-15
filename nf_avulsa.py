@@ -9,7 +9,8 @@ import base64
 import io
 import re
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from uuid import uuid4
 
 import streamlit as st
 
@@ -86,7 +87,8 @@ def _clear_operation() -> None:
             st.session_state.pop(key, None)
     for key in ("avulsa_results", "avulsa_selected_signature", "avulsa_checked_ctes",
                 "avulsa_documents", "avulsa_stage", "avulsa_outputs",
-                "avulsa_checked_signature", "avulsa_stamp_choice", "avulsa_errors"):
+                "avulsa_checked_signature", "avulsa_stamp_choice", "avulsa_errors",
+                "avulsa_registro_resultado"):
         st.session_state.pop(key, None)
 
 
@@ -207,6 +209,127 @@ def make_documents(documents: list[dict], selected_ctes: list[dict],
     return generated
 
 
+def build_avulsa_manifest(documents: list[dict], selected_ctes: list[dict],
+                          dates: dict[str, date], stamps: dict[str, dict] | None,
+                          supplier_resolver, resolve_stamp, company_sigla,
+                          generated: dict[str, bytes], lote_id: str) -> list[dict]:
+    """Espelha os campos fiscais do manifesto principal, sem indicar envio.
+
+    Somente documentos cujos XMLs já foram validados e PDFs gerados entram
+    na lista. A identidade de cada documento é sempre a chave fiscal.
+    """
+    rows = []
+    stamps = stamps or {}
+    now = datetime.now(timezone.utc).isoformat()
+    selected_keys = {d["meta"].chave for d in documents}
+    nf_names, nf_companies = {}, {}
+    for doc in documents:
+        meta, info = doc["meta"], doc["info"]
+        key = digits_only(meta.chave)
+        if len(key) != 44 or key[20:22] != "55":
+            raise ValueError("NF-e com chave fiscal inválida no registro avulso.")
+        supplier = supplier_resolver(meta.cnpj_emitente) or meta.emitente
+        name = build_final_name(dates.get(meta.chave), meta.numero_nf, supplier)
+        if name not in generated:
+            raise ValueError(f"PDF da NF-e {meta.numero_nf} não foi gerado.")
+        defaults = resolve_stamp(meta, info) or {}
+        stamped = stamps.get(meta.chave)
+        fields = stamped if stamped is not None else defaults
+        arrival = parse_br_date(defaults.get("data_chegada"))
+        company = company_sigla(
+            info.get("destinatario"), info.get("cnpj_destinatario")
+        )
+        company = str(company or "").upper().strip()
+        if company not in {"SEN", "SEE", "STA"}:
+            raise ValueError(
+                f"NF-e {meta.numero_nf}: destinatário SETTA não identificado "
+                "com segurança. Corrija antes de registrar."
+            )
+        nf_names[meta.chave] = (meta.numero_nf, supplier)
+        nf_companies[meta.chave] = company
+        rows.append({
+            "lote_id": lote_id,
+            "arquivo_original": str(doc["record"].get("arquivo_nome") or
+                                    f"NFE_{meta.chave}.xml"),
+            "arquivo_final": name,
+            "tipo_documento": "NF-e",
+            "chave_nfe": key,
+            "numero_nf": normalized_number(meta.numero_nf),
+            "serie": str(meta.serie),
+            "cnpj_fornecedor": digits_only(meta.cnpj_emitente),
+            "fornecedor_padrao": str(supplier),
+            "vencimento": dates[meta.chave].isoformat(),
+            "natureza": str(fields.get("natureza") or "").strip().upper() or None,
+            "prioridade_mrp": False,
+            "pre_nota_status": str(defaults.get("pre_nota_status") or "") or None,
+            "pre_nota_em": arrival.isoformat() if arrival else None,
+            "metodo_fornecedor": "XML / CADASTRO",
+            "confianca": 100,
+            "status": "REALIZADO",
+            "operador": None,
+            "recebido_em": now,
+            "pdf_criado_em": now,
+            "processado_em": now,
+            "cr": str(fields.get("cr") or "").strip() or None,
+            "desc_cr": str(fields.get("desc_cr") or "").strip() or None,
+            "recebedor": str(fields.get("recebido_por") or "").strip() or None,
+            "origem_dados": "IMPRESSAO_AVULSA_XML",
+            "data_chegada": (
+                parse_br_date(fields.get("data_chegada")).isoformat()
+                if parse_br_date(fields.get("data_chegada")) else None
+            ),
+            "carimbo_aplicado": stamped is not None,
+            "empresa_sigla": company,
+        })
+    for doc in selected_ctes:
+        meta = doc["meta"]
+        key = digits_only(meta.chave)
+        if len(key) != 44 or key[20:22] != "57":
+            raise ValueError("CT-e com chave fiscal inválida no registro avulso.")
+        linked = [d["meta"] for d in documents if d["meta"].chave in meta.refs_nfe]
+        if not linked or not set(meta.refs_nfe).intersection(selected_keys):
+            raise ValueError(f"CT-e {meta.numero} sem NF-e vinculada nesta geração.")
+        companies = {nf_companies[d.chave] for d in linked}
+        if len(companies) != 1:
+            raise ValueError(
+                f"CT-e {meta.numero}: NF-es vinculadas pertencem a empresas "
+                "diferentes. O registro exige conferência."
+            )
+        filename = cte_output_name(
+            meta, [d.numero_nf for d in linked], nf_names[linked[0].chave][1]
+        )
+        if filename not in generated:
+            raise ValueError(f"PDF do CT-e {meta.numero} não foi gerado.")
+        rows.append({
+            "lote_id": lote_id,
+            "arquivo_original": str(doc["record"].get("arquivo_nome") or
+                                    f"CTE_{meta.chave}.xml"),
+            "arquivo_final": filename,
+            "tipo_documento": "CT-e",
+            "chave_cte": key,
+            "numero_cte": normalized_number(meta.numero),
+            "nfs_vinculadas": ", ".join(dict.fromkeys(
+                normalized_number(d.numero_nf) for d in linked
+            )),
+            "transportadora": str(meta.emitente or ""),
+            "cnpj_transportadora": digits_only(meta.cnpj_emitente),
+            "tomador_servico": str(meta.tomador_nome or ""),
+            "cnpj_tomador": digits_only(meta.cnpj_tomador),
+            "empresa_sigla": next(iter(companies)),
+            "status": "REALIZADO",
+            "operador": None,
+            "recebido_em": now,
+            "pdf_criado_em": now,
+            "processado_em": now,
+            "origem_dados": "IMPRESSAO_AVULSA_XML",
+            "carimbo_aplicado": False,
+            "prioridade_mrp": False,
+        })
+    if len(rows) != len(generated):
+        raise ValueError("Manifesto avulso divergente dos arquivos gerados.")
+    return rows
+
+
 def _zip_outputs(outputs: dict[str, bytes]) -> bytes:
     memory = io.BytesIO()
     with zipfile.ZipFile(memory, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -215,10 +338,15 @@ def _zip_outputs(outputs: dict[str, bytes]) -> bytes:
     return memory.getvalue()
 
 
-def render_page(resolve_stamp, supplier_resolver, validate_tomador, company_sigla) -> None:
+def render_page(resolve_stamp, supplier_resolver, validate_tomador, company_sigla,
+                register_records=None) -> None:
     """Desenha busca, seleção, conferência CT-e, carimbo e downloads."""
     st.markdown("#### IMPRESSÃO AVULSA DE NF-e / CT-e")
-    st.caption("Pesquisa exata na biblioteca XML. Não altera lotes, XMLs ou status de envio.")
+    st.caption(
+        "Pesquisa na biblioteca XML, sem alterar lotes existentes. "
+        "Documentos sem registro serão incluídos no controle principal após "
+        "a geração, com status REALIZADO (não enviados)."
+    )
     if not nf_xml_library._automatic_service_token() and not nf_xml_library._token():
         if not nf_xml_library._login_panel():
             return
@@ -322,6 +450,12 @@ def render_page(resolve_stamp, supplier_resolver, validate_tomador, company_sigl
     if st.session_state["avulsa_stage"] == "downloads":
         outputs = st.session_state.get("avulsa_outputs") or {}
         st.success(f"{len(outputs)} documento(s) gerado(s) para download.")
+        result = st.session_state.get("avulsa_registro_resultado") or {}
+        st.info(
+            f"REGISTRO NO CONTROLE · {int(result.get('inseridos', 0))} novo(s) "
+            f"· {int(result.get('existentes', 0))} já cadastrado(s). "
+            "A impressão não confirma o envio."
+        )
         if len(outputs) > 1:
             st.download_button(
                 "BAIXAR TODOS (ZIP)", _zip_outputs(outputs),
@@ -405,8 +539,25 @@ def render_page(resolve_stamp, supplier_resolver, validate_tomador, company_sigl
                     docs, cte_selected, date_values,
                     stamp_values if add_stamp else None, supplier_resolver,
                 )
+            if register_records is None:
+                raise RuntimeError(
+                    "Registro fiscal indisponível. Conecte o banco antes de gerar."
+                )
+            manifest = build_avulsa_manifest(
+                docs, cte_selected, date_values,
+                stamp_values if add_stamp else None,
+                supplier_resolver, resolve_stamp, company_sigla, outputs,
+                "AVULSA-" + uuid4().hex,
+            )
+            result = register_records(manifest)
+            if not bool(result.get("ok")):
+                raise RuntimeError("O banco não confirmou o registro dos documentos.")
+            if (int(result.get("inseridos", -1)) +
+                    int(result.get("existentes", -1)) != len(manifest)):
+                raise RuntimeError("O banco devolveu uma contagem inconsistente.")
             if add_stamp:
                 st.session_state.setdefault("avulsa_carimbos_salvos", {}).update(stamp_values)
+            st.session_state["avulsa_registro_resultado"] = result
             st.session_state["avulsa_outputs"] = outputs
             st.session_state["avulsa_stage"] = "downloads"
             st.rerun()
