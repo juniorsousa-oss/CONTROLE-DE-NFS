@@ -216,6 +216,10 @@ def run() -> None:
     assert 'normalizeTestRecipients(testConfig?.data?.destinatario_teste)' in edge
     assert 'import { normalizeTestRecipients } from "./recipients.ts";' in edge
     assert "os dois destinatários de TESTE" in app
+    assert "Limite de homologação atingido: até 4 testes por dia" in app
+    assert "Nenhum e-mail foi enviado nesta " in app
+    assert "destinatários configurados no Power Automate" in app
+    assert "apenas para Júnior e Washington." not in app
     assert '.from("nf_email_controle").select("destinatario_teste")' in edge
     assert "NFS_EMAIL_TEST_RECIPIENT" not in edge
     recipient_migration = (Path(__file__).resolve().parents[1] /

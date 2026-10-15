@@ -4296,7 +4296,8 @@ def render_accounting_email_preview() -> None:
         "Escolha entre o teste técnico já validado e uma prévia realista "
         "com o MESMO assunto-base, texto e tabela previstos para a cobrança. "
         "A prévia inclui apenas identificação de HOMOLOGAÇÃO, nunca NFs reais. "
-        "Destinatários: somente Júnior e Washington. Produção bloqueada."
+        "Destinatários: lista autorizada no Power Automate, que pode "
+        "conter outros participantes definidos pelo responsável. Produção bloqueada."
     )
     if not acesso_teste_configurado():
         st.info(
@@ -4318,8 +4319,8 @@ def render_accounting_email_preview() -> None:
                 max_chars=256, key="nf_sim_pin",
             )
             _confirm_sim = st.checkbox(
-                "Autorizo UM envio real de e-mail com dados fictícios "
-                "apenas para Júnior e Washington.",
+                "Autorizo UM envio real com dados fictícios aos destinatários "
+                "configurados no Power Automate.",
                 key="nf_sim_confirm",
             )
             # Nunca desabilitar submit com base em checkbox que está
@@ -4358,10 +4359,17 @@ def render_accounting_email_preview() -> None:
                 if _status_sim == "ACEITO":
                     st.success(
                         "O fluxo aceitou a simulação. Verifique o histórico "
-                        "do Power Automate e o recebimento pelos dois destinatários."
+                        "do Power Automate e o recebimento pelos destinatários configurados."
                     )
                 else:
                     _webhook_messages = {
+                        "LIMITE_DIARIO": (
+                            "Limite de homologação atingido: até 4 testes por dia "
+                            "(horário de Brasília). Nenhum e-mail foi enviado nesta "
+                            "tentativa. O limite é renovado automaticamente à "
+                            "meia-noite. Para avaliar o layout agora, utilize "
+                            "'BAIXAR PRÉVIA VISUAL DO E-MAIL · HTML (SEM ENVIO)'."
+                        ),
                         "WEBHOOK_SEGREDO_AUSENTE": (
                             "O segredo NFS_EMAIL_WORKFLOW_URL está ausente ou vazio "
                             "no Supabase → Edge Functions → Secrets."
