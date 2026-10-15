@@ -28,3 +28,15 @@ Deno.test("prévia realista deve manter seis campos fiscais, com dados inteirame
     }
   }
 });
+
+Deno.test("datas de demonstração respeitam sábado/domingo e a carência de 24h", () => {
+  const quinta = realisticSimulationRows(new Date("2026-10-15T19:19:00Z"));
+  if (quinta[0].enviado_em !== "12/10/2026 16:19" ||
+      quinta[1].enviado_em !== "13/10/2026 16:19" ||
+      quinta[0].dias_atraso !== 2 || quinta[1].dias_atraso !== 1)
+    throw Error("Exemplo não acompanha a regra de dias úteis em quinta-feira");
+  const segunda = realisticSimulationRows(new Date("2026-10-19T19:19:00Z"));
+  if (segunda[0].enviado_em !== "14/10/2026 16:19" ||
+      segunda[1].enviado_em !== "15/10/2026 16:19")
+    throw Error("Exemplo contabilizou sábado/domingo indevidamente");
+});
