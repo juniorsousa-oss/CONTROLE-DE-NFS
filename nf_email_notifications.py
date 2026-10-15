@@ -82,7 +82,7 @@ def preparar_cobrancas(tracking: pd.DataFrame | None) -> pd.DataFrame:
     return result.sort_values(by=["NF", "FORNECEDOR"], kind="stable").reset_index(drop=True)
 
 
-def montar_email_html(rows: pd.DataFrame, date_ref: datetime) -> str:
+def montar_email_html(rows: pd.DataFrame, date_ref: datetime, *, homologacao: bool = False) -> str:
     """Prévia com identidade visual equivalente ao e-mail gerado pela Edge Function."""
     if rows is None or rows.empty:
         raise ValueError("Nenhuma NF vencida apta à cobrança.")
@@ -118,6 +118,16 @@ def montar_email_html(rows: pd.DataFrame, date_ref: datetime) -> str:
 
     total = len(rows)
     referencia = escape(date_ref.strftime("%d/%m/%Y"))
+    aviso = (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        'style="margin:0 0 22px 0;"><tr><td bgcolor="#472932" '
+        'style="background:#472932;padding:13px 16px;'
+        'border-left:4px solid #fb7185;color:#ffffff;'
+        'font:700 12px/1.5 Arial,sans-serif;">'
+        'HOMOLOGAÇÃO — DADOS FICTÍCIOS. EXEMPLO DO E-MAIL REAL. '
+        'NÃO REALIZAR COBRANÇA OU LANÇAMENTO.'
+        '</td></tr></table>'
+    ) if homologacao else ""
     return (
         '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -151,6 +161,7 @@ def montar_email_html(rows: pd.DataFrame, date_ref: datetime) -> str:
         f'Referência: {referencia}</p></td></tr>'
         '<tr><td class="pad-main" bgcolor="#162a45"'
         ' style="padding:28px 32px 30px;background:#162a45;color:#ffffff;">'
+        f'{aviso}'
         '<p style="margin:0 0 15px;color:#ffffff;'
         'font:14px/1.6 Arial,sans-serif;">Prezados,</p>'
         '<p style="margin:0 0 23px;color:#ffffff;font:14px/1.75 Arial,sans-serif;">'
@@ -181,6 +192,32 @@ def montar_email_html(rows: pd.DataFrame, date_ref: datetime) -> str:
         'SETTA · Acompanhamento operacional de notas fiscais'
         '</td></tr></table></td></tr></table></body></html>'
     )
+
+
+def gerar_previa_visual_ficticia(date_ref: datetime) -> str:
+    """Prévia local do design, sem API, PIN, banco fiscal ou envio de e-mail."""
+    from pandas.tseries.offsets import BDay
+
+    data = pd.Timestamp(date_ref)
+    rows = pd.DataFrame([
+        {
+            "NF": "EXEMPLO-001234",
+            "FORNECEDOR": "FORNECEDOR MODELO A LTDA (FICTÍCIO)",
+            "NATUREZA": "COMPRA DE MATERIA PRIMA",
+            "DATA DE ENVIO": (data - BDay(3)).strftime("%d/%m/%Y %H:%M"),
+            "DIAS DE ATRASO": 2,
+            "NOME DO ARQUIVO": "NF_EXEMPLO_001234_FORNECEDOR_MODELO_A.pdf",
+        },
+        {
+            "NF": "EXEMPLO-005678",
+            "FORNECEDOR": "FORNECEDOR MODELO B LTDA (FICTÍCIO)",
+            "NATUREZA": "COMPRA DE MATERIA PRIMA",
+            "DATA DE ENVIO": (data - BDay(2)).strftime("%d/%m/%Y %H:%M"),
+            "DIAS DE ATRASO": 1,
+            "NOME DO ARQUIVO": "NF_EXEMPLO_005678_FORNECEDOR_MODELO_B.pdf",
+        },
+    ])
+    return montar_email_html(rows, date_ref, homologacao=True)
 
 
 def assunto_cobranca(date_ref: datetime) -> str:

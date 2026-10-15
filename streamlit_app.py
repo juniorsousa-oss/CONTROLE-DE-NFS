@@ -4282,6 +4282,16 @@ def render_accounting_email_preview() -> None:
         "de e-mail da SETTA. Os destinatários definitivos ainda não são utilizados."
     )
     st.markdown("#### HOMOLOGAÇÃO DE E-MAIL · DADOS FICTÍCIOS")
+    from nf_email_notifications import gerar_previa_visual_ficticia
+
+    st.download_button(
+        "BAIXAR PRÉVIA VISUAL DO E-MAIL · HTML (SEM ENVIO)",
+        data=gerar_previa_visual_ficticia(now_local()).encode("utf-8"),
+        file_name="setta_modelo_email_homologacao.html",
+        mime="text/html",
+        use_container_width=True,
+        help="Abre o modelo com duas notas fictícias. Não utiliza a API e não envia e-mails.",
+    )
     st.caption(
         "Escolha entre o teste técnico já validado e uma prévia realista "
         "com o MESMO assunto-base, texto e tabela previstos para a cobrança. "

@@ -66,6 +66,15 @@ def run() -> None:
     assert "color:#ffffff" in html
     assert "sem confirmação de lançamento." in html
     assert "Controle de NFs Almoxarifado | SETTA" in html
+    from nf_email_notifications import gerar_previa_visual_ficticia
+    fake_preview = gerar_previa_visual_ficticia(datetime(2026,10,15,16,19))
+    assert "EXEMPLO-001234" in fake_preview
+    assert "EXEMPLO-005678" in fake_preview
+    assert "HOMOLOGAÇÃO — DADOS FICTÍCIOS" in fake_preview
+    assert "NÃO REALIZAR COBRANÇA" in fake_preview
+    assert "color:#ffffff" in fake_preview
+    assert "12/10/2026" in fake_preview
+    assert "13/10/2026" in fake_preview
     assert "ALMOXARIFADO · CONTROLE DE NFs" in html
     assert "NOTAS FISCAIS EM ACOMPANHAMENTO" in html
     assert "max-width:920px" in html
@@ -90,6 +99,7 @@ def run() -> None:
     app = (Path(__file__).resolve().parents[1] / "streamlit_app.py").read_text("utf-8")
     assert "render_accounting_email_preview()" in app
     assert "BAIXAR PRÉVIA DO E-MAIL · HTML" in app
+    assert "BAIXAR PRÉVIA VISUAL DO E-MAIL · HTML (SEM ENVIO)" in app
     assert "ENVIO AUTOMÁTICO DESATIVADO EM HOMOLOGAÇÃO" in app
     from nf_email_delivery import acesso_teste_configurado, verificar_pin_operador
     from unittest.mock import patch
