@@ -10,10 +10,10 @@ Deno.test("simulação deve conter apenas valores fictícios reconhecíveis", ()
   }
 });
 
-Deno.test("prévia realista deve manter cinco campos fiscais, com dados inteiramente fictícios", () => {
+Deno.test("prévia realista deve manter seis campos fiscais, com dados inteiramente fictícios", () => {
   const rows = realisticSimulationRows(new Date("2026-10-15T15:00:00Z"));
   if (rows.length !== 2) throw Error("A prévia visual exige duas NFs fictícias.");
-  const expected = ["id", "nf", "fornecedor", "natureza", "enviado_em", "arquivo"];
+  const expected = ["id", "nf", "fornecedor", "natureza", "enviado_em", "arquivo", "dias_atraso"];
   for (const row of rows) {
     if (JSON.stringify(Object.keys(row)) !== JSON.stringify(expected))
       throw Error("Os campos da prévia devem acompanhar o modelo de produção.");
@@ -22,6 +22,7 @@ Deno.test("prévia realista deve manter cinco campos fiscais, com dados inteiram
         !row.fornecedor.includes("FICTÍCIO") ||
         !row.arquivo.startsWith("NF_EXEMPLO_") ||
         row.natureza !== "COMPRA DE MATERIA PRIMA" ||
+        !Number.isInteger(row.dias_atraso) || row.dias_atraso <= 0 ||
         !/\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}/.test(row.enviado_em)) {
       throw Error("Prévia não é segura ou não reproduz a tabela operacional.");
     }
