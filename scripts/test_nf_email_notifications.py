@@ -100,7 +100,7 @@ def run() -> None:
     assert "render_accounting_email_preview()" in app
     assert "BAIXAR PRÉVIA DO E-MAIL · HTML" in app
     assert "BAIXAR PRÉVIA VISUAL DO E-MAIL · HTML (SEM ENVIO)" in app
-    assert "ENVIO AUTOMÁTICO DESATIVADO EM HOMOLOGAÇÃO" in app
+    assert "PRODUÇÃO DEFINITIVA DESATIVADA" in app
     from nf_email_delivery import acesso_teste_configurado, verificar_pin_operador
     from unittest.mock import patch
     with patch("nf_email_delivery.db._secret", side_effect=lambda x: {
