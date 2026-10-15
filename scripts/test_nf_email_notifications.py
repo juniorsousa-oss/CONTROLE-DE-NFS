@@ -145,17 +145,19 @@ def run() -> None:
     assert '"WEBHOOK_SEGREDO_AUSENTE"' in app
     assert '"WEBHOOK_NAO_E_URL_HTTP_DO_GATILHO"' in app
     assert 'simulationRows()' in edge
-    assert 'String(row.dias_atraso ?? 0)' in edge
-    assert 'Controle de NFs Almoxarifado | SETTA' in edge
-    assert 'color:#ffffff' in edge
-    assert 'Acompanhamento de lançamento de NFs vencidas' in edge
     assert 'realisticSimulationRows()' in edge
     assert 'mode === "PREVIA_REALISTA"' in edge
     assert 'mode === "SIMULACAO" || mode === "PREVIA_REALISTA"' in edge
-    assert 'const body = buildHtml(rows,realistic ? false : test,simulated,realistic);' in edge
+    assert 'renderSettaEmail(rows,' in edge
     assert 'normalSubject + " [HOMOLOGAÇÃO — DADOS FICTÍCIOS]"' in edge
-    assert 'HOMOLOGAÇÃO / DADOS FICTÍCIOS' in edge
     assert '[SIMULAÇÃO / NÃO COBRAR]' in edge
+    template = (Path(__file__).resolve().parents[1] /
+        "supabase/functions/nf-email-api/email_layout.ts").read_text("utf-8")
+    assert 'Number(r.dias_atraso)' in template
+    assert 'Controle de NFs Almoxarifado | SETTA' in template
+    assert 'color:#ffffff' in template
+    assert 'Acompanhamento de lançamento de NFs' in template
+    assert 'HOMOLOGAÇÃO — DADOS FICTÍCIOS' in template
     from nf_email_delivery import enviar_simulacao_contabilidade
     from unittest.mock import Mock
     with patch("nf_email_delivery.db._secret", side_effect=lambda x: {
