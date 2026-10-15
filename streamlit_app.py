@@ -4269,11 +4269,12 @@ def render_accounting_email_preview() -> None:
         "dia, registro de auditoria e integração autenticada com a conta "
         "de e-mail da SETTA. Os destinatários definitivos ainda não são utilizados."
     )
-    st.markdown("#### SIMULAÇÃO DE E-MAIL · DADOS FICTÍCIOS")
+    st.markdown("#### HOMOLOGAÇÃO DE E-MAIL · DADOS FICTÍCIOS")
     st.caption(
-        "Envia uma NF fictícia, claramente marcada como SIMULAÇÃO, "
-        "somente a Júnior e Washington. Não cria nem altera notas reais. "
-        "A produção permanece bloqueada."
+        "Escolha entre o teste técnico já validado e uma prévia realista "
+        "com o MESMO assunto-base, texto e tabela previstos para a cobrança. "
+        "A prévia inclui apenas identificação de HOMOLOGAÇÃO, nunca NFs reais. "
+        "Destinatários: somente Júnior e Washington. Produção bloqueada."
     )
     if not acesso_teste_configurado():
         st.info(
@@ -4282,6 +4283,14 @@ def render_accounting_email_preview() -> None:
         )
     else:
         with st.form("nf_email_simulacao", enter_to_submit=False):
+            _modelo_email = st.radio(
+                "MODELO DO E-MAIL",
+                (
+                    "PRÉVIA REALISTA · MODELO DA COBRANÇA",
+                    "SIMULAÇÃO TÉCNICA · TESTE DE INTEGRAÇÃO",
+                ),
+                horizontal=True, key="nf_email_modelo",
+            )
             _pin_sim = st.text_input(
                 "PIN DO OPERADOR · SIMULAÇÃO", type="password",
                 max_chars=256, key="nf_sim_pin",
@@ -4294,7 +4303,9 @@ def render_accounting_email_preview() -> None:
             # Nunca desabilitar submit com base em checkbox que está
             # dentro do mesmo form: o valor só chega ao backend no submit.
             _send_sim = st.form_submit_button(
-                "ENVIAR SIMULAÇÃO PARA HOMOLOGAÇÃO",
+                "ENVIAR PRÉVIA REALISTA PARA HOMOLOGAÇÃO"
+                if _modelo_email.startswith("PRÉVIA REALISTA")
+                else "ENVIAR SIMULAÇÃO PARA HOMOLOGAÇÃO",
                 type="primary", use_container_width=True,
             )
         if _send_sim and not _confirm_sim:
@@ -4309,10 +4320,15 @@ def render_accounting_email_preview() -> None:
                 import nf_email_delivery
 
                 _email_module = importlib.reload(nf_email_delivery)
-                _sender = getattr(_email_module, "enviar_simulacao_contabilidade", None)
+                _method = (
+                    "enviar_previa_realista_contabilidade"
+                    if _modelo_email.startswith("PRÉVIA REALISTA")
+                    else "enviar_simulacao_contabilidade"
+                )
+                _sender = getattr(_email_module, _method, None)
                 if not callable(_sender):
                     raise RuntimeError(
-                        "Módulo de simulação desatualizado. Reinicie o aplicativo "
+                        "Módulo de homologação desatualizado. Reinicie o aplicativo "
                         "pelo painel do Streamlit Cloud e tente novamente."
                     )
                 _result_sim = _sender(_pin_sim)

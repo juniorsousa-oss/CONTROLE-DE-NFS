@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { normalizeTestRecipients } from "./recipients.ts";
-import { simulationRows } from "./simulation.ts";
+import { simulationRows, realisticSimulationRows } from "./simulation.ts";
 import { checkWorkflowUrl } from "./webhook_validation.ts";
 
 type Item = {
@@ -31,7 +31,7 @@ function isoDateBrazil(date: Date) {
     timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric",
   }).format(date);
 }
-function buildHtml(rows: Item[], testMode: boolean, simulated=false): string {
+function buildHtml(rows: Item[], testMode: boolean, simulated=false, realistic=false): string {
   const headers = ["NF", "FORNECEDOR", "NATUREZA", "DATA DE ENVIO", "NOME DO ARQUIVO"];
   const th = headers.map(h => '<th style="padding:10px;border:1px solid #ccd4df;text-align:left;background:#e7effa;">' + h + '</th>').join("");
   const trs = rows.map((row, i) => {
@@ -40,9 +40,11 @@ function buildHtml(rows: Item[], testMode: boolean, simulated=false): string {
       escaped(value || "") + "</td>").join("");
     return '<tr style="background:' + (i % 2 ? "#f5f8fc" : "#fff") + ';">' + cells + "</tr>";
   }).join("");
-  const prefix = simulated
-    ? '<p style="color:#b91c1c;font-weight:bold;">[SIMULAÇÃO / HOMOLOGAÇÃO] DADOS 100% FICTÍCIOS. NÃO REALIZAR COBRANÇA OU LANÇAMENTO.</p>'
-    : testMode
+  const prefix = realistic
+    ? '<p style="color:#b91c1c;font-weight:bold;border:1px solid #f3b3b3;padding:10px;">[HOMOLOGAÇÃO / DADOS FICTÍCIOS] EXEMPLO DO E-MAIL REAL. NÃO REALIZAR COBRANÇA OU LANÇAMENTO.</p>'
+    : simulated
+      ? '<p style="color:#b91c1c;font-weight:bold;">[SIMULAÇÃO / HOMOLOGAÇÃO] DADOS 100% FICTÍCIOS. NÃO REALIZAR COBRANÇA OU LANÇAMENTO.</p>'
+      : testMode
       ? '<p style="color:#a16207;font-weight:bold;">[TESTE / HOMOLOGAÇÃO] Não representa uma cobrança real.</p>'
       : "";
   const intro = simulated
@@ -90,7 +92,9 @@ Deno.serve(async req => {
   try { data=await req.json(); }
   catch { return json({ok:false,error:"JSON_INVALIDO"},400); }
   const mode = data?.mode === "PRODUCAO" ? "PRODUCAO"
-    : data?.mode === "TESTE" ? "TESTE" : data?.mode === "SIMULACAO" ? "SIMULACAO" : "";
+    : data?.mode === "TESTE" ? "TESTE"
+    : data?.mode === "SIMULACAO" ? "SIMULACAO"
+    : data?.mode === "PREVIA_REALISTA" ? "PREVIA_REALISTA" : "";
   if (!mode) return json({ok:false,error:"MODO_INVALIDO"},400);
   if (mode === "PRODUCAO" && Deno.env.get("NFS_EMAIL_PRODUCTION_ENABLED") !== "true") {
     return json({ok:true,data:{status:"PRODUCAO_DESATIVADA"}});
@@ -128,7 +132,7 @@ Deno.serve(async req => {
   }
   let claim: any;
   try {
-    const claimed = mode === "SIMULACAO"
+    const claimed = mode === "SIMULACAO" || mode === "PREVIA_REALISTA"
       ? await admin.rpc("nf_email_claim_simulation", { p_destinatarios:to })
       : await admin.rpc("nf_email_claim", {
         p_modo:mode, p_destinatarios:to, p_cc:cc,
@@ -144,13 +148,20 @@ Deno.serve(async req => {
   }
 
   const simulated = mode === "SIMULACAO";
-  const rows = simulated ? simulationRows() : (claim.items || []) as Item[];
+  const realistic = mode === "PREVIA_REALISTA";
+  const rows = realistic ? realisticSimulationRows()
+    : simulated ? simulationRows() : (claim.items || []) as Item[];
   const test = mode !== "PRODUCAO";
-  const subject = simulated
-    ? "[SIMULAÇÃO / NÃO COBRAR] SETTA | Teste de notificação de NFs — " + isoDateBrazil(new Date())
-    : (test ? "[TESTE] " : "") +
-      "SETTA | Cobrança de lançamento de NFs vencidas — " + isoDateBrazil(new Date());
-  const body = buildHtml(rows,test,simulated);
+  const normalSubject = "SETTA | Cobrança de lançamento de NFs vencidas — " +
+    isoDateBrazil(new Date());
+  const subject = realistic
+    ? normalSubject + " [HOMOLOGAÇÃO — DADOS FICTÍCIOS]"
+    : simulated
+      ? "[SIMULAÇÃO / NÃO COBRAR] SETTA | Teste de notificação de NFs — " + isoDateBrazil(new Date())
+      : (test ? "[TESTE] " : "") + normalSubject;
+  // A prévia utiliza o MESMO texto, tabela e estilo da cobrança de produção;
+  // somente o aviso superior e o sufixo do assunto a distinguem.
+  const body = buildHtml(rows,realistic ? false : test,simulated,realistic);
   // Envelope compatível com o gatilho padrão de webhook do Teams
   // (sem conector HTTP Premium). O fluxo pode usar html/subject nas
   // ações do Outlook, sem publicar mensagem em chat/canal.

@@ -108,7 +108,11 @@ def run() -> None:
     assert app.index('if _send_sim and not _confirm_sim:') < app.index('_result_sim = _sender(_pin_sim)')
     assert app.index('elif _send_sim and not str(_pin_sim or "").strip():') < app.index('_result_sim = _sender(_pin_sim)')
     assert '_sender(_pin_sim)' in app
-    assert 'getattr(_email_module, "enviar_simulacao_contabilidade", None)' in app
+    assert 'getattr(_email_module, _method, None)' in app
+    assert '"enviar_previa_realista_contabilidade"' in app
+    assert '"enviar_simulacao_contabilidade"' in app
+    assert 'MODELO DO E-MAIL' in app
+    assert 'ENVIAR PRÉVIA REALISTA PARA HOMOLOGAÇÃO' in app
     # O import do novo módulo deve ser tardio para não derrubar o aplicativo.
     import ast
     parsed = ast.parse(app)
@@ -132,6 +136,12 @@ def run() -> None:
     assert '"WEBHOOK_SEGREDO_AUSENTE"' in app
     assert '"WEBHOOK_NAO_E_URL_HTTP_DO_GATILHO"' in app
     assert 'simulationRows()' in edge
+    assert 'realisticSimulationRows()' in edge
+    assert 'mode === "PREVIA_REALISTA"' in edge
+    assert 'mode === "SIMULACAO" || mode === "PREVIA_REALISTA"' in edge
+    assert 'const body = buildHtml(rows,realistic ? false : test,simulated,realistic);' in edge
+    assert 'normalSubject + " [HOMOLOGAÇÃO — DADOS FICTÍCIOS]"' in edge
+    assert 'HOMOLOGAÇÃO / DADOS FICTÍCIOS' in edge
     assert '[SIMULAÇÃO / NÃO COBRAR]' in edge
     from nf_email_delivery import enviar_simulacao_contabilidade
     from unittest.mock import Mock
@@ -154,6 +164,19 @@ def run() -> None:
             pass
         else:
             raise AssertionError("Simulação sem autorização não pode ser enviada.")
+    from nf_email_delivery import enviar_previa_realista_contabilidade
+    with patch("nf_email_delivery.db._secret", side_effect=lambda x: {
+        "NFS_EMAIL_API_TOKEN": "a" * 40,
+        "NFS_EMAIL_OPERATOR_PIN": "autorizacao-somente-teste",
+    }.get(x, "")), patch("nf_email_delivery.db.supabase_url",
+    return_value="https://example.supabase.co"), patch(
+        "nf_email_delivery.requests.post",
+        return_value=Mock(ok=True, json=lambda: {
+            "ok": True, "data": {"status": "ACEITO", "mode": "PREVIA_REALISTA"}
+        }),
+    ) as preview_post:
+        assert enviar_previa_realista_contabilidade("autorizacao-somente-teste")["mode"] == "PREVIA_REALISTA"
+        assert preview_post.call_args.kwargs["json"] == {"mode": "PREVIA_REALISTA"}
     simulation_sql = (Path(__file__).resolve().parents[1] /
         "supabase/migrations/20261015_nf_email_simulation.sql").read_text("utf-8")
     assert "producao_ativa" in simulation_sql

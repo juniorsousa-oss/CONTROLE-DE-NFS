@@ -27,7 +27,7 @@ def verificar_pin_operador(pin_informado: str) -> bool:
 
 
 def _enviar_homologacao(pin: str, mode: str) -> dict:
-    if mode not in ("TESTE", "SIMULACAO"):
+    if mode not in ("TESTE", "SIMULACAO", "PREVIA_REALISTA"):
         raise ValueError("Modo de homologação inválido.")
     if not verificar_pin_operador(pin):
         raise PermissionError("PIN de autorização inválido ou acesso não configurado.")
@@ -62,3 +62,8 @@ def enviar_teste_contabilidade(pin: str) -> dict:
 def enviar_simulacao_contabilidade(pin: str) -> dict:
     """Um e-mail fictício com PIN; não altera dados fiscais."""
     return _enviar_homologacao(pin, "SIMULACAO")
+
+
+def enviar_previa_realista_contabilidade(pin: str) -> dict:
+    """Homologação visual com dados fictícios e modelo real de cobrança."""
+    return _enviar_homologacao(pin, "PREVIA_REALISTA")
