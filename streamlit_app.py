@@ -53,6 +53,7 @@ from openpyxl import load_workbook
 import db
 import central_nfs_data as central_data
 from nf_launch_validation import validar_lancamento_nf
+from nf_exclusion_reconciliation import excluded_nfs_with_confirmed_launch
 from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento
 from nf_email_notifications import preparar_cobrancas, montar_email_html, assunto_cobranca
 from nf_email_delivery import acesso_teste_configurado, enviar_teste_contabilidade
@@ -4492,6 +4493,42 @@ def _restore_excluded_nfs(numbers) -> dict:
         if normalized_nf(item.get("numero_nf")) not in remove
     ]
     return result
+
+
+def _reconcile_excluded_after_launch(
+    launch_report: pd.DataFrame,
+    source_pre_notes: pd.DataFrame,
+) -> dict:
+    """Remove exclusão manual só após STSUP01 válido, identidade e TES completos."""
+    active = _active_excluded_nf_numbers()
+    if not active:
+        return {"restaurados": 0}
+    if not isinstance(launch_report, pd.DataFrame) or launch_report.empty:
+        return {"restaurados": 0}
+
+    # Filtrar primeiro pelas NFs excluídas; evita varrer os fornecedores
+    # de toda a carga STSUP01 numa rotina com poucas exclusões ativas.
+    report = launch_report[
+        launch_report["numero_nf"].map(normalized_nf).isin(active)
+    ].copy()
+    if report.empty:
+        return {"restaurados": 0}
+    report["cnpj_resolvido"], _ = _supplier_cnpj_lookup(report)
+    confirmed = excluded_nfs_with_confirmed_launch(
+        active, source_pre_notes, report,
+        normalize_nf=normalized_nf,
+        normalize_name=supplier_validation_name,
+        supplier_similarity=supplier_similarity,
+        normalize_supplier_code=_supplier_code_norm,
+        digits_only=digits_only,
+    )
+    if not confirmed:
+        return {"restaurados": 0}
+    # O banco mantém motivo, origem e operador. Apenas marca ativo=false;
+    # nenhuma pré-nota ou processamento real é apagado.
+    result = _restore_excluded_nfs(confirmed)
+    return {"restaurados": int(result.get("restaurados", 0)),
+            "nfs_confirmadas": confirmed}
 
 
 def render_excluded_nf_manager() -> None:
@@ -10088,6 +10125,7 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
     sync_state = central_data.sync_state()
     changed = []
     errors = []
+    unfiltered_source_pre_notes = None
 
     for source_key in ("mes_pre_notas", "nf"):
         meta = bundle.get(source_key) or {}
@@ -10122,6 +10160,9 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
                     pre_valid = _central_pre_notes_from_pack(source["pack"])
                 else:
                     pre_valid = _central_pre_notes_from_bytes(source["raw"], filename)
+                # Preservar a fotografia de origem ANTES de ocultar exclusões:
+                # NF removida do banco local não pode perder sua identidade.
+                unfiltered_source_pre_notes = pre_valid.copy()
                 pre_valid = _filter_excluded_nfs(pre_valid)
                 st.session_state.pre_notes = pre_valid
                 st.session_state.pre_notes_db_loaded = True
@@ -10211,6 +10252,40 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
                     raise RuntimeError("SUPABASE NÃO CONFIRMOU A CARGA NF/MRP.")
 
                 rows_count = len(entries)
+
+                # Somente após tratar uma nova versão válida do STSUP01:
+                # confirmar número + fornecedor + TES em todas as linhas.
+                # Se a origem de pré-notas não puder ser consultada, manter
+                # todas as exclusões ativas (nunca inferir por ausência).
+                if (not source.get("tes_unavailable")
+                        and _active_excluded_nf_numbers()):
+                    try:
+                        check_pre = unfiltered_source_pre_notes
+                        if check_pre is None:
+                            pre_source, pre_meta = central_data.download_preferred_source(
+                                "mes_pre_notas", required_columns=0
+                            )
+                            if pre_source.get("normalized"):
+                                check_pre = _central_pre_notes_from_pack(
+                                    pre_source["pack"]
+                                )
+                            else:
+                                check_pre = _central_pre_notes_from_bytes(
+                                    pre_source["raw"],
+                                    str(pre_meta.get("last_file_name") or "MES PRE NOTAS.xlsx"),
+                                )
+                        st.session_state["_nf_excluded_reconciliation"] = (
+                            _reconcile_excluded_after_launch(
+                                launch_report, check_pre
+                            )
+                        )
+                    except Exception as _excluded_sync_exc:
+                        # Uma falha na checagem opcional não pode apagar a exclusão,
+                        # nem impedir a atualização fiscal convencional.
+                        st.session_state["_nf_excluded_reconciliation"] = {
+                            "restaurados": 0,
+                            "pendente": True,
+                        }
 
             central_data.commit_sync(
                 source_key,
