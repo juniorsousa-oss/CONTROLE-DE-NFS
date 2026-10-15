@@ -106,7 +106,7 @@ import db
 import central_nfs_data as central_data
 from nf_launch_validation import validar_lancamento_nf
 from nf_exclusion_reconciliation import excluded_nfs_with_confirmed_launch
-from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento
+from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento, dias_atraso_uteis
 from nf_email_notifications import preparar_cobrancas, montar_email_html, assunto_cobranca
 from nf_email_delivery import acesso_teste_configurado, enviar_teste_contabilidade
 from nf_prazo_dashboard import (
@@ -4148,6 +4148,13 @@ def launch_tracking_frame(records: pd.DataFrame | None = None) -> pd.DataFrame:
         return "DENTRO DO PRAZO"
 
     frame["situacao_lancamento"] = frame.apply(status, axis=1)
+    frame["dias_atraso_lancamento"] = frame.apply(
+        lambda r: dias_atraso_uteis(r["_deadline"].to_pydatetime(), current.to_pydatetime())
+        if pd.notna(r["_deadline"]) and r["situacao_lancamento"] in (
+            "ATRASADO - COBRAR LANÇAMENTO", "AGUARDANDO NOVO RELATÓRIO",
+        ) else 0,
+        axis=1,
+    )
     frame["prazo_lancamento"] = frame["_deadline"].dt.tz_localize(None)
     frame["inicio_prazo_lancamento"] = frame["_start"].dt.tz_localize(None)
     frame["enviado_em_local"] = frame["_sent"].dt.tz_localize(None)
@@ -4204,6 +4211,7 @@ def render_launch_tracking_panel(
             "enviado_em_local",
             "inicio_prazo_lancamento",
             "prazo_lancamento",
+            "dias_atraso_lancamento",
             "verificado_em_local",
             "lancado_em_local",
             "situacao_lancamento",
@@ -4231,6 +4239,10 @@ def render_launch_tracking_panel(
             "prazo_lancamento": st.column_config.DatetimeColumn(
                 "PRAZO 24H · SEM FINS DE SEMANA",
                 format="DD/MM/YYYY HH:mm",
+            ),
+            "dias_atraso_lancamento": st.column_config.NumberColumn(
+                "DIAS DE ATRASO · SEM FINS DE SEMANA", format="%d",
+                help="Dias equivalentes de 24h após o prazo, ignorando sábados e domingos; fração conta como um dia.",
             ),
             "verificado_em_local": st.column_config.DatetimeColumn(
                 "ÚLTIMO RELATÓRIO VERIFICADO",
@@ -11065,6 +11077,13 @@ if page == "Dashboard":
         finalized_records["acompanhamento_lancamento"] = _launch_status
         finalized_records["inicio_prazo_lancamento"] = _start
         finalized_records["prazo_lancamento"] = _deadline
+        finalized_records["dias_atraso_lancamento"] = [
+            dias_atraso_uteis(dt.to_pydatetime(), _now.to_pydatetime())
+            if pd.notna(dt) and status in (
+                "ATRASADO - COBRAR LANÇAMENTO", "AGUARDANDO NOVO RELATÓRIO",
+            ) else 0
+            for dt, status in zip(_deadline, _launch_status)
+        ]
 
         # O histórico segue na grade e no Excel; seus cartões estão no bloco
         # 01 · INDICADORES DO FLUXO com os demais indicadores operacionais.
@@ -11188,6 +11207,7 @@ if page == "Dashboard":
                 "pdf_criado_em",
                 "enviado_em",
                 "acompanhamento_lancamento",
+                "dias_atraso_lancamento",
                 "historico_atraso_24h",
                 "primeiro_atraso_em",
                 "lancado_em",
@@ -11248,6 +11268,10 @@ if page == "Dashboard":
                 "acompanhamento_lancamento": st.column_config.TextColumn(
                     "ACOMPANHAMENTO",
                     width="large",
+                ),
+                "dias_atraso_lancamento": st.column_config.NumberColumn(
+                    "DIAS DE ATRASO", format="%d",
+                    help="Dias equivalentes de 24h após o vencimento, excluindo sábados e domingos; não comprova lançamento.",
                 ),
                 "historico_atraso_24h": "JÁ TEVE ATRASO 24H",
                 "primeiro_atraso_em": "PRIMEIRO ATRASO EM",

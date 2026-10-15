@@ -16,6 +16,7 @@ from nf_launch_deadline import (
     acompanha_lancamento,
     inicio_valido_envio,
     prazo_lancamento,
+    dias_atraso_uteis,
 )
 
 TZ = ZoneInfo("America/Sao_Paulo")
@@ -82,6 +83,7 @@ namespace = {
     "acompanha_lancamento": acompanha_lancamento,
     "inicio_valido_envio": inicio_valido_envio,
     "prazo_lancamento": prazo_lancamento,
+    "dias_atraso_uteis": dias_atraso_uteis,
     "now_local": lambda: d(7, 17).replace(tzinfo=TZ),
 }
 exec(compile(ast.Module(body=[target],type_ignores=[]), "nf_tracking_test", "exec"), namespace)
@@ -102,6 +104,16 @@ assert view["numero_nf"].tolist()==["001"], view
 assert str(view.iloc[0]["inicio_prazo_lancamento"])=="2026-10-16 15:00:00"
 assert str(view.iloc[0]["prazo_lancamento"])=="2026-10-19 15:00:00"
 assert view.iloc[0]["situacao_lancamento"]=="AGUARDANDO NOVO RELATÓRIO", view
+assert view.iloc[0]["dias_atraso_lancamento"] >= 1
+# 24h inteiras e frações, inclusive noite; sábado/domingo não contam.
+assert dias_atraso_uteis(d(4, 15), d(4, 15)) == 0
+assert dias_atraso_uteis(d(4, 15), d(4, 15, 1)) == 1
+assert dias_atraso_uteis(d(4, 15), d(5, 18)) == 1
+assert dias_atraso_uteis(d(4, 15), d(6, 18)) == 1
+assert dias_atraso_uteis(d(4, 15), d(7, 14)) == 1
+assert dias_atraso_uteis(d(4, 15), d(7, 16)) == 2
+assert dias_atraso_uteis(d(3, 17), d(4, 17)) == 1
+assert dias_atraso_uteis(d(3, 17), d(4, 17, 1)) == 2
 
 # As duas interfaces devem utilizar a mesma regra: nunca apenas sent + 24h.
 assert "frame[\"_sent\"] + pd.Timedelta(hours=24)" not in source

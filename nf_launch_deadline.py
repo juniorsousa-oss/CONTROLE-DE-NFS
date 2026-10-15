@@ -8,6 +8,7 @@ Feriados não estão excluídos; esta regra considera somente o fim de semana.
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta
+from math import ceil
 from zoneinfo import ZoneInfo
 import re
 import unicodedata
@@ -90,3 +91,30 @@ def prazo_lancamento(enviado_em: datetime) -> datetime:
             hour=0, minute=0, second=0, microsecond=0,
         )
     return atual
+
+
+def dias_atraso_uteis(vencimento: datetime, referencia: datetime | None = None) -> int:
+    """Dias equivalentes de 24h após o vencimento, sem sábados e domingos.
+
+    Contagem iniciada somente após as 24h da regra de lançamento.
+    Frações positivas arredondam para cima (primeiro dia = 1).
+    O relógio continua à noite de seg-sex, assim como o prazo existente.
+    Feriados não são excluídos, pois a regra institucional atual não os trata.
+    """
+    if not isinstance(vencimento, datetime):
+        return 0
+    atual = _localize(referencia or datetime.now(LOCAL_TZ))
+    inicio = _localize(vencimento)
+    if atual <= inicio:
+        return 0
+    segundos = 0.0
+    cursor = inicio
+    while cursor < atual:
+        proxima = (cursor + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        fim = min(proxima, atual)
+        if cursor.weekday() < 5:
+            segundos += (fim - cursor).total_seconds()
+        cursor = fim
+    return int(ceil(segundos / 86400)) if segundos > 0 else 0

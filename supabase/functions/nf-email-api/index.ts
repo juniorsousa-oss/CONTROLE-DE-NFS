@@ -11,6 +11,7 @@ type Item = {
   natureza: string;
   enviado_em: string;
   arquivo: string;
+  dias_atraso: number;
 };
 
 const cors = {
@@ -32,13 +33,15 @@ function isoDateBrazil(date: Date) {
   }).format(date);
 }
 function buildHtml(rows: Item[], testMode: boolean, simulated=false, realistic=false): string {
-  const headers = ["NF", "FORNECEDOR", "NATUREZA", "DATA DE ENVIO", "NOME DO ARQUIVO"];
-  const th = headers.map(h => '<th style="padding:10px;border:1px solid #ccd4df;text-align:left;background:#e7effa;">' + h + '</th>').join("");
+  const headers = ["NF", "FORNECEDOR", "NATUREZA", "DATA DE ENVIO", "DIAS DE ATRASO", "NOME DO ARQUIVO"];
+  const th = headers.map(h => '<th bgcolor="#2b415b" style="padding:10px;border:1px solid #73859a;text-align:left;background:#2b415b;color:#ffffff;">' + h + '</th>').join("");
   const trs = rows.map((row, i) => {
-    const fields = [row.nf, row.fornecedor, row.natureza, row.enviado_em, row.arquivo];
-    const cells = fields.map(value => '<td style="padding:10px;border:1px solid #ccd4df;vertical-align:top;">' +
-      escaped(value || "") + "</td>").join("");
-    return '<tr style="background:' + (i % 2 ? "#f5f8fc" : "#fff") + ';">' + cells + "</tr>";
+    const fields = [row.nf, row.fornecedor, row.natureza, row.enviado_em, String(row.dias_atraso ?? 0), row.arquivo];
+    const shade = i % 2 ? "#273d54" : "#182b40";
+    const cells = fields.map(value => '<td bgcolor="' + shade +
+      '" style="padding:10px;border:1px solid #73859a;vertical-align:top;background:' +
+      shade + ';color:#ffffff;">' + escaped(value || "") + "</td>").join("");
+    return '<tr bgcolor="' + shade + '">' + cells + "</tr>";
   }).join("");
   const prefix = realistic
     ? '<p style="color:#b91c1c;font-weight:bold;border:1px solid #f3b3b3;padding:10px;">[HOMOLOGAÇÃO / DADOS FICTÍCIOS] EXEMPLO DO E-MAIL REAL. NÃO REALIZAR COBRANÇA OU LANÇAMENTO.</p>'
@@ -51,18 +54,21 @@ function buildHtml(rows: Item[], testMode: boolean, simulated=false, realistic=f
     ? '<p>Mensagem fictícia para validar a integração SETTA → Power Automate → Outlook. Nenhuma nota fiscal real foi utilizada.</p>'
     : '<p>Segue a relação de <strong>' + rows.length +
       ' NF(s)</strong> de compra de matéria-prima com prazo de lançamento vencido, ' +
-      'sem confirmação no STSUP01 atualizado.</p>';
+      'sem confirmação de lançamento.</p>';
   const closing = simulated
     ? '<p><strong>Não tomar providências:</strong> este e-mail é exclusivamente um teste de entrega e formatação.</p>'
     : '<p>Solicitamos verificar os lançamentos pendentes e providenciar a regularização.</p>';
+  const whiteText = (content: string) => content.replaceAll("<p>", '<p style="color:#ffffff;">');
   return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"></head>' +
-    '<body style="font:14px Arial,sans-serif;color:#1e293b;line-height:1.6;">' +
-    prefix + '<p>Prezados,</p>' + intro +
-    '<table role="table" style="border-collapse:collapse;width:100%;font:13px Arial,sans-serif;color:#1e293b;">' +
+    '<body style="margin:0;padding:0;font:14px Arial,sans-serif;background:#112238;color:#ffffff;line-height:1.6;">' +
+    '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" bgcolor="#112238" style="background:#112238;color:#ffffff;">' +
+    '<tr><td bgcolor="#112238" style="padding:20px;background:#112238;color:#ffffff;">' +
+    prefix + '<p style="color:#ffffff;">Prezados,</p>' + whiteText(intro) +
+    '<table role="table" cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%;font:13px Arial,sans-serif;color:#ffffff;">' +
     "<thead><tr>" + th + "</tr></thead><tbody>" + trs + "</tbody></table>" +
-    closing +
-    '<p>Atenciosamente,<br>Controle de NFs | SETTA</p>' +
-    "</body></html>";
+    whiteText(closing) +
+    '<p style="color:#ffffff;">Atenciosamente,<br>Controle de NFs Almoxarifado | SETTA</p>' +
+    "</td></tr></table></body></html>";
 }
 function secureMatch(a: string, b: string): boolean {
   const x = new TextEncoder().encode(a);
@@ -152,7 +158,7 @@ Deno.serve(async req => {
   const rows = realistic ? realisticSimulationRows()
     : simulated ? simulationRows() : (claim.items || []) as Item[];
   const test = mode !== "PRODUCAO";
-  const normalSubject = "SETTA | Cobrança de lançamento de NFs vencidas — " +
+  const normalSubject = "SETTA | Acompanhamento de lançamento de NFs vencidas — " +
     isoDateBrazil(new Date());
   const subject = realistic
     ? normalSubject + " [HOMOLOGAÇÃO — DADOS FICTÍCIOS]"

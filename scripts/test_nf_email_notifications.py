@@ -55,19 +55,23 @@ def run() -> None:
     selected = preparar_cobrancas(source)
     assert selected["NF"].tolist() == ["001234"]
     assert list(selected.columns) == [
-        "NF", "FORNECEDOR", "NATUREZA", "DATA DE ENVIO", "NOME DO ARQUIVO"
+        "NF", "FORNECEDOR", "NATUREZA", "DATA DE ENVIO", "DIAS DE ATRASO", "NOME DO ARQUIVO"
     ]
     assert selected.iloc[0]["DATA DE ENVIO"] == "09/10/2026 15:00"
     html = montar_email_html(selected, datetime(2026, 10, 14))
     assert "<table" in html and "</table>" in html
     assert "001234" in html and "NF_1234.pdf" in html
     assert "Metal &amp; Cia" in html and "Metal & Cia" not in html
+    assert "DIAS DE ATRASO" in html
+    assert "color:#ffffff" in html
+    assert "sem confirmação de lançamento." in html
+    assert "Controle de NFs Almoxarifado | SETTA" in html
     assert "009999" not in html and "007777" not in html
     assert "008888" not in html
     assert "marcos.rodrigues@" not in html
     assert "mailto:" not in html
     assert assunto_cobranca(datetime(2026, 10, 14)) == (
-        "SETTA | Cobrança de lançamento de NFs vencidas — 14/10/2026"
+        "SETTA | Acompanhamento de lançamento de NFs vencidas — 14/10/2026"
     )
     assert preparar_cobrancas(pd.DataFrame()).empty
     try:
@@ -136,6 +140,10 @@ def run() -> None:
     assert '"WEBHOOK_SEGREDO_AUSENTE"' in app
     assert '"WEBHOOK_NAO_E_URL_HTTP_DO_GATILHO"' in app
     assert 'simulationRows()' in edge
+    assert 'String(row.dias_atraso ?? 0)' in edge
+    assert 'Controle de NFs Almoxarifado | SETTA' in edge
+    assert 'color:#ffffff' in edge
+    assert 'Acompanhamento de lançamento de NFs vencidas' in edge
     assert 'realisticSimulationRows()' in edge
     assert 'mode === "PREVIA_REALISTA"' in edge
     assert 'mode === "SIMULACAO" || mode === "PREVIA_REALISTA"' in edge

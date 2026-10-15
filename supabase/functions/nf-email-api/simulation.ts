@@ -1,7 +1,7 @@
 /** Dados 100% sintéticos para teste end-to-end. Nenhum acesso ao banco fiscal. */
 export type SimulationItem = {
   id: string; nf: string; fornecedor: string; natureza: string;
-  enviado_em: string; arquivo: string;
+  enviado_em: string; arquivo: string; dias_atraso: number;
 };
 export function simulationRows(): SimulationItem[] {
   return [{
@@ -11,6 +11,7 @@ export function simulationRows(): SimulationItem[] {
     natureza: "COMPRA DE MATERIA PRIMA - EXEMPLO FICTICIO",
     enviado_em: "DATA FICTICIA",
     arquivo: "ARQUIVO FICTICIO - NAO EXISTE",
+    dias_atraso: 0,
   }];
 }
 
@@ -29,6 +30,7 @@ export function realisticSimulationRows(now = new Date()): SimulationItem[] {
       natureza: "COMPRA DE MATERIA PRIMA",
       enviado_em: format(3),
       arquivo: "NF_EXEMPLO_001234_FORNECEDOR_MODELO_A.pdf",
+      dias_atraso: 5,
     },
     {
       id: "HOMOLOGACAO-EXEMPLO-0002", nf: "EXEMPLO-005678",
@@ -36,6 +38,7 @@ export function realisticSimulationRows(now = new Date()): SimulationItem[] {
       natureza: "COMPRA DE MATERIA PRIMA",
       enviado_em: format(2),
       arquivo: "NF_EXEMPLO_005678_FORNECEDOR_MODELO_B.pdf",
+      dias_atraso: 4,
     },
   ];
 }
