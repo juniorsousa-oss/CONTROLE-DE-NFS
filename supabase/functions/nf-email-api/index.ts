@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { normalizeTestRecipients } from "./recipients.ts";
 
 type Item = {
   id: string;
@@ -111,12 +112,12 @@ Deno.serve(async req => {
       .eq("singleton",true).maybeSingle()
     : null;
   if (testConfig?.error) return json({ok:false,error:"CONFIG_TESTE_INDISPONIVEL"},500);
-  const testAddress = String(testConfig?.data?.destinatario_teste || "").trim();
+  const testAddress = normalizeTestRecipients(testConfig?.data?.destinatario_teste) || "";
   const productionTo = (Deno.env.get("NFS_EMAIL_PROD_TO") || "").trim();
   const productionCc = (Deno.env.get("NFS_EMAIL_PROD_CC") || "").trim();
   const to = mode === "TESTE" ? testAddress : productionTo;
   const cc = mode === "TESTE" ? "" : productionCc;
-  if ((mode === "TESTE" && !validEmail(to)) ||
+  if ((mode === "TESTE" && !testAddress) ||
       (mode === "PRODUCAO" &&
         (!to || to.split(";").some(s => !validEmail(s.trim())) ||
         (cc && cc.split(";").some(s => !validEmail(s.trim())))))) {

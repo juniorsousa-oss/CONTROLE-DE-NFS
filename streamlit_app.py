@@ -4197,12 +4197,12 @@ def render_launch_tracking_panel(
 
 
 def render_accounting_email_preview() -> None:
-    """Homologação: visualizar a cobrança sem emitir e-mail ou expor destinatários."""
+    """Prévia contábil e disparo manual de teste com PIN de autorização."""
     st.markdown('<div class="topic-divider"></div>', unsafe_allow_html=True)
     section_band(
         "NOTIFICAÇÕES · CONTABILIDADE",
         "PRÉVIA DE COBRANÇA DE NFs VENCIDAS",
-        "HOMOLOGAÇÃO · NENHUM E-MAIL SERÁ ENVIADO",
+        "HOMOLOGAÇÃO · TESTE MANUAL CONTROLADO",
     )
     st.caption(
         "Esta prévia considera somente NF-e de COMPRA DE MATERIA PRIMA com "
@@ -4211,7 +4211,8 @@ def render_accounting_email_preview() -> None:
         "não gera cobrança."
     )
     st.info(
-        "ENVIO DESATIVADO EM HOMOLOGAÇÃO. O disparo automático dependerá "
+        "ENVIO AUTOMÁTICO DESATIVADO EM HOMOLOGAÇÃO. A homologação permite " 
+        "apenas disparo manual autorizado. A produção dependerá "
         "de nova versão validada do STSUP01, limite de até 2 mensagens por "
         "dia, registro de auditoria e integração autenticada com a conta "
         "de e-mail da SETTA. Os destinatários definitivos ainda não são utilizados."
@@ -4249,15 +4250,15 @@ def render_accounting_email_preview() -> None:
 
     st.markdown("#### DISPARO DE HOMOLOGAÇÃO")
     st.caption(
-        "O servidor utilizará somente o destinatário de TESTE definido "
-        "nos segredos do Supabase. Não é possível alterar o destinatário "
-        "na página. Nenhuma mensagem irá para a contabilidade."
+        "O servidor utilizará somente os dois destinatários de TESTE "
+        "configurados no banco Supabase. Não é possível alterá-los "
+        "na página. Nenhuma mensagem será enviada aos destinatários definitivos."
     )
     if not acesso_teste_configurado():
         st.info(
             "Disparo indisponível até configurar NFS_EMAIL_API_TOKEN e "
             "NFS_EMAIL_OPERATOR_PIN nos segredos do Streamlit, além do "
-            "fluxo do Microsoft 365 e do destinatário de teste no Supabase."
+            "fluxo do Microsoft 365 e dos dois destinatários de teste no Supabase."
         )
     else:
         with st.form("nf_email_teste", enter_to_submit=False):
@@ -4267,7 +4268,7 @@ def render_accounting_email_preview() -> None:
             )
             _confirm = st.checkbox(
                 "Confirmo o envio de uma mensagem de TESTE "
-                "somente ao destinatário de homologação."
+                "somente aos dois destinatários de homologação."
             )
             _send = st.form_submit_button(
                 "ENVIAR E-MAIL DE TESTE",
