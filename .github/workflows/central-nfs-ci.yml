@@ -29,6 +29,8 @@ jobs:
         run: python -m scripts.test_nf_supplier_cnpj_sidebar_ui
       - name: Testar lote congelado até a geração dos PDFs
         run: python -m scripts.test_nf_stage3_batch_snapshot
+      - name: Testar prioridade manual na confirmação final
+        run: python -m scripts.test_nf_final_priority
       - name: Testar transição explícita para busca na etapa 2
         run: python -m scripts.test_nf_stage2_explicit_lookup
       - name: Testar impressão avulsa NF-e/CT-e

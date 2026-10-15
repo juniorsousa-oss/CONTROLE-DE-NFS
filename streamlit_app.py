@@ -64,6 +64,7 @@ from nf_prazo_dashboard import (
 from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
+from nf_final_priority import apply_final_manual_priorities
 import setta_shell
 from nf_processor import (
     build_final_name,
@@ -8787,30 +8788,91 @@ def render_ready_file_stage() -> None:
         ]
         if col in merged.columns
     ]
-    _setta_dataframe(
-        merged[summary_cols],
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "numero_nf": "NF",
-            "fornecedor_padrao": st.column_config.TextColumn(
-                "FORNECEDOR",
-                width="large",
-            ),
-            "empresa_sigla": "EMPRESA",
-            "natureza": st.column_config.TextColumn(
-                "NATUREZA",
-                width="medium",
-            ),
-            "prioridade_mrp": st.column_config.CheckboxColumn(
-                "PRIORIDADE MRP",
-            ),
-            "nome_sugerido": st.column_config.TextColumn(
-                "ARQUIVO FINAL",
-                width="large",
-            ),
-        },
-    )
+    if not st.session_state.get("zip_outputs"):
+        st.markdown("#### PRIORIDADE MANUAL · CONFIRMAÇÃO FINAL")
+        st.caption(
+            "As prioridades calculadas pelo MRP não podem ser removidas. "
+            "Marque outras NFs na coluna PRIORIDADE MANUAL e salve antes "
+            "de gerar o ZIP. Para matéria-prima, ambas seguem na pasta URGENTES."
+        )
+        _priority_columns = [
+            col for col in (
+                "file_id", "numero_nf", "fornecedor_padrao", "empresa_sigla",
+                "natureza", "prioridade_mrp_base", "prioridade_manual",
+                "prioridade_mrp", "nome_sugerido",
+            ) if col in merged.columns
+        ]
+        _priority_frame = merged[_priority_columns].copy()
+        _priority_frame["prioridade_manual"] = (
+            merged.get("prioridade_manual", pd.Series(False, index=merged.index))
+            .fillna(False).astype(bool)
+        )
+        with st.form("stage3_final_priority_form"):
+            _edited_priority = _setta_data_editor(
+                _priority_frame,
+                use_container_width=True, hide_index=True, num_rows="fixed",
+                key="stage3_final_priority_editor",
+                disabled=[col for col in _priority_frame.columns
+                          if col != "prioridade_manual"],
+                column_config={
+                    "file_id": None,
+                    "numero_nf": "NF",
+                    "fornecedor_padrao": st.column_config.TextColumn(
+                        "FORNECEDOR", width="large"
+                    ),
+                    "prioridade_mrp_base": st.column_config.CheckboxColumn(
+                        "PRIORIDADE MRP", disabled=True
+                    ),
+                    "prioridade_manual": st.column_config.CheckboxColumn(
+                        "PRIORIDADE MANUAL",
+                        help="Adiciona NF sem prioridade MRP ao pacote urgente."
+                    ),
+                    "prioridade_mrp": st.column_config.CheckboxColumn(
+                        "PRIORIDADE FINAL", disabled=True
+                    ),
+                    "nome_sugerido": st.column_config.TextColumn(
+                        "ARQUIVO FINAL", width="large"
+                    ),
+                },
+            )
+            _save_stage3_priority = st.form_submit_button(
+                "SALVAR PRIORIDADES DA CONFERÊNCIA FINAL",
+                use_container_width=True,
+            )
+        if _save_stage3_priority:
+            try:
+                _new_priority = apply_final_manual_priorities(
+                    merged, _edited_priority
+                )
+                st.session_state.analysis = recalc(
+                    apply_cross_checks(_new_priority)
+                )
+                st.session_state.pop("stage3_final_priority_editor", None)
+                st.rerun()
+            except Exception as _priority_error:
+                st.error(f"Não foi possível salvar prioridades: {_priority_error}")
+                return
+    else:
+        _setta_dataframe(
+            merged[summary_cols],
+            use_container_width=True, hide_index=True,
+            column_config={
+                "numero_nf": "NF",
+                "fornecedor_padrao": st.column_config.TextColumn(
+                    "FORNECEDOR", width="large"
+                ),
+                "empresa_sigla": "EMPRESA",
+                "natureza": st.column_config.TextColumn(
+                    "NATUREZA", width="medium"
+                ),
+                "prioridade_mrp": st.column_config.CheckboxColumn(
+                    "PRIORIDADE FINAL"
+                ),
+                "nome_sugerido": st.column_config.TextColumn(
+                    "ARQUIVO FINAL", width="large"
+                ),
+            },
+        )
 
     # Confirmação 03: relação explícita dos CT-e antes de montar ZIP.
     linked_ctes = list(st.session_state.get("cte_links") or [])
