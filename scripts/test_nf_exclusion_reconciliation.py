@@ -19,12 +19,13 @@ def supplier_code(value):
 def sim(a,b):
     return 100 if name(a)==name(b) else 0
 
-def check(exclusions, pre, report):
+def check(exclusions, pre, report, identities=None):
     return excluded_nfs_with_confirmed_launch(
         exclusions,pd.DataFrame(pre),pd.DataFrame(report),
         normalize_nf=number, normalize_name=name,
         supplier_similarity=sim,
         normalize_supplier_code=supplier_code,digits_only=digits,
+        identities_by_nf=identities,
     )
 
 ident="12345678000190"
@@ -37,6 +38,11 @@ full=[{"numero_nf":"220355","fornecedor":"FORNECEDOR A",
 assert check({"220355","220361"},source,full)==["220355"]
 assert check({"220355"},source,[])==[]
 assert check({"220355"},[],full)==[]  # saída da pré-nota não confirma lançamento
+assert check({"220355"},[],full,{"220355":[{"cnpj":ident,"fornecedor":"FORNECEDOR A"}]}) == ["220355"]
+assert check({"220355"},[],[{**full[0],"tes":""}],
+             {"220355":[{"cnpj":ident,"fornecedor":"FORNECEDOR A"}]}) == []
+assert check({"220355"},[],full,{"220355":[{"cnpj":"77777777000177",
+                                             "fornecedor":"OUTRO"}]}) == []
 assert check({"220355"},source,[{**full[0],"tes":""}])==[]
 assert check({"220355"},source,[{**full[0],"cnpj_resolvido":"99999999000199"}])==[]
 assert check({"220355"},source,[{**full[0],"cnpj_resolvido":"",
@@ -48,7 +54,7 @@ assert check({"220355"},source,[{**full[0],"fornecedor":"FORNECEDOR A LTDA",
 assert check({"220355"},[{"numero_nf":"220355","cnpj":"","fornecedor":""}],full)==[]
 assert check({"220355"},source+[{"numero_nf":"220355","cnpj":"12312312000199",
                                  "fornecedor":"OUTRO FORNECEDOR"}],full)==[]
-assert check({"220355","220361"},source,full+[{
+assert check({"220355","220361"},source,[full[0],{
     **full[1],"tes":"700"}])==["220355","220361"]
 # Em todos os casos, apenas uma lista de números é retornada. Nunca se grava
 # no banco, nem a função decide a partir de ausência no relatório.
@@ -61,4 +67,10 @@ assert 'if check_pre is None:' in app
 assert 'central_data.download_preferred_source(' in app
 assert app.index('persisted = persist_mrp_current()') < app.index(
     '_reconcile_excluded_after_launch(', app.index('def _sync_central_nfs_sources'))
+migration=Path("supabase/migrations/20261015_nf_exclusao_identidade.sql").read_text("utf-8")
+assert "add column if not exists identidades jsonb" in migration
+assert "nf_capturar_identidade_desconsiderada" in migration
+assert "before insert or update of ativo" in migration
+assert 'identities_by_nf=known_identities' in app
+assert 'check_pre = pd.DataFrame()' in app
 print("NFS_EXCLUSION_RECONCILIATION_OK")

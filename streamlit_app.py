@@ -4514,8 +4514,14 @@ def _reconcile_excluded_after_launch(
     if report.empty:
         return {"restaurados": 0}
     report["cnpj_resolvido"], _ = _supplier_cnpj_lookup(report)
+    known_identities = {
+        normalized_nf(row.get("numero_nf")): row.get("identidades") or []
+        for row in (st.session_state.get("excluded_nf_records") or [])
+        if normalized_nf(row.get("numero_nf"))
+    }
     confirmed = excluded_nfs_with_confirmed_launch(
         active, source_pre_notes, report,
+        identities_by_nf=known_identities,
         normalize_nf=normalized_nf,
         normalize_name=supplier_validation_name,
         supplier_similarity=supplier_similarity,
@@ -10262,18 +10268,23 @@ def _sync_central_nfs_sources(force: bool = False) -> dict:
                     try:
                         check_pre = unfiltered_source_pre_notes
                         if check_pre is None:
-                            pre_source, pre_meta = central_data.download_preferred_source(
-                                "mes_pre_notas", required_columns=0
-                            )
-                            if pre_source.get("normalized"):
-                                check_pre = _central_pre_notes_from_pack(
-                                    pre_source["pack"]
+                            try:
+                                pre_source, pre_meta = central_data.download_preferred_source(
+                                    "mes_pre_notas", required_columns=0
                                 )
-                            else:
-                                check_pre = _central_pre_notes_from_bytes(
-                                    pre_source["raw"],
-                                    str(pre_meta.get("last_file_name") or "MES PRE NOTAS.xlsx"),
-                                )
+                                if pre_source.get("normalized"):
+                                    check_pre = _central_pre_notes_from_pack(
+                                        pre_source["pack"]
+                                    )
+                                else:
+                                    check_pre = _central_pre_notes_from_bytes(
+                                        pre_source["raw"],
+                                        str(pre_meta.get("last_file_name") or "MES PRE NOTAS.xlsx"),
+                                    )
+                            except Exception:
+                                # Se o MES estiver indisponível, usa somente
+                                # identidades historicamente capturadas.
+                                check_pre = pd.DataFrame()
                         st.session_state["_nf_excluded_reconciliation"] = (
                             _reconcile_excluded_after_launch(
                                 launch_report, check_pre

@@ -24,32 +24,49 @@ def excluded_nfs_with_confirmed_launch(
     supplier_similarity: Callable,
     normalize_supplier_code: Callable,
     digits_only: Callable,
+    identities_by_nf: dict[str, list[dict]] | None = None,
 ) -> list[str]:
-    if not active_numbers or not isinstance(pre_notes, pd.DataFrame):
-        return []
-    if pre_notes.empty or not isinstance(launch_report, pd.DataFrame) or launch_report.empty:
-        return []
-    if not {"numero_nf", "fornecedor", "cnpj"}.issubset(pre_notes.columns):
+    if not active_numbers or not isinstance(launch_report, pd.DataFrame) or launch_report.empty:
         return []
     if not {"numero_nf", "fornecedor_codigo", "fornecedor", "tes"}.issubset(launch_report.columns):
         return []
 
     active = {normalize_nf(n) for n in active_numbers if normalize_nf(n)}
     pre_by_number = defaultdict(list)
-    for item in pre_notes.to_dict(orient="records"):
-        number = normalize_nf(item.get("numero_nf"))
-        if number not in active:
+    if (isinstance(pre_notes, pd.DataFrame)
+            and {"numero_nf", "fornecedor", "cnpj"}.issubset(pre_notes.columns)):
+        for item in pre_notes.to_dict(orient="records"):
+            number = normalize_nf(item.get("numero_nf"))
+            if number not in active:
+                continue
+            company = digits_only(item.get("cnpj"))
+            name = str(item.get("fornecedor") or "").strip()
+            if len(company) != 14 and not normalize_name(name):
+                continue
+            pre_by_number[number].append({
+                "numero_nf": number,
+                "cnpj_fornecedor": company,
+                "fornecedor_padrao": name,
+            })
+
+    # Exceções deixam de aparecer na base de pré-notas após o lançamento:
+    # preservar o fornecedor que foi capturado no momento da exclusão.
+    for raw_number, identities in (identities_by_nf or {}).items():
+        number = normalize_nf(raw_number)
+        if number not in active or not isinstance(identities, list):
             continue
-        company = digits_only(item.get("cnpj"))
-        name = str(item.get("fornecedor") or "").strip()
-        # Sem identidade de origem não existe confirmação segura.
-        if len(company) != 14 and not normalize_name(name):
-            continue
-        pre_by_number[number].append({
-            "numero_nf": number,
-            "cnpj_fornecedor": company,
-            "fornecedor_padrao": name,
-        })
+        for identity in identities:
+            if not isinstance(identity, dict):
+                continue
+            company = digits_only(identity.get("cnpj"))
+            name = str(identity.get("fornecedor") or "").strip()
+            if len(company) != 14 and not normalize_name(name):
+                continue
+            pre_by_number[number].append({
+                "numero_nf": number,
+                "cnpj_fornecedor": company,
+                "fornecedor_padrao": name,
+            })
 
     # O relatório deve ter o CNPJ já resolvido pelo cadastro SETTA;
     # se não existir, a validação usa apenas igualdade exata de nome.
