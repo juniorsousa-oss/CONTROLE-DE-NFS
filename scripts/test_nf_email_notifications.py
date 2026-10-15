@@ -128,6 +128,9 @@ def run() -> None:
     sql = (Path(__file__).resolve().parents[1] /
         "supabase/migrations/20261014_nf_email_notifications_queue.sql").read_text("utf-8")
     assert 'nf_email_claim_simulation' in edge
+    assert 'checkWorkflowUrl(Deno.env.get("NFS_EMAIL_WORKFLOW_URL") || "")' in edge
+    assert '"WEBHOOK_SEGREDO_AUSENTE"' in app
+    assert '"WEBHOOK_NAO_E_URL_HTTP_DO_GATILHO"' in app
     assert 'simulationRows()' in edge
     assert '[SIMULAÇÃO / NÃO COBRAR]' in edge
     from nf_email_delivery import enviar_simulacao_contabilidade

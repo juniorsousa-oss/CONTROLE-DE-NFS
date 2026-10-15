@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { normalizeTestRecipients } from "./recipients.ts";
 import { simulationRows } from "./simulation.ts";
+import { checkWorkflowUrl } from "./webhook_validation.ts";
 
 type Item = {
   id: string;
@@ -61,15 +62,6 @@ function buildHtml(rows: Item[], testMode: boolean, simulated=false): string {
     '<p>Atenciosamente,<br>Controle de NFs | SETTA</p>' +
     "</body></html>";
 }
-function authorizedEndpoint(raw: string): URL | null {
-  try {
-    const endpoint = new URL(raw);
-    const hosts = ["logic.azure.com", "powerautomate.com", "powerplatform.com"];
-    if (endpoint.protocol !== "https:" || !hosts.some(h => endpoint.hostname === h ||
-      endpoint.hostname.endsWith("." + h))) return null;
-    return endpoint;
-  } catch { return null; }
-}
 function secureMatch(a: string, b: string): boolean {
   const x = new TextEncoder().encode(a);
   const y = new TextEncoder().encode(b);
@@ -104,9 +96,10 @@ Deno.serve(async req => {
     return json({ok:true,data:{status:"PRODUCAO_DESATIVADA"}});
   }
 
-  const endpointRaw = (Deno.env.get("NFS_EMAIL_WORKFLOW_URL") || "").trim();
-  const url = authorizedEndpoint(endpointRaw);
-  if (!url) return json({ok:true,data:{status:"WEBHOOK_NAO_CONFIGURADO"}});
+  const endpointStatus = checkWorkflowUrl(Deno.env.get("NFS_EMAIL_WORKFLOW_URL") || "");
+  const url = endpointStatus.url;
+  // Nunca devolver URL, assinatura, domínio ou partes da credencial.
+  if (!url) return json({ok:true,data:{status:endpointStatus.status}});
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";

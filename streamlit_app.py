@@ -4323,8 +4323,36 @@ def render_accounting_email_preview() -> None:
                         "do Power Automate e o recebimento pelos dois destinatários."
                     )
                 else:
+                    _webhook_messages = {
+                        "WEBHOOK_SEGREDO_AUSENTE": (
+                            "O segredo NFS_EMAIL_WORKFLOW_URL está ausente ou vazio "
+                            "no Supabase → Edge Functions → Secrets."
+                        ),
+                        "WEBHOOK_URL_INVALIDA": (
+                            "O segredo NFS_EMAIL_WORKFLOW_URL não contém uma URL "
+                            "HTTPS válida. Copie o campo URL HTTP do primeiro bloco."
+                        ),
+                        "WEBHOOK_DOMINIO_NAO_PERMITIDO": (
+                            "O endereço cadastrado não é um domínio permitido "
+                            "do Power Automate. Verifique a origem da URL."
+                        ),
+                        "WEBHOOK_NAO_E_URL_HTTP_DO_GATILHO": (
+                            "Foi cadastrado um link diferente da URL HTTP do gatilho "
+                            "do Power Automate. Não use o endereço da barra do navegador."
+                        ),
+                        "WEBHOOK_URL_SEM_ASSINATURA": (
+                            "A URL do gatilho está incompleta, sem assinatura. "
+                            "Copie-a pelo ícone ao lado de URL HTTP."
+                        ),
+                        "WEBHOOK_NAO_CONFIGURADO": (
+                            "O webhook não foi reconhecido pelo Supabase."
+                        ),
+                    }
                     st.warning(
-                        "Simulação não enviada: " + _status_sim.replace("_", " ")
+                        "Simulação não enviada: " +
+                        _webhook_messages.get(
+                            _status_sim, _status_sim.replace("_", " ")
+                        )
                     )
             except Exception as exc:
                 st.error("Simulação não confirmada: " + str(exc))
