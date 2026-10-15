@@ -55,9 +55,7 @@ import central_nfs_data as central_data
 from nf_launch_validation import validar_lancamento_nf
 from nf_launch_deadline import acompanha_lancamento, inicio_valido_envio, prazo_lancamento
 from nf_email_notifications import preparar_cobrancas, montar_email_html, assunto_cobranca
-from nf_email_delivery import (
-    acesso_teste_configurado, enviar_teste_contabilidade, enviar_simulacao_contabilidade,
-)
+from nf_email_delivery import acesso_teste_configurado, enviar_teste_contabilidade
 from nf_prazo_dashboard import (
     indexar_historico_ocorrencias,
     aplicar_historico_na_consulta,
@@ -4246,7 +4244,19 @@ def render_accounting_email_preview() -> None:
             )
         if _send_sim:
             try:
-                _result_sim = enviar_simulacao_contabilidade(_pin_sim)
+                # Carregamento somente no clique: evita indisponibilidade de todo o
+                # Streamlit durante propagação de uma nova versão do módulo auxiliar.
+                import importlib
+                import nf_email_delivery
+
+                _email_module = importlib.reload(nf_email_delivery)
+                _sender = getattr(_email_module, "enviar_simulacao_contabilidade", None)
+                if not callable(_sender):
+                    raise RuntimeError(
+                        "Módulo de simulação desatualizado. Reinicie o aplicativo "
+                        "pelo painel do Streamlit Cloud e tente novamente."
+                    )
+                _result_sim = _sender(_pin_sim)
                 _status_sim = str(_result_sim.get("status") or "")
                 if _status_sim == "ACEITO":
                     st.success(

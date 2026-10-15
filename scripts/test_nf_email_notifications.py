@@ -98,7 +98,20 @@ def run() -> None:
     assert 'render_accounting_email_preview()' in app
     assert "NFS_EMAIL_OPERATOR_PIN" in app
     assert "ENVIAR SIMULAÇÃO PARA HOMOLOGAÇÃO" in app
-    assert "enviar_simulacao_contabilidade(_pin_sim)" in app
+    assert '_sender(_pin_sim)' in app
+    assert 'getattr(_email_module, "enviar_simulacao_contabilidade", None)' in app
+    # O import do novo módulo deve ser tardio para não derrubar o aplicativo.
+    import ast
+    parsed = ast.parse(app)
+    module_imports = [
+        n for n in parsed.body
+        if isinstance(n, ast.ImportFrom) and n.module == "nf_email_delivery"
+    ]
+    assert module_imports
+    assert all(
+        "enviar_simulacao_contabilidade" not in [a.name for a in n.names]
+        for n in module_imports
+    )
     assert app.index('st.form("nf_email_simulacao"') < app.index("if pendencias.empty:")
     from pathlib import Path
     edge = (Path(__file__).resolve().parents[1] /
