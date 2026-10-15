@@ -27,6 +27,58 @@ def _setta_table_height(data, requested=None):
     return int(min(ceiling, max(120, 42 + 35 * (min(max(0, rows), 100) + 1))))
 
 
+@st.fragment
+def _render_stage1_pending_selection_live(
+    editor_view: pd.DataFrame, table_cols: list[str], editor_rev: int
+) -> pd.DataFrame:
+    """Atualiza apenas a grade e o contador a cada checkbox, sem recalcular
+    a página inteira. Salvar/excluir continuam sendo ações explícitas.
+    """
+    pending_editor = _setta_data_editor(
+        editor_view[table_cols],
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        key=f"pending_pre_notes_editor_{editor_rev}",
+        disabled=[
+            col
+            for col in table_cols
+            if col not in {
+                "Selecionar",
+                "recebedor",
+                "data_pre_nota",
+            }
+        ],
+        column_config={
+            "Selecionar": st.column_config.CheckboxColumn(
+                "SELECIONAR",
+                width="small",
+            ),
+            "_flow_key": None,
+            "data_pre_nota": st.column_config.DateColumn(
+                "DATA DE RECEBIMENTO",
+                format="DD/MM/YYYY",
+            ),
+            "numero_nf": "NF",
+            "fornecedor": st.column_config.TextColumn(
+                "FORNECEDOR",
+                width="large",
+            ),
+            "recebedor": st.column_config.TextColumn(
+                "RECEBEDOR",
+                width="medium",
+            ),
+            "prioridade": "PRIORIDADE MRP",
+        },
+    )
+
+    selected_count = int(
+        pending_editor["Selecionar"].fillna(False).astype(bool).sum()
+    )
+    st.caption(f"SELECIONADAS: {selected_count} DE {len(editor_view)}")
+    return pending_editor
+
+
 def _setta_dataframe(data, *args, **kwargs):
     height = _setta_table_height(data, kwargs.get("height"))
     if height is None:
@@ -11755,66 +11807,36 @@ elif page == "Pendências":
 
 
             # Filtros ficam diretamente nos cabeçalhos da grade.
-            filtered = pending_view.copy()
-
-            priority_order = {
-                "ERRO": 0,
-                "ALTA": 1,
-                "BAIXA": 2,
-                "AGUARDANDO NF/STSUP01": 3,
-                "AGUARDANDO CARGA MRP": 4,
-            }
-            filtered["_priority_order"] = (
-                filtered["prioridade"].map(priority_order).fillna(9)
+            fil            # O formulário anterior congelava o contador enquanto os
+            # checkboxes eram alterados. O fragmento reexecuta somente
+            # a grade, mantendo o restante do fluxo sem recálculos por clique.
+            pending_editor = _render_stage1_pending_selection_live(
+                editor_view[table_cols],
+                table_cols,
+                int(st.session_state.get("_nf_stage1_editor_rev") or 0),
             )
-            filtered = filtered.sort_values(
-                ["_priority_order", "data_cm", "data_pre_nota", "numero_nf"],
-                ascending=[True, True, False, True],
-                na_position="last",
-            ).drop(columns="_priority_order")
-
-            # Tabela operacional no padrão nativo do aplicativo.
-            editor_view = filtered.copy()
-            # _flow_key veio da base original e permanece idêntica após salvar.
-            # A seleção é um rascunho; só fica efetiva após SALVAR DADOS.
-            current_keys = set(editor_view["_flow_key"].astype(str))
-            draft = st.session_state.get("nf_stage1_selection_draft")
-            saved = st.session_state.get("nf_stage1_selection")
-            chosen = (
-                current_keys if saved is None and draft is None
-                else set(draft if draft is not None else saved or set()) & current_keys
+            selected_pending = pending_editor[
+                pending_editor["Selecionar"].fillna(False).astype(bool)
+            ].copy()
+            s1, s2, s3, s4 = st.columns([2, 1, 1, 2])
+            save_receivers = s1.button(
+                "SALVAR SELEÇÃO E CONTINUAR",
+                type="primary", use_container_width=True,
+                key="nf_stage1_save_selection",
             )
-            editor_view.insert(0, "Selecionar", editor_view["_flow_key"].isin(chosen))
+            mark_all_stage1 = s2.button(
+                "MARCAR TODAS", use_container_width=True,
+                key="nf_stage1_mark_all",
+            )
+            unmark_all_stage1 = s3.button(
+                "DESMARCAR TODAS", use_container_width=True,
+                key="nf_stage1_unmark_all",
+            )
+            exclude_selected = s4.button(
+                "EXCLUIR SELECIONADAS DO FLUXO", use_container_width=True,
+                key="nf_stage1_exclude_selected",
+            )
 
-            table_cols = [
-                "Selecionar",
-                "_flow_key",
-                "data_pre_nota",
-                "numero_nf",
-                "fornecedor",
-                "recebedor",
-                "prioridade",
-            ]
-
-            with st.form("nf_stage1_pending_selection_form",clear_on_submit=False):
-                pending_editor = _setta_data_editor(
-                    editor_view[table_cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    num_rows="fixed",
-                    key=f"pending_pre_notes_editor_{int(st.session_state.get('_nf_stage1_editor_rev') or 0)}",
-                    disabled=[
-                        col
-                        for col in table_cols
-                        if col not in {
-                            "Selecionar",
-                            "recebedor",
-                            "data_pre_nota",
-                        }
-                    ],
-                    column_config={
-                        "Selecionar": st.column_config.CheckboxColumn(
-                            "SELECIONAR",
                             width="small",
                         ),
                         "_flow_key": None,

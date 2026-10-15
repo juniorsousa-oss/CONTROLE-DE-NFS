@@ -32,13 +32,31 @@ def form_containing_editor(label):
     assert len(found)==1, f"Formulário {label} ausente"
     return found[0]
 
-for label in ("nf_stage1_pending_selection_form","missing_mrp_protheus_treat_form"):
-    form=form_containing_editor(label)
-    assert any(
-        isinstance(n,ast.Call) and isinstance(n.func,ast.Name)
-        and n.func.id=="_setta_data_editor"
-        for n in ast.walk(form)
-    ), f"{label} fora do formulário: pode recarregar a cada clique"
+# O editor da etapa 1 não pode ficar em formulário: o contador precisa
+# mudar IMEDIATAMENTE a cada checkbox, mas sem recalcular a página inteira.
+live=function("_render_stage1_pending_selection_live")
+assert any(isinstance(d,ast.Attribute) and d.attr=="fragment"
+           for d in live.decorator_list), "Editor precisa rodar em fragmento leve"
+assert any(
+    isinstance(n,ast.Call) and isinstance(n.func,ast.Name)
+    and n.func.id=="_setta_data_editor"
+    for n in ast.walk(live)
+), "Grade operacional não encontrada no fragmento"
+assert 'SELECIONADAS: {selected_count} DE {len(editor_view)}' in source
+assert "selected_count = int(" in source
+assert '"nf_stage1_pending_selection_form"' not in source
+assert "pending_editor = _render_stage1_pending_selection_live(" in source
+assert '"nf_stage1_save_selection"' in source
+assert '"nf_stage1_exclude_selected"' in source
+
+# A tabela de tratativas do Protheus permanece dentro de formulário,
+# evitando reprocessamentos caros por clique nesse fluxo separado.
+protheus=form_containing_editor("missing_mrp_protheus_treat_form")
+assert any(
+    isinstance(n,ast.Call) and isinstance(n.func,ast.Name)
+    and n.func.id=="_setta_data_editor"
+    for n in ast.walk(protheus)
+), "Tratativa do Protheus deve permanecer em formulário"
 
 for token in [
     '"DESMARCAR TODAS"',
