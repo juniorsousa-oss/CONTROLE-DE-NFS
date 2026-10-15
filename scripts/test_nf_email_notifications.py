@@ -98,6 +98,15 @@ def run() -> None:
     assert 'render_accounting_email_preview()' in app
     assert "NFS_EMAIL_OPERATOR_PIN" in app
     assert "ENVIAR SIMULAÇÃO PARA HOMOLOGAÇÃO" in app
+    form_start = app.index('with st.form("nf_email_simulacao"')
+    form_end = app.index('if _send_sim and not _confirm_sim:', form_start)
+    simulation_form = app[form_start:form_end]
+    assert "disabled=not _confirm_sim" not in simulation_form
+    assert 'if _send_sim and not _confirm_sim:' in app
+    assert 'elif _send_sim and not str(_pin_sim or "").strip():' in app
+    assert 'elif _send_sim:' in app
+    assert app.index('if _send_sim and not _confirm_sim:') < app.index('_result_sim = _sender(_pin_sim)')
+    assert app.index('elif _send_sim and not str(_pin_sim or "").strip():') < app.index('_result_sim = _sender(_pin_sim)')
     assert '_sender(_pin_sim)' in app
     assert 'getattr(_email_module, "enviar_simulacao_contabilidade", None)' in app
     # O import do novo módulo deve ser tardio para não derrubar o aplicativo.

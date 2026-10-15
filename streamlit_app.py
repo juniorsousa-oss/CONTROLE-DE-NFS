@@ -4291,12 +4291,17 @@ def render_accounting_email_preview() -> None:
                 "apenas para Júnior e Washington.",
                 key="nf_sim_confirm",
             )
+            # Nunca desabilitar submit com base em checkbox que está
+            # dentro do mesmo form: o valor só chega ao backend no submit.
             _send_sim = st.form_submit_button(
                 "ENVIAR SIMULAÇÃO PARA HOMOLOGAÇÃO",
                 type="primary", use_container_width=True,
-                disabled=not _confirm_sim,
             )
-        if _send_sim:
+        if _send_sim and not _confirm_sim:
+            st.warning("Marque a autorização antes de solicitar o envio.")
+        elif _send_sim and not str(_pin_sim or "").strip():
+            st.warning("Informe o PIN do operador antes de solicitar o envio.")
+        elif _send_sim:
             try:
                 # Carregamento somente no clique: evita indisponibilidade de todo o
                 # Streamlit durante propagação de uma nova versão do módulo auxiliar.
