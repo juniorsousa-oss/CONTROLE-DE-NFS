@@ -63,7 +63,7 @@ def run() -> None:
     assert "001234" in html and "NF_1234.pdf" in html
     assert "Metal &amp; Cia" in html and "Metal & Cia" not in html
     assert "DIAS DE ATRASO" in html
-    assert "color:#ffffff" in html
+    assert "color:#292d32" in html
     assert "sem confirmação de lançamento." in html
     assert "Controle de NFs Almoxarifado | SETTA" in html
     from nf_email_notifications import gerar_previa_visual_ficticia
@@ -72,14 +72,14 @@ def run() -> None:
     assert "EXEMPLO-005678" in fake_preview
     assert "HOMOLOGAÇÃO — DADOS FICTÍCIOS" in fake_preview
     assert "NÃO REALIZAR COBRANÇA" in fake_preview
-    assert "color:#ffffff" in fake_preview
+    assert "color:#292d32" in fake_preview
     assert "12/10/2026" in fake_preview
     assert "13/10/2026" in fake_preview
-    assert "ALMOXARIFADO · CONTROLE DE NFs" in html
-    assert "NOTAS FISCAIS EM ACOMPANHAMENTO" in html
-    assert "max-width:920px" in html
-    assert 'width="920"' in html
-    assert "Referência: 14/10/2026" in html
+    assert "NOTAS FISCAIS EM ACOMPANHAMENTO" not in html
+    assert '<h1' not in html
+    assert 'bgcolor="#efeded"' in html
+    assert 'bgcolor="#ffffff"' in html
+    assert "color:#a82929" in fake_preview
     assert "009999" not in html and "007777" not in html
     assert "008888" not in html
     assert "marcos.rodrigues@" not in html
