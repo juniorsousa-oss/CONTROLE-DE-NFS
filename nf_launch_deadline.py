@@ -26,12 +26,15 @@ def _normalize(value: object) -> str:
 
 
 def acompanha_lancamento(tipo_documento: object, natureza: object) -> bool:
-    """Somente NF-e com natureza de COMPRA DE MATERIA PRIMA."""
+    """NF-e de matéria-prima ou EPI GERA ESTOQUE, conforme regra SETTA."""
     tipo = _normalize(tipo_documento)
     natureza_normal = _normalize(natureza)
     return (
         tipo in {"NF E", "NFE", "NOTA FISCAL ELETRONICA"}
-        and "COMPRA DE MATERIA PRIMA" in natureza_normal
+        and (
+            "COMPRA DE MATERIA PRIMA" in natureza_normal
+            or "EPI GERA ESTOQUE" in natureza_normal
+        )
     )
 
 

@@ -59,8 +59,9 @@ fri_local = d(4, 15).replace(tzinfo=TZ)
 fri_utc = fri_local.astimezone(ZoneInfo("UTC"))
 assert prazo_lancamento(fri_utc) == prazo_lancamento(fri_local)
 
-# Somente NF-e matéria-prima após confirmação de envio.
-for name in ("COMPRA DE MATERIA PRIMA", "COMPRA DE MATÉRIA-PRIMA", "compra de materia prima"):
+# Somente NF-e matéria-prima e EPI com geração de estoque após envio.
+for name in ("COMPRA DE MATERIA PRIMA", "COMPRA DE MATÉRIA-PRIMA",
+             "compra de materia prima", "EPI GERA ESTOQUE", "EPI GÉRA ESTOQUE"):
     assert acompanha_lancamento("NF-e", name)
 for typ, nature in [
     ("CT-e", "COMPRA DE MATERIA PRIMA"),
@@ -71,6 +72,11 @@ for typ, nature in [
 ]:
     assert not acompanha_lancamento(typ, nature), (typ, nature)
 
+sql_epi = (Path(__file__).resolve().parents[1] /
+    "supabase/migrations/20261016_nf_epi_prazo_24h.sql").read_text("utf-8")
+assert "EPI GERA ESTOQUE" in sql_epi
+assert "COMPRA DE MATERIA PRIMA" in sql_epi
+assert "on conflict" not in sql_epi
 # Teste da função de acompanhamento efetivamente exibida na tela.
 source = (Path(__file__).resolve().parents[1] / "streamlit_app.py").read_text("utf-8")
 tree = ast.parse(source)

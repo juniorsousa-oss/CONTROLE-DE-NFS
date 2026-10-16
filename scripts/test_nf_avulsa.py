@@ -108,6 +108,20 @@ with patch.object(av,"cte_output_name",return_value="DACTE.pdf"):
          "DACTE.pdf":b"CTE"},"AVULSA-TST")
 assert len(rows)==2 and rows[0]["tipo_documento"]=="NF-e"
 assert rows[0]["status"]=="REALIZADO" and rows[1]["status"]=="REALIZADO"
+from datetime import datetime, timezone
+fixed = datetime(2026, 10, 16, 15, 33, tzinfo=timezone.utc)
+with patch.object(av,"cte_output_name",return_value="DACTE.pdf"):
+    with_timestamp=av.build_avulsa_manifest(
+        [doc], [{"record":cterecord,"raw":b"xml","meta":cte}],
+        date_values, {}, lambda _: "FORNECEDOR",
+        lambda *a: {"data_chegada":date(2026,10,9), "natureza":"EPI GERA ESTOQUE"},
+        lambda *a: "SEN",
+        {av.build_final_name(date(2026,10,21),"123","FORNECEDOR"):b"PDF","DACTE.pdf":b"PDF"},
+        "AVULSA-TIMESTAMP", pdf_criado_em=fixed,
+    )
+assert all(r["pdf_criado_em"]==fixed.isoformat() for r in with_timestamp)
+assert all(r["recebido_em"]==fixed.isoformat() for r in with_timestamp)
+assert rows[0]["pdf_criado_em"] and rows[1]["pdf_criado_em"]
 assert all("enviado_em" not in row for row in rows)
 assert rows[0]["chave_nfe"]==nfkey and rows[1]["chave_cte"]==ctekey
 assert rows[1]["nfs_vinculadas"]=="123"
@@ -137,6 +151,8 @@ assert "register_records=_register_avulsa_records" in app
 avsource=Path("nf_avulsa.py").read_text("utf-8")
 assert 'build_avulsa_manifest(' in avsource
 assert 'result = register_records(manifest)' in avsource
+assert 'pdf_criado_em = datetime.now(timezone.utc)' in avsource
+assert 'pdf_criado_em=pdf_criado_em' in avsource
 assert 'st.session_state["avulsa_outputs"] = outputs' in avsource
 assert avsource.index('result = register_records(manifest)') < avsource.index('st.session_state["avulsa_outputs"] = outputs')
 

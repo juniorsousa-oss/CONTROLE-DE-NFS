@@ -212,7 +212,8 @@ def make_documents(documents: list[dict], selected_ctes: list[dict],
 def build_avulsa_manifest(documents: list[dict], selected_ctes: list[dict],
                           dates: dict[str, date], stamps: dict[str, dict] | None,
                           supplier_resolver, resolve_stamp, company_sigla,
-                          generated: dict[str, bytes], lote_id: str) -> list[dict]:
+                          generated: dict[str, bytes], lote_id: str,
+                          pdf_criado_em: datetime | None = None) -> list[dict]:
     """Espelha os campos fiscais do manifesto principal, sem indicar envio.
 
     Somente documentos cujos XMLs já foram validados e PDFs gerados entram
@@ -220,7 +221,11 @@ def build_avulsa_manifest(documents: list[dict], selected_ctes: list[dict],
     """
     rows = []
     stamps = stamps or {}
-    now = datetime.now(timezone.utc).isoformat()
+    if pdf_criado_em is not None and (
+        pdf_criado_em.tzinfo is None or pdf_criado_em.utcoffset() is None
+    ):
+        raise ValueError("Data da criação do PDF deve conter fuso horário.")
+    now = (pdf_criado_em or datetime.now(timezone.utc)).isoformat()
     selected_keys = {d["meta"].chave for d in documents}
     nf_names, nf_companies = {}, {}
     for doc in documents:
@@ -539,6 +544,7 @@ def render_page(resolve_stamp, supplier_resolver, validate_tomador, company_sigl
                     docs, cte_selected, date_values,
                     stamp_values if add_stamp else None, supplier_resolver,
                 )
+                pdf_criado_em = datetime.now(timezone.utc)
             if register_records is None:
                 raise RuntimeError(
                     "Registro fiscal indisponível. Conecte o banco antes de gerar."
@@ -548,6 +554,7 @@ def render_page(resolve_stamp, supplier_resolver, validate_tomador, company_sigl
                 stamp_values if add_stamp else None,
                 supplier_resolver, resolve_stamp, company_sigla, outputs,
                 "AVULSA-" + uuid4().hex,
+                pdf_criado_em=pdf_criado_em,
             )
             result = register_records(manifest)
             if not bool(result.get("ok")):

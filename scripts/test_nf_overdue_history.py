@@ -11,6 +11,7 @@ from nf_prazo_dashboard import (
     aplicar_historico_na_consulta,
     cartoes_prazo_html,
     indexar_historico_ocorrencias,
+    indexar_dias_atraso_comprovados,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +42,19 @@ assert view.iloc[0]["primeiro_atraso_em"] == "14/10/2026 12:00"
 assert view.iloc[1]["primeiro_atraso_em"] == ""
 assert view.iloc[2]["primeiro_atraso_em"] == "14/10/2026 12:01"
 assert rows.columns.tolist() == ["id", "numero_nf", "acompanhamento_lancamento"]
+hist_data = [
+    {"nf_id": "NF-1", "prazo_em": "2026-10-13T10:00:00Z",
+     "verificado_em": "2026-10-14T10:55:00Z"},
+    {"nf_id": "NF-3", "prazo_em": "2026-10-13T10:00:00Z",
+     "verificado_em": "2026-10-14T10:55:00Z"},
+]
+dias = indexar_dias_atraso_comprovados(hist_data)
+assert dias == {"NF-1": 2, "NF-3": 2}
+hist_rows = rows.copy()
+hist_rows["dias_atraso_lancamento"] = [0, 0, 5]
+hist_result = aplicar_historico_na_consulta(hist_rows, history, tz, dias_comprovados=dias)
+assert hist_result["dias_atraso_lancamento"].tolist() == [2, 0, 5]
+assert hist_rows["dias_atraso_lancamento"].tolist() == [0, 0, 5]
 unavailable = aplicar_historico_na_consulta(rows, {}, tz, False)
 assert unavailable["historico_atraso_24h"].tolist() == ["INDISPONÍVEL"] * 3
 
@@ -59,6 +73,8 @@ app = (ROOT / "streamlit_app.py").read_text("utf-8")
 db = (ROOT / "db.py").read_text("utf-8")
 sql = (ROOT / "supabase/migrations/20261014_nf_prazo_atrasos_historico.sql").read_text("utf-8")
 assert "db.list_nf_prazo_atrasos()" in app
+assert "indexar_dias_atraso_comprovados(" in app
+assert 'select="nf_id,registrado_em,prazo_em,verificado_em"' in db
 assert "aplicar_historico_na_consulta(" in app
 assert "cartoes_prazo_html(" in app
 # Layout: ambos os indicadores ficam com os seis existentes ANTES da

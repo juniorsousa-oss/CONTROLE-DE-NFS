@@ -231,7 +231,7 @@ def list_nf_prazo_atrasos(limit: int = 50000) -> list[dict]:
         return []
     return _select_all(
         "nf_prazo_atrasos",
-        select="nf_id,registrado_em",
+        select="nf_id,registrado_em,prazo_em,verificado_em",
         order="registrado_em.desc",
         page_size=1000,
         max_rows=limit,

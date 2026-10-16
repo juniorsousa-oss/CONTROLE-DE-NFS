@@ -111,6 +111,7 @@ from nf_email_notifications import preparar_cobrancas, montar_email_html, assunt
 from nf_email_delivery import acesso_teste_configurado, enviar_teste_contabilidade
 from nf_prazo_dashboard import (
     indexar_historico_ocorrencias,
+    indexar_dias_atraso_comprovados,
     aplicar_historico_na_consulta,
     cartoes_prazo_html,
 )
@@ -10815,12 +10816,13 @@ if page == "Dashboard":
     # O histórico é imutável e independe dos filtros da consulta.
     # O trigger do Supabase grava as ocorrências na atualização do STSUP01.
     _prazo_history = {}
+    _prazo_history_dias = {}
     _prazo_history_ok = True
     if SAVE_NF_HISTORY and db.configured():
         try:
-            _prazo_history = indexar_historico_ocorrencias(
-                db.list_nf_prazo_atrasos()
-            )
+            _prazo_history_rows = db.list_nf_prazo_atrasos()
+            _prazo_history = indexar_historico_ocorrencias(_prazo_history_rows)
+            _prazo_history_dias = indexar_dias_atraso_comprovados(_prazo_history_rows)
         except Exception:
             _prazo_history_ok = False
             st.warning(
@@ -11109,6 +11111,7 @@ if page == "Dashboard":
         # 01 · INDICADORES DO FLUXO com os demais indicadores operacionais.
         finalized_records = aplicar_historico_na_consulta(
             finalized_records, _prazo_history, TZ, _prazo_history_ok,
+            dias_comprovados=_prazo_history_dias,
         )
 
         # O menu lateral também provoca rerun no Streamlit. Apenas o botão
@@ -11224,6 +11227,7 @@ if page == "Dashboard":
                 "natureza",
                 "vencimento",
                 "prioridade_mrp",
+                "origem_dados",
                 "pdf_criado_em",
                 "enviado_em",
                 "acompanhamento_lancamento",
@@ -11281,6 +11285,9 @@ if page == "Dashboard":
                 ),
                 "vencimento": "VENCIMENTO",
                 "prioridade_mrp": "PRIORIDADE",
+                "origem_dados": st.column_config.TextColumn(
+                    "ORIGEM", help="Indica se o PDF veio do fluxo principal ou da impressão avulsa."
+                ),
                 "pdf_criado_em": "PDF CRIADO EM",
                 "enviado_em": "ENVIADO EM",
                 "inicio_prazo_lancamento": "INÍCIO CONSIDERADO",
@@ -11291,7 +11298,7 @@ if page == "Dashboard":
                 ),
                 "dias_atraso_lancamento": st.column_config.NumberColumn(
                     "DIAS DE ATRASO", format="%d",
-                    help="Dias equivalentes de 24h após o vencimento, excluindo sábados e domingos; não comprova lançamento.",
+                    help="Notas abertas: atraso até agora. Notas já lançadas: mínimo de dias comprovado na primeira conferência vencida do STSUP01. Exclui sábados e domingos.",
                 ),
                 "historico_atraso_24h": "JÁ TEVE ATRASO 24H",
                 "primeiro_atraso_em": "PRIMEIRO ATRASO EM",
