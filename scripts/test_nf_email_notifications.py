@@ -198,9 +198,9 @@ def run() -> None:
         "supabase/functions/nf-email-api/email_layout.ts").read_text("utf-8")
     assert 'Number(r.dias_atraso)' in template
     assert 'Controle de NFs Almoxarifado | SETTA' in template
-    assert 'color:#ffffff' in template
-    assert 'Acompanhamento de lançamento de NFs' in template
-    assert 'HOMOLOGAÇÃO — DADOS FICTÍCIOS' in template
+    assert 'color:#292d32' in template
+    assert 'bgcolor="#efeded"' in template
+    assert '[HOMOLOGAÇÃO / DADOS FICTÍCIOS]' in template
     from nf_email_delivery import enviar_simulacao_contabilidade
     from unittest.mock import Mock
     with patch("nf_email_delivery.db._secret", side_effect=lambda x: {
