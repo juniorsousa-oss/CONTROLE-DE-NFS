@@ -173,6 +173,11 @@ def run() -> None:
     assert "where modo='PILOTO' and data_local=v_hoje" in pilot_sql
     assert "now()>=v_controle.piloto_ate" in pilot_sql
     assert "AGUARDANDO_TOKEN_NO_VAULT" in pilot_sql
+    scheduled_guard = (Path(__file__).resolve().parents[1] /
+        "supabase/migrations/20261016_nf_email_piloto_inicio_programado.sql").read_text("utf-8")
+    assert "now() < v_controle.piloto_inicio" in scheduled_guard
+    assert "now()>=v_controle.piloto_ate" in scheduled_guard
+    assert "piloto_ativo=false" in scheduled_guard
     assert "body => '{\"mode\":\"PILOTO\"}'::jsonb" in pilot_sql
     assert 'renderSettaEmail(rows,' in edge
     assert 'normalSubject + " [HOMOLOGAÇÃO — DADOS FICTÍCIOS]"' in edge
