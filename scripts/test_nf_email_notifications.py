@@ -70,7 +70,7 @@ def run() -> None:
     fake_preview = gerar_previa_visual_ficticia(datetime(2026,10,15,16,19))
     assert "EXEMPLO-001234" in fake_preview
     assert "EXEMPLO-005678" in fake_preview
-    assert "HOMOLOGAÇÃO — DADOS FICTÍCIOS" in fake_preview
+    assert "[HOMOLOGAÇÃO / DADOS FICTÍCIOS]" in fake_preview
     assert "NÃO REALIZAR COBRANÇA" in fake_preview
     assert "color:#292d32" in fake_preview
     assert "12/10/2026" in fake_preview
