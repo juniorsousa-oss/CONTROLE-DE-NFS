@@ -39,3 +39,22 @@ Deno.test("O layout HTML escapa conteúdo de dados externos", () => {
   if (html.includes("<img ") || !html.includes("&lt;img") || !html.includes("&amp; LTDA"))
     throw Error("HTML não escapou campos do fornecedor");
 });
+
+Deno.test("Piloto vazio distingue zero elegível de STSUP01 não atualizado", () => {
+  const cfg = {testMode:false,simulated:false,realistic:false,dateLabel:"19/10/2026"};
+  const noIssues=renderSettaEmail([],{...cfg,pilotStatus:"SEM_PENDENCIAS"});
+  const awaiting=renderSettaEmail([],{...cfg,pilotStatus:"AGUARDANDO_STSUP01"});
+  if (!noIssues.includes("nenhuma NF de compra de matéria-prima") ||
+      !noIssues.includes("Nenhuma NF vencida elegível") ||
+      noIssues.includes("Solicitamos verificar os lançamentos pendentes") ||
+      !awaiting.includes("não comprova que não existem pendências") &&
+      !awaiting.includes("NÃO comprova que não existem pendências") ||
+      !awaiting.includes("Atualização do STSUP01 pendente") ||
+      awaiting.includes("Nenhuma NF vencida elegível") ||
+      awaiting.includes("Solicitamos verificar os lançamentos pendentes"))
+    throw Error("O piloto vazio informou incorretamente a situação fiscal.");
+  for (const html of [noIssues,awaiting]) {
+    if (!html.includes("color:#ffffff") || html.includes("<tbody>"))
+      throw Error("Layout incorreto para mensagem sem notas.");
+  }
+});

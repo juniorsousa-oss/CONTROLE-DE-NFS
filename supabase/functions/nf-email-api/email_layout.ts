@@ -8,6 +8,7 @@ export type EmailRow = {
 };
 export type MailStyle = {
   testMode: boolean; simulated: boolean; realistic: boolean; dateLabel: string;
+  pilotStatus?: string;
 };
 const esc = (s: unknown) => String(s ?? "").replaceAll("&", "&amp;")
   .replaceAll("<", "&lt;").replaceAll(">", "&gt;")
@@ -47,13 +48,29 @@ export function renderSettaEmail(rows: EmailRow[], opts: MailStyle): string {
     '<tr><td bgcolor="#472932" style="background:#472932;padding:13px 16px;border-left:4px solid #fb7185;' +
     'color:#ffffff;font:700 12px/1.5 Arial,sans-serif;">' + esc(warning) + '</td></tr></table>'
     : "";
-  const intro = opts.simulated
-    ? "Mensagem fictícia para validar a integração SETTA → Power Automate → Outlook. Nenhuma nota fiscal real foi utilizada."
-    : 'Segue a relação de <strong style="color:#ffffff;">' + rows.length +
-      ' NF(s)</strong> de compra de matéria-prima com prazo de lançamento vencido, sem confirmação de lançamento.';
-  const closing = opts.simulated
-    ? '<strong>Não tomar providências:</strong> este e-mail é exclusivamente um teste de entrega e formatação.'
-    : 'Solicitamos verificar os lançamentos pendentes e providenciar a regularização.';
+  const awaiting = opts.pilotStatus === "AGUARDANDO_STSUP01";
+  const noIssues = opts.pilotStatus === "SEM_PENDENCIAS";
+  const intro = awaiting
+    ? "Mensagem automática de teste: aguardando uma atualização válida do STSUP01 para consultar os lançamentos. A ausência de NFs nesta mensagem NÃO comprova que não existem pendências."
+    : noIssues
+      ? "Verificação do STSUP01 atualizado concluída: nenhuma NF de compra de matéria-prima com lançamento vencido e pendente foi identificada nesta consulta."
+      : opts.simulated
+        ? "Mensagem fictícia para validar a integração SETTA → Power Automate → Outlook. Nenhuma nota fiscal real foi utilizada."
+        : 'Segue a relação de <strong style="color:#ffffff;">' + rows.length +
+          ' NF(s)</strong> de compra de matéria-prima com prazo de lançamento vencido, sem confirmação de lançamento.';
+  const closing = awaiting
+    ? "Aguardamos a próxima atualização do STSUP01. Nenhuma cobrança foi gerada nesta verificação."
+    : noIssues
+      ? "Nenhuma tratativa de lançamento é necessária com base nesta atualização."
+      : opts.simulated
+        ? '<strong>Não tomar providências:</strong> este e-mail é exclusivamente um teste de entrega e formatação.'
+        : 'Solicitamos verificar os lançamentos pendentes e providenciar a regularização.';
+  const emptyBlock = !rows.length
+    ? '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 22px;">' +
+      '<tr><td bgcolor="#233d5c" style="padding:22px 16px;border:1px solid #425875;background:#233d5c;' +
+      'color:#ffffff;font:700 14px/1.6 Arial,sans-serif;">' +
+      (awaiting ? "Atualização do STSUP01 pendente" : "Nenhuma NF vencida elegível") +
+      '</td></tr></table>' : "";
 
   return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
@@ -96,10 +113,12 @@ export function renderSettaEmail(rows: EmailRow[], opts: MailStyle): string {
     'NOTAS FISCAIS EM ACOMPANHAMENTO&nbsp;&nbsp;</span>' +
     '<span style="color:#ffffff;font:700 22px Arial,sans-serif;">' + rows.length + '</span>' +
     '</td></tr></table>' +
-    '<table class="records-table" role="table" width="100%" cellpadding="0" cellspacing="0"' +
-    ' style="width:100%;border-collapse:collapse;border:1px solid #425875;table-layout:auto;">' +
-    '<thead><tr>' + headerCells + '</tr></thead>' +
-    '<tbody>' + rowsHtml + '</tbody></table>' +
+    (rows.length
+      ? '<table class="records-table" role="table" width="100%" cellpadding="0" cellspacing="0"' +
+        ' style="width:100%;border-collapse:collapse;border:1px solid #425875;table-layout:auto;">' +
+        '<thead><tr>' + headerCells + '</tr></thead>' +
+        '<tbody>' + rowsHtml + '</tbody></table>'
+      : emptyBlock) +
     '<p style="margin:26px 0 24px;color:#ffffff;font:14px/1.7 Arial,sans-serif;">' +
     closing + '</p>' +
     '<p style="margin:0;color:#ffffff;font:14px/1.7 Arial,sans-serif;">Atenciosamente,<br>' +

@@ -105,9 +105,13 @@ Deno.serve(async req => {
   try {
     const claimed = mode === "SIMULACAO" || mode === "PREVIA_REALISTA"
       ? await admin.rpc("nf_email_claim_simulation", { p_destinatarios:to })
-      : await admin.rpc("nf_email_claim", {
-        p_modo:mode, p_destinatarios:to, p_cc:cc,
-      });
+      : mode === "PILOTO"
+        ? await admin.rpc("nf_email_piloto_claim", {
+            p_destinatarios:to, p_cc:cc,
+          })
+        : await admin.rpc("nf_email_claim", {
+            p_modo:mode, p_destinatarios:to, p_cc:cc,
+          });
     if (claimed.error) throw Error("CLAIM:" + claimed.error.message);
     claim = claimed.data;
   } catch (error) {
@@ -129,11 +133,19 @@ Deno.serve(async req => {
     ? normalSubject + " [HOMOLOGAÇÃO — DADOS FICTÍCIOS]"
     : simulated
       ? "[SIMULAÇÃO / NÃO COBRAR] SETTA | Teste de notificação de NFs — " + isoDateBrazil(new Date())
-      : mode === "PILOTO" ? normalSubject + " [PILOTO — ACOMPANHAMENTO 48H]"
+      : mode === "PILOTO"
+        ? normalSubject +
+          (claim.tipo_piloto === "AGUARDANDO_STSUP01" ? " [PILOTO — AGUARDANDO STSUP01]"
+          : claim.tipo_piloto === "SEM_PENDENCIAS" ? " [PILOTO — SEM PENDÊNCIAS]"
+          : " [PILOTO — ACOMPANHAMENTO 48H]")
       : (test ? "[TESTE] " : "") + normalSubject;
   // A prévia utiliza o MESMO texto, tabela e estilo da cobrança de produção;
   // somente o aviso superior e o sufixo do assunto a distinguem.
-  const body = renderSettaEmail(rows,{testMode:realistic ? false : test,simulated,realistic,dateLabel:isoDateBrazil(new Date())});
+  const body = renderSettaEmail(rows,{
+    testMode:realistic ? false : test,simulated,realistic,
+    dateLabel:isoDateBrazil(new Date()),
+    pilotStatus:mode==="PILOTO" ? String(claim.tipo_piloto || "") : undefined,
+  });
   // Envelope compatível com o gatilho padrão de webhook do Teams
   // (sem conector HTTP Premium). O fluxo pode usar html/subject nas
   // ações do Outlook, sem publicar mensagem em chat/canal.

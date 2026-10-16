@@ -173,6 +173,18 @@ def run() -> None:
     assert "where modo='PILOTO' and data_local=v_hoje" in pilot_sql
     assert "now()>=v_controle.piloto_ate" in pilot_sql
     assert "AGUARDANDO_TOKEN_NO_VAULT" in pilot_sql
+    pilot_empty = (Path(__file__).resolve().parents[1] /
+        "supabase/migrations/20261016_nf_email_piloto_vazio_8h.sql").read_text("utf-8")
+    assert "v_time < time '08:00'" in pilot_empty
+    assert "v_hora < time '08:00'" in pilot_empty
+    assert "v_count>=2" in pilot_empty
+    assert "v_sync.synced_at <= v_last_sent" in pilot_empty
+    assert "AGUARDANDO_STSUP01" in pilot_empty
+    assert "SEM_PENDENCIAS" in pilot_empty
+    assert "source_version=v_sync.version_token" in pilot_empty
+    assert "nf_email_piloto_claim" in pilot_empty
+    assert "nf_email_piloto_claim" in edge
+    assert "pilotStatus:mode" in edge
     scheduled_guard = (Path(__file__).resolve().parents[1] /
         "supabase/migrations/20261016_nf_email_piloto_inicio_programado.sql").read_text("utf-8")
     assert "now() < v_controle.piloto_inicio" in scheduled_guard
