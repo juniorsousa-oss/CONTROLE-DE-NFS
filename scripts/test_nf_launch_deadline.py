@@ -77,6 +77,24 @@ sql_epi = (Path(__file__).resolve().parents[1] /
 assert "EPI GERA ESTOQUE" in sql_epi
 assert "COMPRA DE MATERIA PRIMA" in sql_epi
 assert "on conflict" not in sql_epi
+# A classificação MP usada na organização dos arquivos é a mesma do prazo.
+package_nodes = [
+    n for n in ast.parse((Path(__file__).resolve().parents[1] /
+        "streamlit_app.py").read_text("utf-8")).body
+    if isinstance(n, ast.FunctionDef) and n.name == "nf_package_class"
+]
+assert len(package_nodes) == 1
+cls = package_nodes[0]
+scope = {"normalize_text": lambda text: " ".join(
+    __import__("unicodedata").normalize("NFKD", str(text or ""))
+    .encode("ascii", errors="ignore").decode().upper().split())}
+exec(compile(ast.Module(body=[cls],type_ignores=[]), "nf_package_cls_test", "exec"),scope)
+assert scope["nf_package_class"]("COMPRA DE MATERIA PRIMA")=="MP"
+assert scope["nf_package_class"]("EPI GERA ESTOQUE")=="MP"
+assert scope["nf_package_class"]("EPI GÉRA ESTOQUE")=="MP"
+assert scope["nf_package_class"]("MATERIAL DE USO E CONSUMO")=="UC"
+assert scope["nf_package_class"]("SIMPLES REMESSA")=="UC"
+
 # Teste da função de acompanhamento efetivamente exibida na tela.
 source = (Path(__file__).resolve().parents[1] / "streamlit_app.py").read_text("utf-8")
 tree = ast.parse(source)

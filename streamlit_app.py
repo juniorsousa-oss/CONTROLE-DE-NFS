@@ -3387,9 +3387,11 @@ def company_sigla_from_pdf_text(text: object) -> str:
 
 
 def nf_package_class(natureza: object) -> str:
-    """MP somente para matéria-prima; todas as demais naturezas seguem como UC."""
+    """EPI GERA ESTOQUE é uma ramificação operacional de matéria-prima."""
     value = normalize_text(natureza)
-    return "MP" if "MATERIA PRIMA" in value else "UC"
+    return "MP" if (
+        "MATERIA PRIMA" in value or "EPI GERA ESTOQUE" in value
+    ) else "UC"
 
 
 def apply_cross_checks(df: pd.DataFrame) -> pd.DataFrame:
@@ -4270,8 +4272,9 @@ def render_accounting_email_preview() -> None:
         "HOMOLOGAÇÃO · TESTE MANUAL CONTROLADO",
     )
     st.caption(
-        "Esta prévia considera somente NF-e de COMPRA DE MATERIA PRIMA com "
-        "24h vencidas e ausência de lançamento verificada no STSUP01. "
+        "Esta prévia considera NF-e de COMPRA DE MATERIA PRIMA ou "
+        "EPI GERA ESTOQUE com 24h vencidas e ausência de lançamento "
+        "verificada no STSUP01. "
         "Uma base antiga, sem verificação posterior ao vencimento, "
         "não gera cobrança."
     )
