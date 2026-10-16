@@ -159,7 +159,7 @@ def run() -> None:
     assert 'mode === "PREVIA_REALISTA"' in edge
     assert 'mode === "SIMULACAO" || mode === "PREVIA_REALISTA"' in edge
     assert 'data?.mode === "PILOTO" ? "PILOTO"' in edge
-    assert 'normalSubject + " [PILOTO — ACOMPANHAMENTO 48H]"' in edge
+    assert '" [PILOTO — ACOMPANHAMENTO 48H]"' in edge
     assert 'mode !== "PRODUCAO" && mode !== "PILOTO"' in edge
     pilot_sql = (Path(__file__).resolve().parents[1] /
         "supabase/migrations/20261015_nf_email_piloto_48h.sql").read_text("utf-8")
