@@ -8483,7 +8483,8 @@ def render_document_linking_stage() -> None:
                 if _chosen_pre is not None:
                     _chosen_nf = normalized_nf(_chosen_pre.get("numero_nf"))
                     _current_cnpj = digits_only(_chosen_pre.get("cnpj"))
-                    with st.form("nf_stage2_manual_cnpj_search_form"):
+                    _form_key = hashlib.sha256(_chosen_key.encode("utf-8")).hexdigest()[:14]
+                    with st.form(f"nf_stage2_manual_cnpj_search_form_{_form_key}"):
                         _manual_cnpj = st.text_input(
                             "CNPJ DO EMITENTE",
                             value=_current_cnpj,
