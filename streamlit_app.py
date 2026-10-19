@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import hashlib
 import re
 import uuid
 import zipfile
@@ -5612,7 +5613,7 @@ def render_pre_notes_feed() -> None:
 
 
 
-def render_suppliers_feed() -> None:
+def render_suppliers_feed(upload=None) -> None:
     show_flash("_flash_supplier")
     st.markdown("### Base de fornecedores")
     show_last_update("suppliers")
@@ -5637,15 +5638,25 @@ def render_suppliers_feed() -> None:
         else "Sessão/local",
     )
 
-    upload = st.file_uploader(
-        "Relatório FORNECEDORES",
-        type=["csv", "xlsx", "xls", "xlt", "xltx"],
-        key="supplier_import",
-    )
+    if upload is None:
+        upload = st.file_uploader(
+            "Relatório FORNECEDORES",
+            type=["csv", "xlsx", "xls", "xlt", "xltx"],
+            key="supplier_import",
+        )
 
-    if upload:
+    if upload is not None:
+        # Uma validação anterior jamais pode substituir uma planilha recém-enviada.
+        supplier_bytes = upload.getvalue()
+        fingerprint = (upload.name, hashlib.sha256(supplier_bytes).hexdigest())
+        if st.session_state.get("supplier_import_fingerprint") != fingerprint:
+            st.session_state.supplier_import_preview = pd.DataFrame()
+            st.session_state.supplier_import_stats = {}
+            st.session_state.supplier_import_conflicts = pd.DataFrame()
+            st.session_state.supplier_import_name = ""
+            st.session_state.supplier_import_fingerprint = fingerprint
         st.caption(
-            f"Arquivo selecionado: {upload.name} — {len(upload.getvalue()) / 1024 / 1024:.1f} MB"
+            f"Arquivo selecionado: {upload.name} — {len(supplier_bytes) / 1024 / 1024:.1f} MB"
         )
         validate_supplier = st.button(
             "VALIDAR BASE DE FORNECEDORES",
@@ -9267,6 +9278,15 @@ def render_file_processing():
             disabled=not ready,
             key="analyze_base_reports",
         )
+
+    # Cadastro de fornecedores pode ser validado/substituído sem os outros três
+    # relatórios. Reutiliza a validação, a prévia e a confirmação já existentes.
+    if supplier_file is not None:
+        st.caption(
+            "FORNECEDORES · IMPORTAÇÃO INDEPENDENTE — "
+            "não é necessário carregar Pré-notas, NF/STSUP01 ou Materiais."
+        )
+        render_suppliers_feed(upload=supplier_file)
 
     if analyze_bases:
         # Uma nova análise de base invalida qualquer lote documental anterior.
