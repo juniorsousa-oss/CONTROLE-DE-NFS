@@ -586,9 +586,16 @@ def recover_nfe_by_manual_cnpj(numero: str, cnpj: str) -> dict:
             ),
         }
     if not candidates:
+        ambiguous = any(
+            "(AMBÍGUA)" in str(item).upper()
+            for item in (match.get("nao_encontradas") or [])
+        )
         return {
-            "status": "ausente",
+            "status": "ambiguo" if ambiguous else "ausente",
             "mensagem": (
+                "Há documentos ambíguos para este número e CNPJ. "
+                "Confira série ou chave de acesso para distinguir a NF-e."
+                if ambiguous else
                 "Nenhum XML com este número de NF e CNPJ foi encontrado "
                 "com correspondência exata na Biblioteca XML."
             ),
