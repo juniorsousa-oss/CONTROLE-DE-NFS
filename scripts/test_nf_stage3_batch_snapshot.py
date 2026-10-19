@@ -14,6 +14,7 @@ tree = ast.parse(source)
 names = {
     "_activate_nf_document_batch",
     "selected_pending_pre_notes",
+    "_apply_stage2_manual_cnpjs",
     "_selected_nf_selection_gaps",
     "_audit_selected_nf_batch",
 }
@@ -21,7 +22,7 @@ nodes = [
     n for n in tree.body
     if isinstance(n, ast.FunctionDef) and n.name in names
 ]
-assert len(nodes) == 4
+assert len(nodes) == 5
 
 class State(dict):
     def __getattr__(self, key):
@@ -57,6 +58,7 @@ scope = {
     "st": SimpleNamespace(session_state=state),
     "pd": pd, "normalized_nf": number, "digits_only": cnpj,
     "flow_nf_key": key,
+    "valid_cnpj": lambda value: len(cnpj(value)) == 14,
     "_set_nf_flow_stage": set_stage,
     "current_pending_pre_notes": lambda: pd.DataFrame(),
 }
