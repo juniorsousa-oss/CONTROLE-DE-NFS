@@ -4948,6 +4948,8 @@ def _activate_nf_document_batch(selection: set[str]) -> bool:
         st.session_state.document_link_stats = {}
         st.session_state.document_upload_cache = []
         st.session_state.document_reprocess_needed = False
+        # CNPJ conferido manualmente vale apenas para o lote em questão.
+        st.session_state.nf_stage2_manual_cnpjs = {}
         st.session_state.nf_stage2_search_started = False
         st.session_state.pop("nf_xml_auto_signature", None)
         st.session_state.pop("nf_xml_auto_stats", None)
@@ -4964,6 +4966,30 @@ def _activate_nf_document_batch(selection: set[str]) -> bool:
     return True
 
 
+def _apply_stage2_manual_cnpjs(frame: pd.DataFrame, overrides: dict) -> pd.DataFrame:
+    """Aplica identificações fiscais conferidas só no snapshot do lote atual.
+
+    Não persiste no Protheus/cadastro; recusa substituir CNPJ já confirmado
+    por um valor conflitante.
+    """
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame()
+    result = frame.copy()
+    if not overrides:
+        return result
+    if "cnpj" not in result.columns:
+        result["cnpj"] = ""
+    for idx, row in result.iterrows():
+        verified_cnpj = digits_only(overrides.get(flow_nf_key(row)))
+        existing_cnpj = digits_only(row.get("cnpj"))
+        if (
+            valid_cnpj(verified_cnpj)
+            and (not valid_cnpj(existing_cnpj) or existing_cnpj == verified_cnpj)
+        ):
+            result.at[idx, "cnpj"] = verified_cnpj
+    return result
+
+
 def selected_pending_pre_notes() -> pd.DataFrame:
     selected = set(st.session_state.get("nf_selected_flow_keys") or set())
     if not selected:
@@ -4973,15 +4999,23 @@ def selected_pending_pre_notes() -> pd.DataFrame:
     # um processamento mudar o status da tabela de histórico.
     snapshot = st.session_state.get("nf_stage2_batch_snapshot")
     if isinstance(snapshot, pd.DataFrame) and not snapshot.empty:
-        return snapshot.loc[
+        selected_snapshot = snapshot.loc[
             snapshot.apply(flow_nf_key, axis=1).isin(selected)
         ].copy().reset_index(drop=True)
+        return _apply_stage2_manual_cnpjs(
+            selected_snapshot, st.session_state.get("nf_stage2_manual_cnpjs") or {}
+        )
 
     # Compatibilidade com sessões antigas, antes da migração do fluxo.
     base = st.session_state.get("pre_notes")
     if not isinstance(base, pd.DataFrame) or base.empty:
         return pd.DataFrame()
-    return base.loc[base.apply(flow_nf_key, axis=1).isin(selected)].copy().reset_index(drop=True)
+    selected_base = base.loc[
+        base.apply(flow_nf_key, axis=1).isin(selected)
+    ].copy().reset_index(drop=True)
+    return _apply_stage2_manual_cnpjs(
+        selected_base, st.session_state.get("nf_stage2_manual_cnpjs") or {}
+    )
 
 
 def current_pending_pre_notes() -> pd.DataFrame:
@@ -8394,6 +8428,9 @@ def render_document_linking_stage() -> None:
         st.session_state.analysis = merged
         _batch_audit = _audit_selected_nf_batch(pending_base, merged)
         _show_nf_batch_audit(_batch_audit)
+        _manual_notice = st.session_state.pop("nf_stage2_manual_notice", "")
+        if _manual_notice:
+            st.success(_manual_notice)
 
         # Uma NF sem XML continua pendente na BASE, mas o operador pode
         # retirá-la explicitamente do LOTE ATUAL para concluir as demais.
@@ -8404,9 +8441,10 @@ def render_document_linking_stage() -> None:
                 expanded=True,
             ):
                 st.info(
-                    "Localize o XML/PDF e clique em INICIAR BUSCA DE DOCUMENTOS novamente, "
-                    "ou retire somente as NFs indicadas do lote atual. "
-                    "Elas continuarão na base de pré-notas para processamento posterior."
+                    "Para uma NF sem CNPJ identificado, informe o CNPJ do emitente "
+                    "e busque seu XML na Biblioteca por NF + CNPJ. O aplicativo "
+                    "confere o conteúdo fiscal antes de vinculá-lo. Caso não exista "
+                    "XML, mantenha a pendência ou retire a NF somente deste lote."
                 )
                 _missing_options = {}
                 for _, _pre in pending_base.iterrows():
@@ -8423,7 +8461,82 @@ def render_document_linking_stage() -> None:
                     )
                     if _is_missing:
                         _key = flow_nf_key(_pre)
-                        _missing_options[f"NF {_number} · {_cnpj or 'CNPJ NÃO INFORMADO'}"] = _key
+                        _supplier = str(_pre.get("fornecedor") or "").strip()
+                        _missing_options[
+                            f"NF {_number} · {_cnpj or 'CNPJ NÃO INFORMADO'}"
+                            f" · {_supplier or 'FORNECEDOR NÃO INFORMADO'}"
+                        ] = _key
+
+                st.markdown("##### CONSULTAR XML PELO CNPJ DO EMITENTE")
+                _chosen_label = st.selectbox(
+                    "SELECIONE A NF COM PENDÊNCIA",
+                    options=list(_missing_options),
+                    key="nf_stage2_manual_target",
+                )
+                _chosen_key = _missing_options.get(_chosen_label)
+                _chosen_rows = pending_base.loc[
+                    pending_base.apply(flow_nf_key, axis=1).eq(_chosen_key)
+                ].copy() if _chosen_key else pd.DataFrame()
+                _chosen_pre = (
+                    _chosen_rows.iloc[0] if len(_chosen_rows) == 1 else None
+                )
+                if _chosen_pre is not None:
+                    _chosen_nf = normalized_nf(_chosen_pre.get("numero_nf"))
+                    _current_cnpj = digits_only(_chosen_pre.get("cnpj"))
+                    with st.form("nf_stage2_manual_cnpj_search_form"):
+                        _manual_cnpj = st.text_input(
+                            "CNPJ DO EMITENTE",
+                            value=_current_cnpj,
+                            placeholder="00.000.000/0000-00",
+                            help=(
+                                "Informe o CNPJ da empresa que emitiu a NF-e. "
+                                "O campo não altera o cadastro de fornecedores."
+                            ),
+                        )
+                        _manual_submit = st.form_submit_button(
+                            "BUSCAR XML POR NF + CNPJ",
+                            type="primary",
+                            use_container_width=True,
+                        )
+                    if _manual_submit:
+                        _typed_cnpj = digits_only(_manual_cnpj)
+                        if not valid_cnpj(_typed_cnpj):
+                            st.error("CNPJ inválido. Confira os 14 dígitos e os verificadores.")
+                        elif valid_cnpj(_current_cnpj) and _current_cnpj != _typed_cnpj:
+                            st.error(
+                                "A NF selecionada já possui outro CNPJ válido. "
+                                "A correção exige conferência da origem, sem substituição automática."
+                            )
+                        else:
+                            try:
+                                with st.spinner(
+                                    f"Consultando XML da NF {_chosen_nf} e conferindo o emitente..."
+                                ):
+                                    _recovered = nf_xml_library.recover_nfe_by_manual_cnpj(
+                                        _chosen_nf, _typed_cnpj
+                                    )
+                                if _recovered.get("status") == "encontrado":
+                                    _manual_overrides = dict(
+                                        st.session_state.get("nf_stage2_manual_cnpjs") or {}
+                                    )
+                                    _manual_overrides[_chosen_key] = _typed_cnpj
+                                    st.session_state.nf_stage2_manual_cnpjs = _manual_overrides
+                                    st.session_state.nf_stage2_search_started = True
+                                    st.session_state.nf_stage2_manual_notice = (
+                                        f"NF {_chosen_nf}: XML encontrado e CNPJ do "
+                                        "emitente confirmado. Reanalisando o lote."
+                                    )
+                                    st.rerun()
+                                else:
+                                    st.warning(
+                                        str(_recovered.get("mensagem") or
+                                            "Nenhum XML seguro encontrado na biblioteca.")
+                                    )
+                            except Exception as exc:
+                                st.error(f"Não foi possível consultar a Biblioteca XML: {exc}")
+                else:
+                    st.error("Não foi possível identificar uma única NF para a conferência.")
+
                 _ignore_labels = st.multiselect(
                     "NFs QUE FICARÃO PARA O PRÓXIMO LOTE",
                     options=list(_missing_options.keys()),
