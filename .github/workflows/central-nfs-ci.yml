@@ -23,6 +23,8 @@ jobs:
         run: python -m scripts.audit_quality
       - name: Testar índice MRP contra pré-notas
         run: python -m scripts.test_nf_mrp_index
+      - name: Testar importação independente de fornecedores XLTX
+        run: python -m scripts.test_nf_suppliers_standalone_upload
       - name: Testar catálogo de fornecedores por código e loja
         run: python -m scripts.test_nf_supplier_index
       - name: Testar cadastro CNPJ e estabilidade dos cards/sidebar
