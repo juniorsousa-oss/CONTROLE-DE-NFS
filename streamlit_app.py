@@ -119,6 +119,7 @@ from nf_prazo_dashboard import (
 from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
+from supplier_import import validate_supplier_report
 from nf_final_priority import apply_final_manual_priorities
 import setta_shell
 from nf_processor import (
@@ -5618,8 +5619,9 @@ def render_suppliers_feed(upload=None) -> None:
     st.markdown("### Base de fornecedores")
     show_last_update("suppliers")
     st.write(
-        "Formato validado: A = Código, B = Loja, C = Razão Social, "
-        "D = Nome Fantasia, K = Tipo e O = CNPJ/CPF. "
+        "O aplicativo identifica Código, Loja, Razão Social e CNPJ/CPF "
+        "pelo cabeçalho, mesmo que as colunas mudem. "
+        "No cadastro TOTVS atual: CNPJ/CPF = J e Tipo de contrato = H. "
         "A leitura só começa ao clicar em **Validar base de fornecedores**."
     )
 
@@ -5668,95 +5670,11 @@ def render_suppliers_feed(upload=None) -> None:
         if validate_supplier:
             try:
                 with st.spinner("Lendo e validando fornecedores..."):
-                    raw, sheets = read_uploaded_table(upload, header_row=None)
-                    if raw.shape[1] < 15:
-                        raise ValueError(
-                            "O relatório FORNECEDORES precisa conter pelo menos as colunas A até O."
-                        )
-
-                    incoming = pd.DataFrame({
-                        "codigo": raw.iloc[:, 0].fillna("").astype(str).str.strip(),
-                        "loja": raw.iloc[:, 1].fillna("").astype(str).str.strip(),
-                        "nome_padrao": raw.iloc[:, 2].fillna("").astype(str).str.strip(),
-                        "nome_fantasia": raw.iloc[:, 3].fillna("").astype(str).str.strip(),
-                        "tipo": raw.iloc[:, 10].fillna("").astype(str).str.strip(),
-                        "cnpj": raw.iloc[:, 14].map(digits_only),
-                    })
-
-                    # Remove eventual linha de cabeçalho, pois a leitura é posicional.
-                    incoming = incoming[
-                        ~incoming["cnpj"].map(normalize_text).str.contains("CNPJ", na=False)
-                    ].copy()
-
-                    incoming["aliases"] = incoming["nome_fantasia"]
-                    incoming["ativo"] = True
-                    incoming["cnpj_valido"] = incoming["cnpj"].map(valid_cnpj)
-                    incoming["nome_valido"] = incoming["nome_padrao"].ne("")
-
-                    invalid = incoming[
-                        ~incoming["cnpj_valido"]
-                        | ~incoming["nome_valido"]
-                    ].copy()
-                    valid = incoming[
-                        incoming["cnpj_valido"]
-                        & incoming["nome_valido"]
-                    ].copy()
-
-                    duplicate_rows = valid[
-                        valid["cnpj"].duplicated(keep=False)
-                    ].copy()
-                    conflict_cnpjs = []
-                    preferred_rows = []
-
-                    for cnpj, group in valid.groupby("cnpj", sort=False):
-                        if len(group) == 1:
-                            preferred_rows.append(group.iloc[0])
-                            continue
-
-                        compact_names = [
-                            re.sub(
-                                r"[^A-Z0-9]",
-                                "",
-                                normalize_text(name),
-                            )
-                            for name in group["nome_padrao"].tolist()
-                        ]
-                        base_name = min(compact_names, key=len)
-                        equivalent = all(
-                            name == base_name
-                            or name.startswith(base_name)
-                            or base_name.startswith(name)
-                            for name in compact_names
-                        )
-
-                        if equivalent:
-                            chosen_idx = group["nome_padrao"].map(
-                                lambda x: len(normalize_text(x))
-                            ).idxmin()
-                            preferred_rows.append(group.loc[chosen_idx])
-                        else:
-                            conflict_cnpjs.append(cnpj)
-
-                    clean = pd.DataFrame(preferred_rows).copy()
-                    if not clean.empty:
-                        clean = clean[
-                            ~clean["cnpj"].isin(conflict_cnpjs)
-                        ].copy()
-
-                    conflicts = duplicate_rows[
-                        duplicate_rows["cnpj"].isin(conflict_cnpjs)
-                    ].copy()
-
-                    stats = {
-                        "total": len(incoming),
-                        "validos": len(clean),
-                        "invalidos": len(invalid),
-                        "duplicados": int(
-                            len(valid) - valid["cnpj"].nunique()
-                        ),
-                        "conflitos": len(conflict_cnpjs),
-                    }
-
+                    raw, _ = read_uploaded_table(upload, header_row=None)
+                    report = validate_supplier_report(raw)
+                    clean = report["clean"]
+                    conflicts = report["conflicts"]
+                    stats = report["stats"]
                     st.session_state.supplier_import_preview = clean
                     st.session_state.supplier_import_stats = stats
                     st.session_state.supplier_import_conflicts = conflicts
@@ -5784,9 +5702,19 @@ def render_suppliers_feed(upload=None) -> None:
         st.markdown(f"#### Prévia validada — {supplier_name}")
         s1, s2, s3, s4 = st.columns(4)
         s1.metric("Linhas do relatório", stats.get("total", 0))
-        s2.metric("CNPJs válidos", stats.get("validos", 0))
-        s3.metric("Duplicidades equivalentes", stats.get("duplicados", 0))
-        s4.metric("Ignoradas", stats.get("invalidos", 0))
+        s2.metric("CNPJs distintos", stats.get("cnpjs_distintos", 0))
+        s3.metric("Registros válidos", stats.get("validos", 0))
+        s4.metric("Sem CNPJ válido", stats.get("invalidos", 0))
+        columns_used = stats.get("colunas") or {}
+        st.caption(
+            "COLUNAS IDENTIFICADAS: "
+            f"CÓDIGO {columns_used.get('codigo', '—')} · "
+            f"LOJA {columns_used.get('loja', '—')} · "
+            f"CNPJ/CPF {columns_used.get('cnpj', '—')} · "
+            f"TIPO {columns_used.get('tipo', '—')}. "
+            f"Cadastros com CPF (11 dígitos), fora desta integração de CNPJ: "
+            f"{stats.get('cpfs', 0)}."
+        )
 
         if isinstance(conflicts, pd.DataFrame) and not conflicts.empty:
             st.error(
@@ -9316,90 +9244,20 @@ def render_file_processing():
                 # Fornecedores: atualização opcional antes dos cruzamentos.
                 if supplier_file:
                     raw_sup, _ = read_uploaded_table(supplier_file, header_row=None)
-                    if raw_sup.shape[1] < 15:
+                    supplier_check = validate_supplier_report(raw_sup)
+                    if not supplier_check["clean"].empty and not supplier_check["conflicts"].empty:
                         raise ValueError(
-                            "O relatório FORNECEDORES precisa conter pelo menos as colunas A até O."
+                            f"{supplier_check['stats']['conflitos']} CNPJ(s) têm "
+                            "razões sociais conflitantes. Valide a base de "
+                            "fornecedores separadamente antes de prosseguir."
                         )
-
-                    incoming = pd.DataFrame({
-                        "codigo": raw_sup.iloc[:, 0].fillna("").astype(str).str.strip(),
-                        "loja": raw_sup.iloc[:, 1].fillna("").astype(str).str.strip(),
-                        "nome_padrao": raw_sup.iloc[:, 2].fillna("").astype(str).str.strip(),
-                        "nome_fantasia": raw_sup.iloc[:, 3].fillna("").astype(str).str.strip(),
-                        "tipo": raw_sup.iloc[:, 10].fillna("").astype(str).str.strip(),
-                        "cnpj": raw_sup.iloc[:, 14].map(digits_only),
-                    })
-                    incoming = incoming[
-                        ~incoming["cnpj"].map(normalize_text).str.contains("CNPJ", na=False)
-                    ].copy()
-                    incoming["aliases"] = incoming["nome_fantasia"]
-                    incoming["ativo"] = True
-
-                    valid_sup = incoming[
-                        incoming["cnpj"].map(valid_cnpj)
-                        & incoming["nome_padrao"].ne("")
-                    ].copy()
-
-                    preferred_rows = []
-                    conflict_cnpjs = []
-                    for cnpj, group in valid_sup.groupby("cnpj", sort=False):
-                        if len(group) == 1:
-                            preferred_rows.append(group.iloc[0])
-                            continue
-
-                        compact_names = [
-                            re.sub(r"[^A-Z0-9]", "", normalize_text(name))
-                            for name in group["nome_padrao"].tolist()
-                        ]
-                        base_name = min(compact_names, key=len)
-                        equivalent = all(
-                            name == base_name
-                            or name.startswith(base_name)
-                            or base_name.startswith(name)
-                            for name in compact_names
-                        )
-                        if equivalent:
-                            chosen_idx = group["nome_padrao"].map(
-                                lambda value: len(normalize_text(value))
-                            ).idxmin()
-                            preferred_rows.append(group.loc[chosen_idx])
-                        else:
-                            conflict_cnpjs.append(cnpj)
-
-                    if conflict_cnpjs:
-                        raise ValueError(
-                            f"A base de fornecedores possui {len(conflict_cnpjs)} CNPJ(s) "
-                            "com razões sociais conflitantes."
-                        )
-                    if not preferred_rows:
-                        raise ValueError(
-                            "Nenhum fornecedor válido foi encontrado no relatório."
-                        )
-
-                    clean_sup = pd.DataFrame(preferred_rows).copy()
-                    final_sup = supplier_dataframe(
-                        clean_sup[
-                            [
-                                "cnpj", "nome_padrao", "aliases", "ativo",
-                                "codigo", "loja", "nome_fantasia", "tipo",
-                            ]
-                        ]
-                    )
+                    clean_sup = supplier_check["clean"]
+                    final_sup = supplier_dataframe(clean_sup)
                     if db.configured():
                         db.replace_suppliers(
                             final_sup.to_dict("records"),
                             supplier_file.name,
-                            {
-                                "total": len(incoming),
-                                "validos": len(final_sup),
-                                "invalidos": int(
-                                    (
-                                        ~incoming["cnpj"].map(valid_cnpj)
-                                        | incoming["nome_padrao"].eq("")
-                                    ).sum()
-                                ),
-                                "conflitos": 0,
-                            },
+                            supplier_check["stats"],
                         )
                         _invalidate_suppliers_cache()
                     st.session_state.suppliers = final_sup
