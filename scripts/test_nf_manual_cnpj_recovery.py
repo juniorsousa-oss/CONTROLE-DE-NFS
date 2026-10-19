@@ -76,8 +76,15 @@ def fake_api(action, values=None, **kwargs):
     raise AssertionError(action)
 
 
+class Session(dict):
+    def __getattr__(self, name):
+        return self[name]
+    def __setattr__(self, name, value):
+        self[name] = value
+
+
 try:
-    state = {}
+    state = Session()
     lib.library_api = fake_api
     lib.st = SimpleNamespace(session_state=state)
     assert calls == [], "Consulta não pode iniciar sozinha"
