@@ -50,8 +50,11 @@ def parse_supplier_report(raw: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, st
         for col_idx, value in enumerate(values):
             normalized = _header_key(value)
             for field, choices in HEADER_ALIASES.items():
-                if normalized in choices and field not in found:
-                    found[field] = col_idx
+                if normalized in choices:
+                    # Em layouts que trazem tanto "Tpo Contrato" quanto "Tipo",
+                    # o campo explícito "Tipo" deve prevalecer para essa coluna.
+                    if field not in found or (field == "tipo" and normalized == "TIPO"):
+                        found[field] = col_idx
         if REQUIRED.issubset(found):
             positions = found
             header_row = row_idx
