@@ -522,6 +522,116 @@ def _validate_name_fallback(record: dict, raw: bytes) -> bool:
         return False
 
 
+
+def _manual_nfe_identity_matches(raw: bytes, numero: str, cnpj: str, chave: str = "") -> bool:
+    """Confere dados fiscais do XML, nunca apenas metadados da biblioteca."""
+    if not raw or len(raw) > MAX_XML or b"<!DOCTYPE" in raw.upper() or b"<!ENTITY" in raw.upper():
+        return False
+    try:
+        root = ET.fromstring(raw)
+        inf = root if root.tag.rsplit("}", 1)[-1] == "infNFe" else root.find(".//{*}infNFe")
+        if inf is None:
+            return False
+        number = _simple_nf(inf.findtext("./{*}ide/{*}nNF", default=""))
+        emitted = re.sub(r"\\D", "", inf.findtext("./{*}emit/{*}CNPJ", default=""))
+        key = re.sub(r"\\D", "", str(inf.attrib.get("Id") or ""))
+        expected_key = re.sub(r"\\D", "", chave or "")
+        return bool(
+            number == _simple_nf(numero)
+            and len(emitted) == 14 and emitted == cnpj
+            and len(key) == 44 and key[20:22] == "55"
+            and key[6:20] == emitted
+            and _simple_nf(key[25:34]) == number
+            and (not expected_key or key == expected_key)
+        )
+    except (ET.ParseError, TypeError, ValueError, AttributeError):
+        return False
+
+
+def recover_nfe_by_manual_cnpj(numero: str, cnpj: str) -> dict:
+    """Busca EXPLICITAMENTE uma NF + CNPJ e confere o XML antes de pôr no lote.
+
+    Apenas acrescenta XML validado ao cache de documentos da sessão. Não atualiza
+    o cadastro fiscal, nem troca CNPJ, nem presume emitente pelo número da NF.
+    """
+    from nf_processor import valid_cnpj
+
+    numero = _simple_nf(numero)
+    cnpj = re.sub(r"\\D", "", str(cnpj or ""))
+    if numero == "0" or not valid_cnpj(cnpj):
+        raise ValueError("Informe número de NF e CNPJ válido para a busca.")
+
+    match = library_api(
+        "match",
+        {"nfs": [{"numero": numero, "cnpj": cnpj, "chave": "", "fornecedor": ""}]},
+        timeout=25,
+    )
+    candidates = []
+    for record in match.get("nfe") or []:
+        number = _simple_nf(record.get("numero"))
+        issuer = re.sub(r"\\D", "", str(record.get("cnpj_emitente") or ""))
+        key = re.sub(r"\\D", "", str(record.get("chave") or ""))
+        if number != numero or issuer != cnpj or len(key) != 44 or key[20:22] != "55":
+            continue
+        if not record.get("id"):
+            continue
+        candidates.append(record)
+    distinct_keys = {re.sub(r"\\D", "", str(item.get("chave") or "")) for item in candidates}
+    if len(distinct_keys) > 1:
+        return {
+            "status": "ambiguo",
+            "mensagem": (
+                "Há mais de uma chave de NF-e para o mesmo número e CNPJ. "
+                "Confira a série ou a chave de acesso antes de vincular."
+            ),
+        }
+    if not candidates:
+        return {
+            "status": "ausente",
+            "mensagem": (
+                "Nenhum XML com este número de NF e CNPJ foi encontrado "
+                "com correspondência exata na Biblioteca XML."
+            ),
+        }
+
+    record = candidates[0]
+    data = library_api("download", {"id": record["id"]}, timeout=35)
+    try:
+        raw = base64.b64decode(data.get("raw_base64") or "", validate=True)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("A Biblioteca retornou conteúdo XML inválido.") from exc
+    if not _manual_nfe_identity_matches(raw, numero, cnpj, record.get("chave") or ""):
+        return {
+            "status": "divergente",
+            "mensagem": (
+                "O XML recuperado não confirma simultaneamente número, CNPJ "
+                "e chave de acesso. Nenhum documento foi vinculado."
+            ),
+        }
+
+    cached = list(st.session_state.get("document_upload_cache") or [])
+    digest = hashlib.sha256(raw).hexdigest()
+    if not any(
+        hashlib.sha256(item.get("raw") or b"").hexdigest() == digest
+        for item in cached
+    ):
+        cached.append({
+            "name": str(data.get("filename") or record.get("arquivo_nome") or record["chave"] + ".xml"),
+            "raw": raw,
+            "ext": ".xml",
+            "origem": "BIBLIOTECA",
+            "library_id": str(record["id"]),
+        })
+        st.session_state.document_upload_cache = cached
+
+    st.session_state.document_reprocess_needed = True
+    return {
+        "status": "encontrado",
+        "mensagem": "XML fiscal confirmado por NF + CNPJ + chave de acesso e carregado para reanálise.",
+        "chave": record["chave"],
+    }
+
+
 def prefill_stage2(pending_pre: pd.DataFrame):
     """Match a seleção uma vez e recupera XMLs em paralelo, preservando êxitos."""
     service_token = _automatic_service_token()
