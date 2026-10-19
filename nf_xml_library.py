@@ -533,9 +533,9 @@ def _manual_nfe_identity_matches(raw: bytes, numero: str, cnpj: str, chave: str 
         if inf is None:
             return False
         number = _simple_nf(inf.findtext("./{*}ide/{*}nNF", default=""))
-        emitted = re.sub(r"\\D", "", inf.findtext("./{*}emit/{*}CNPJ", default=""))
-        key = re.sub(r"\\D", "", str(inf.attrib.get("Id") or ""))
-        expected_key = re.sub(r"\\D", "", chave or "")
+        emitted = re.sub(r"\D", "", inf.findtext("./{*}emit/{*}CNPJ", default=""))
+        key = re.sub(r"\D", "", str(inf.attrib.get("Id") or ""))
+        expected_key = re.sub(r"\D", "", chave or "")
         return bool(
             number == _simple_nf(numero)
             and len(emitted) == 14 and emitted == cnpj
@@ -557,7 +557,7 @@ def recover_nfe_by_manual_cnpj(numero: str, cnpj: str) -> dict:
     from nf_processor import valid_cnpj
 
     numero = _simple_nf(numero)
-    cnpj = re.sub(r"\\D", "", str(cnpj or ""))
+    cnpj = re.sub(r"\D", "", str(cnpj or ""))
     if numero == "0" or not valid_cnpj(cnpj):
         raise ValueError("Informe número de NF e CNPJ válido para a busca.")
 
@@ -569,14 +569,14 @@ def recover_nfe_by_manual_cnpj(numero: str, cnpj: str) -> dict:
     candidates = []
     for record in match.get("nfe") or []:
         number = _simple_nf(record.get("numero"))
-        issuer = re.sub(r"\\D", "", str(record.get("cnpj_emitente") or ""))
-        key = re.sub(r"\\D", "", str(record.get("chave") or ""))
+        issuer = re.sub(r"\D", "", str(record.get("cnpj_emitente") or ""))
+        key = re.sub(r"\D", "", str(record.get("chave") or ""))
         if number != numero or issuer != cnpj or len(key) != 44 or key[20:22] != "55":
             continue
         if not record.get("id"):
             continue
         candidates.append(record)
-    distinct_keys = {re.sub(r"\\D", "", str(item.get("chave") or "")) for item in candidates}
+    distinct_keys = {re.sub(r"\D", "", str(item.get("chave") or "")) for item in candidates}
     if len(distinct_keys) > 1:
         return {
             "status": "ambiguo",
