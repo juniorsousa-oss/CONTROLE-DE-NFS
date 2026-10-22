@@ -4271,7 +4271,7 @@ def render_accounting_email_preview() -> None:
     section_band(
         "NOTIFICAÇÕES · CONTABILIDADE",
         "PRÉVIA DE COBRANÇA DE NFs VENCIDAS",
-        "HOMOLOGAÇÃO · TESTE MANUAL CONTROLADO",
+        "ACOMPANHAMENTO · ENVIO AUTOMÁTICO E HOMOLOGAÇÃO",
     )
     st.caption(
         "Esta prévia considera NF-e de COMPRA DE MATERIA PRIMA ou "
@@ -4281,13 +4281,12 @@ def render_accounting_email_preview() -> None:
         "não gera cobrança."
     )
     st.info(
-        "PRODUÇÃO DEFINITIVA DESATIVADA. Um piloto automático independente "
-        "pode acompanhar NFs reais por até 48 horas, somente após autorização "
-        "e ativação do agendador. No piloto, apenas NFs vencidas e ainda "
-        "sem lançamento confirmado no STSUP01 atualizado geram mensagem; "
-        "sem pendências, não há envio. Limite: 2 mensagens por dia, "
-        "com registros de auditoria e encerramento automático. "
-        "Destinatários: grupo atualmente autorizado no Power Automate."
+        "PRODUÇÃO CONTROLADA PELO AGENDADOR DO SUPABASE. "
+        "O envio automático ocorre em dias úteis, entre 07h e 18h "
+        "(horário de Brasília), com limite de até 2 mensagens por dia. "
+        "Somente versões novas e válidas do STSUP01 e NFs efetivamente "
+        "vencidas podem gerar cobranças. Sem pendências, não há disparo. "
+        "A homologação abaixo permanece isolada dos destinatários de produção."
     )
     st.markdown("#### HOMOLOGAÇÃO DE E-MAIL · DADOS FICTÍCIOS")
     from nf_email_notifications import gerar_previa_visual_ficticia
@@ -4304,8 +4303,8 @@ def render_accounting_email_preview() -> None:
         "Escolha entre o teste técnico já validado e uma prévia realista "
         "com o MESMO assunto-base, texto e tabela previstos para a cobrança. "
         "A prévia inclui apenas identificação de HOMOLOGAÇÃO, nunca NFs reais. "
-        "Destinatários: lista autorizada no Power Automate, que pode "
-        "conter outros participantes definidos pelo responsável. Produção bloqueada."
+        "Destinatários de homologação definidos na configuração privada; "
+        "a lista de produção é controlada separadamente no banco."
     )
     if not acesso_teste_configurado():
         st.info(
@@ -4438,8 +4437,8 @@ def render_accounting_email_preview() -> None:
         mime="text/html", use_container_width=True,
     )
     st.caption(
-        "Abra o HTML para validar o modelo de tabela antes de habilitar "
-        "envios de teste."
+        "A prévia permite conferir o conteúdo independentemente do "
+        "agendamento automático de produção."
     )
 
     st.markdown("#### DISPARO DE HOMOLOGAÇÃO")
