@@ -69,6 +69,8 @@ jobs:
         run: python -m scripts.test_nf_launch_deadline
       - name: Testar prévia de e-mail para contabilidade (sem envio)
         run: python -m scripts.test_nf_email_notifications
+      - name: Testar habilitação segura dos envios automáticos de produção
+        run: python -m scripts.test_nf_email_production_activation
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
