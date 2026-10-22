@@ -100,7 +100,7 @@ def run() -> None:
     assert "render_accounting_email_preview()" in app
     assert "BAIXAR PRÉVIA DO E-MAIL · HTML" in app
     assert "BAIXAR PRÉVIA VISUAL DO E-MAIL · HTML (SEM ENVIO)" in app
-    assert "PRODUÇÃO DEFINITIVA DESATIVADA" in app
+    assert "PRODUÇÃO CONTROLADA PELO AGENDADOR" in app
     from nf_email_delivery import acesso_teste_configurado, verificar_pin_operador
     from unittest.mock import patch
     with patch("nf_email_delivery.db._secret", side_effect=lambda x: {
@@ -244,7 +244,9 @@ def run() -> None:
     assert "revoke all on function" in simulation_sql
 
     assert '"x-nfs-notification-token"' in edge
-    assert 'NFS_EMAIL_PRODUCTION_ENABLED' in edge
+    assert '.select("producao_ativa,producao_destinatarios,producao_cc")' in edge
+    assert '!productionConfig?.data?.producao_ativa' in edge
+    assert 'NFS_EMAIL_PRODUCTION_ENABLED' not in edge
     assert 'mode !== "PRODUCAO" ? testAddress : productionTo' in edge
     assert 'normalizeTestRecipients(testConfig?.data?.destinatario_teste)' in edge
     assert 'import { normalizeTestRecipients } from "./recipients.ts";' in edge
