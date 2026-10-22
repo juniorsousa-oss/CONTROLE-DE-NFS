@@ -15,7 +15,7 @@ assert "add column if not exists producao_inicio timestamptz" in migration
 assert "add column if not exists producao_destinatarios text" in migration
 assert "add column if not exists producao_cc text" in migration
 assert "producao_ativa=true" in migration
-assert "and v_sync.synced_at <= v_cfg.producao_inicio" in migration
+assert "or v_sync.synced_at <= v_cfg.producao_inicio" in migration
 assert "or v_sync.synced_at <= v_config.producao_inicio" in migration
 assert "or now() - v_sync.synced_at > interval '24 hours'" in migration
 assert "or now()-v_sync.synced_at > interval '24 hours'" in migration
