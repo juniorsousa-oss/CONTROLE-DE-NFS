@@ -67,10 +67,6 @@ Deno.serve(async req => {
     : data?.mode === "PREVIA_REALISTA" ? "PREVIA_REALISTA"
     : data?.mode === "PILOTO" ? "PILOTO" : "";
   if (!mode) return json({ok:false,error:"MODO_INVALIDO"},400);
-  if (mode === "PRODUCAO" && Deno.env.get("NFS_EMAIL_PRODUCTION_ENABLED") !== "true") {
-    return json({ok:true,data:{status:"PRODUCAO_DESATIVADA"}});
-  }
-
   const endpointStatus = checkWorkflowUrl(Deno.env.get("NFS_EMAIL_WORKFLOW_URL") || "");
   const url = endpointStatus.url;
   // Nunca devolver URL, assinatura, domínio ou partes da credencial.
@@ -83,6 +79,18 @@ Deno.serve(async req => {
     auth:{persistSession:false,autoRefreshToken:false},
   });
 
+  // Produção é controlada no banco restrito por RLS; não depende de habilitar
+  // variáveis de ambiente manualmente. Nunca aceita destinatários no payload.
+  const productionConfig = mode === "PRODUCAO"
+    ? await admin.from("nf_email_controle")
+      .select("producao_ativa,producao_destinatarios,producao_cc")
+      .eq("singleton",true).maybeSingle()
+    : null;
+  if (productionConfig?.error) return json({ok:false,error:"CONFIG_PRODUCAO_INDISPONIVEL"},500);
+  if (mode === "PRODUCAO" && !productionConfig?.data?.producao_ativa) {
+    return json({ok:true,data:{status:"PRODUCAO_DESATIVADA"}});
+  }
+
   // Endereço de homologação configurado no banco por administração.
   // Não é recebido no JSON, na interface nem como cabeçalho do solicitante.
   const testConfig = mode !== "PRODUCAO"
@@ -91,8 +99,8 @@ Deno.serve(async req => {
     : null;
   if (testConfig?.error) return json({ok:false,error:"CONFIG_TESTE_INDISPONIVEL"},500);
   const testAddress = normalizeTestRecipients(testConfig?.data?.destinatario_teste) || "";
-  const productionTo = (Deno.env.get("NFS_EMAIL_PROD_TO") || "").trim();
-  const productionCc = (Deno.env.get("NFS_EMAIL_PROD_CC") || "").trim();
+  const productionTo = String(productionConfig?.data?.producao_destinatarios || "").trim();
+  const productionCc = String(productionConfig?.data?.producao_cc || "").trim();
   const to = mode !== "PRODUCAO" ? testAddress : productionTo;
   const cc = mode !== "PRODUCAO" ? "" : productionCc;
   if ((mode !== "PRODUCAO" && !testAddress) ||
