@@ -108,3 +108,85 @@ $$;
 
 revoke all on function public.nf_email_claim(text,text,text) from public, anon, authenticated;
 grant execute on function public.nf_email_claim(text,text,text) to service_role;
+
+-- O próprio banco impede chamadas fora do horário de trabalho.
+create or replace function public.nf_email_pulse()
+returns bigint language plpgsql security definer
+set search_path=public,pg_temp
+as $$
+declare
+  v_token text;
+  v_request bigint;
+  v_local timestamp := now() at time zone 'America/Sao_Paulo';
+  v_sync record;
+  v_cfg record;
+begin
+  if extract(isodow from v_local)>5 or v_local::time<time '07:00'
+     or v_local::time>time '18:00'
+  then return null; end if;
+
+  select * into v_cfg from public.nf_email_controle where singleton=true;
+  if not found or not v_cfg.producao_ativa or v_cfg.producao_inicio is null
+  then return null; end if;
+
+  select version_token,status,synced_at into v_sync
+  from public.setta_consumer_sync_state
+  where consumer_key='controle_nfs' and source_key='nf';
+
+  if not found or v_sync.status <> 'ATUALIZADO'
+     or v_sync.synced_at is null
+     or v_sync.synced_at <= v_cfg.producao_inicio
+     or now()-v_sync.synced_at > interval '24 hours'
+     or v_sync.version_token=v_cfg.versao_baseline
+  then return null; end if;
+
+  if exists(
+    select 1 from public.nf_email_notificacoes
+    where modo='PRODUCAO' and source_version=v_sync.version_token
+  ) then return null; end if;
+
+  if (select count(*) from public.nf_email_notificacoes
+      where modo='PRODUCAO'
+      and data_local=v_local::date) >= 2
+  then return null; end if;
+
+  -- Não chamar o Power Automate com lista vazia.
+  if not exists(
+    select 1 from public.nf_processamentos p
+    where p.enviado_em is not null
+      and p.lancamento_verificado_em is not null
+      and p.lancado_em is null
+      and not coalesce(p.lancamento_conferencia_pendente,false)
+      and public.nf_prazo_natureza_elegivel(p.tipo_documento,p.natureza)
+      and p.lancamento_verificado_em > public.nf_prazo_vencimento_24h(p.enviado_em)
+      and now() > public.nf_prazo_vencimento_24h(p.enviado_em)
+  ) then return null; end if;
+
+  select decrypted_secret into v_token
+  from vault.decrypted_secrets
+  where name='NFS_EMAIL_API_TOKEN' limit 1;
+
+  if v_token is null or length(v_token)<32 then return null; end if;
+
+  select net.http_post(
+    url => 'https://cuixazpxkvniqldmmnth.supabase.co/functions/v1/nf-email-api',
+    body => '{"mode":"PRODUCAO"}'::jsonb,
+    headers => jsonb_build_object(
+      'Content-Type','application/json',
+      'x-nfs-notification-token',v_token
+    ),
+    timeout_milliseconds => 20000
+  ) into v_request;
+  return v_request;
+end;
+$$;
+revoke all on function public.nf_email_pulse() from public,anon,authenticated;
+grant execute on function public.nf_email_pulse() to service_role;
+
+-- Postgres cron utiliza UTC. 10h-21h UTC = 07h-18h em Brasília.
+-- O job fica inerte até nf_email_controle.producao_ativa=true.
+select cron.schedule(
+  'setta-nfs-producao-hourly',
+  '0 10-21 * * 1-5',
+  'select public.nf_email_pulse();'
+);
