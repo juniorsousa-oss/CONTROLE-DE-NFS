@@ -28,14 +28,15 @@ for due in ("02/11/2026", "2026-11-02", pd.Timestamp("2026-11-02")):
 
 meta = SimpleNamespace(numero="8618029", emitente="ALFA TRANSPORTES EIRELI")
 ctename = cte_output_name(meta, ["76516", "76515"], "ARTECHE EDC")
-assert "NF-76516-76515" in ctename, ctename
+assert "CTE-8618029 - ALFA TRANSPORTES EIRELI -" in ctename, ctename
+assert "NF-" not in ctename, ctename
 assert len(ctename.encode("utf-8")) <= 95, ctename
 assert "MAIS" not in ctename, ctename
-assert "NF-76516-76516" not in cte_output_name(meta, ["76516", "76516"], "ARTECHE")
-assert "SEM-NF" in cte_output_name(meta, [], "ARTECHE")
-assert "NF-76516-76515-MAIS2" in cte_output_name(
+assert ctename == cte_output_name(meta, ["76516", "76516"], "ARTECHE"), ctename
+assert ctename == cte_output_name(meta, [], "ARTECHE"), ctename
+assert ctename == cte_output_name(
     meta, ["76516", "76515", "76519", "76520"], "ARTECHE"
-)
+), ctename
 
 # O vínculo é válido por lote, não apenas pelo mesmo número da NF em outros lotes.
 records = pd.DataFrame([
