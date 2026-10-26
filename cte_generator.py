@@ -581,51 +581,42 @@ def cte_output_name(
     linked_nf_numbers: list[str],
     supplier_name: str = "",
 ) -> str:
-    """Nome curto e determinístico, sem perder a identidade fiscal.
+    """Padrão simplificado: CT-e, transportadora e identificador fiscal.
 
-    As NFs COMPLETAS continuam no XML, no DACTE e no manifesto, mas nomes
-    de PDFs não devem replicar dezenas de números e razões sociais longas.
-    A chave fiscal reduzida distingue CT-es homônimos na mesma pasta.
+    NFs relacionadas e fornecedor seguem no DACTE/manifesto, nunca no nome
+    do arquivo. O sufixo da chave diferencia CT-es com o mesmo número.
     """
     cte_number = _digits(meta.numero) or "SEM_CTE"
-    carrier = _compact_filename_field(meta.emitente)[:28].rstrip(" .")
-    supplier = _compact_filename_field(supplier_name)[:14].rstrip(" .") if supplier_name else ""
-    nfs = list(dict.fromkeys(
-        (raw.lstrip("0") or "0")
-        for x in linked_nf_numbers
-        if (raw := _digits(x))
-    ))
-    label = "-".join(nfs[:2]) if nfs else "SEM-NF"
-    if len(nfs) > 2:
-        label += f"-MAIS{len(nfs)-2}"
-
+    carrier = _compact_filename_field(meta.emitente)[:45].rstrip(" .")
     key = _digits(getattr(meta, "chave", ""))
-    identifier = (
-        f"K{key[-10:]}" if len(key) == 44 else
-        "H" + hashlib.sha256(
-            (cte_number + "|" + str(meta.emitente) + "|" +
-             ",".join(nfs) + "|" + supplier_name).encode("utf-8")
+    if len(key) == 44:
+        identifier = f"K{key[-10:]}"
+    else:
+        # Legado sem chave: identificador determinístico incluindo os vínculos
+        # para evitar colisões quando números de CT-e se repetem.
+        nfs = sorted(set(
+            raw.lstrip("0") or "0"
+            for value in linked_nf_numbers
+            if (raw := _digits(value))
+        ))
+        fingerprint = "|".join(
+            (cte_number, str(meta.emitente), ",".join(nfs), supplier_name)
+        )
+        identifier = "H" + hashlib.sha256(
+            fingerprint.encode("utf-8")
         ).hexdigest()[:10].upper()
-    )
 
     def make_name() -> str:
-        pieces = [f"CTE-{cte_number}", carrier, f"NF-{label}"]
-        if supplier:
-            pieces.append(supplier)
-        pieces.append(identifier)
-        return " - ".join(pieces) + ".pdf"
+        return f"CTE-{cte_number} - {carrier} - {identifier}.pdf"
 
     name = make_name()
-    while len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES and supplier:
-        supplier = supplier[:-1].rstrip(" .")
-        name = make_name()
     while len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES and len(carrier) > 8:
         carrier = carrier[:-1].rstrip(" .")
         name = make_name()
     if len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES:
         raise ValueError(
             f"CT-e {cte_number}: nome excede o limite seguro mesmo compactado. "
-            "Confira números e vínculos do documento."
+            "Confira a numeração do documento."
         )
     return name
 
@@ -637,15 +628,11 @@ def cte_zip_safe_name(
     nfs_vinculadas: list[str],
     chave: str = "",
 ) -> str:
-    """Garante que PDFs de CT-es preparados em versões antigas caibam no ZIP."""
-    original = str(original or "").strip()
-    if (
-        original.lower().endswith(".pdf")
-        and len(original.encode("utf-8")) <= MAX_CTE_PDF_FILENAME_BYTES
-        and not any(ch in original for ch in ('/', '\\'))
-        and not any(ord(ch) < 32 for ch in original)
-    ):
-        return original
+    """Padroniza também downloads de CT-es criados na versão anterior.
+
+    A alteração é exclusiva do nome no ZIP, nunca do PDF, da chave fiscal,
+    das NFs vinculadas ou dos registros já persistidos no banco.
+    """
     from types import SimpleNamespace
     return cte_output_name(
         SimpleNamespace(
@@ -654,4 +641,6 @@ def cte_zip_safe_name(
             chave=chave,
         ),
         nfs_vinculadas,
+        # No legado sem chave, o nome original distingue cópias homônimas.
+        supplier_name=str(original or "") if len(_digits(chave)) != 44 else "",
     )
