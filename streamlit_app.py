@@ -3816,12 +3816,18 @@ def make_zip_outputs(df: pd.DataFrame):
             for cte in ctes:
                 # A geração antiga permitia arquivos com nomes de 240 bytes,
                 # inviáveis ao extrair ZIP dentro de pastas do Windows.
-                cte_name = cte_zip_safe_name(
-                    str(cte.get("arquivo_final") or cte.get("arquivo_original") or ""),
-                    str(cte.get("numero_cte") or ""),
-                    str(cte.get("transportadora") or ""),
-                    list(cte.get("linked_nf_numbers") or []),
-                    str(cte.get("chave_cte") or ""),
+                original_name = str(
+                    cte.get("arquivo_final") or cte.get("arquivo_original") or ""
+                ).strip()
+                cte_name = (
+                    cte_zip_safe_name(
+                        original_name,
+                        str(cte.get("numero_cte") or ""),
+                        str(cte.get("transportadora") or ""),
+                        list(cte.get("linked_nf_numbers") or []),
+                        str(cte.get("chave_cte") or ""),
+                    )
+                    if original_name else ""
                 )
                 cte_bytes = cte.get("bytes")
 
@@ -7495,12 +7501,16 @@ def render_cte_linking_stage() -> None:
             compression=zipfile.ZIP_DEFLATED,
         ) as dacte_zip:
             for item in links:
-                name = cte_zip_safe_name(
-                    str(item.get("arquivo_final") or ""),
-                    str(item.get("numero_cte") or ""),
-                    str(item.get("transportadora") or ""),
-                    list(item.get("linked_nf_numbers") or []),
-                    str(item.get("chave_cte") or ""),
+                source_name = str(item.get("arquivo_final") or "").strip()
+                name = (
+                    cte_zip_safe_name(
+                        source_name,
+                        str(item.get("numero_cte") or ""),
+                        str(item.get("transportadora") or ""),
+                        list(item.get("linked_nf_numbers") or []),
+                        str(item.get("chave_cte") or ""),
+                    )
+                    if source_name else ""
                 )
                 payload = item.get("bytes")
                 if name and payload:
