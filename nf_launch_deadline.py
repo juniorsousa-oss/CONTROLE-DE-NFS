@@ -33,6 +33,7 @@ def acompanha_lancamento(tipo_documento: object, natureza: object) -> bool:
         tipo in {"NF E", "NFE", "NOTA FISCAL ELETRONICA"}
         and (
             "COMPRA DE MATERIA PRIMA" in natureza_normal
+            or natureza_normal == "MATERIA PRIMA"
             or "EPI GERA ESTOQUE" in natureza_normal
         )
     )
