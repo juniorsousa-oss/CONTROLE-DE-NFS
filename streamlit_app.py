@@ -204,6 +204,12 @@ def cte_output_name(meta, linked_nf_numbers, supplier_name: str = "") -> str:
     return _impl(meta, linked_nf_numbers, supplier_name)
 
 
+def cte_zip_safe_name(original: str, numero: str, transportadora: str,
+                      nfs_vinculadas: list[str], chave: str = "") -> str:
+    from cte_generator import cte_zip_safe_name as _impl
+    return _impl(original, numero, transportadora, nfs_vinculadas, chave)
+
+
 @st.cache_data(show_spinner=False, ttl=300, max_entries=2)
 def _cached_global_visual_config():
     try:
@@ -3808,11 +3814,15 @@ def make_zip_outputs(df: pd.DataFrame):
             compression=zipfile.ZIP_DEFLATED,
         ) as archive:
             for cte in ctes:
-                cte_name = str(
-                    cte.get("arquivo_final")
-                    or cte.get("arquivo_original")
-                    or ""
-                ).strip()
+                # A geração antiga permitia arquivos com nomes de 240 bytes,
+                # inviáveis ao extrair ZIP dentro de pastas do Windows.
+                cte_name = cte_zip_safe_name(
+                    str(cte.get("arquivo_final") or cte.get("arquivo_original") or ""),
+                    str(cte.get("numero_cte") or ""),
+                    str(cte.get("transportadora") or ""),
+                    list(cte.get("linked_nf_numbers") or []),
+                    str(cte.get("chave_cte") or ""),
+                )
                 cte_bytes = cte.get("bytes")
 
                 if not cte_name or not cte_bytes:
@@ -3821,12 +3831,12 @@ def make_zip_outputs(df: pd.DataFrame):
                         "vinculado sem arquivo disponível."
                     )
 
-                if cte_name in used:
+                if cte_name.casefold() in used:
                     raise ValueError(
                         f"Nome de CT-e duplicado no pacote {company}: {cte_name}. "
                         "A geração foi interrompida para não perder documento."
                     )
-                used.add(cte_name)
+                used.add(cte_name.casefold())
                 archive.writestr(cte_name, cte_bytes)
 
                 cte_key = (
@@ -7485,7 +7495,13 @@ def render_cte_linking_stage() -> None:
             compression=zipfile.ZIP_DEFLATED,
         ) as dacte_zip:
             for item in links:
-                name = str(item.get("arquivo_final") or "").strip()
+                name = cte_zip_safe_name(
+                    str(item.get("arquivo_final") or ""),
+                    str(item.get("numero_cte") or ""),
+                    str(item.get("transportadora") or ""),
+                    list(item.get("linked_nf_numbers") or []),
+                    str(item.get("chave_cte") or ""),
+                )
                 payload = item.get("bytes")
                 if name and payload:
                     dacte_zip.writestr(name, payload)
