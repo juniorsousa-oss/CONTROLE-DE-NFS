@@ -61,11 +61,16 @@ assert prazo_lancamento(fri_utc) == prazo_lancamento(fri_local)
 
 # Somente NF-e matéria-prima e EPI com geração de estoque após envio.
 for name in ("COMPRA DE MATERIA PRIMA", "COMPRA DE MATÉRIA-PRIMA",
-             "compra de materia prima", "EPI GERA ESTOQUE", "EPI GÉRA ESTOQUE"):
+             "compra de materia prima", "MATERIA PRIMA", "MATÉRIA-PRIMA",
+             "matéria prima", "EPI GERA ESTOQUE", "EPI GÉRA ESTOQUE"):
     assert acompanha_lancamento("NF-e", name)
 for typ, nature in [
     ("CT-e", "COMPRA DE MATERIA PRIMA"),
     ("NF-e", "SIMPLES REMESSA"),
+    ("CT-e", "MATERIA PRIMA"),
+    ("NF-e", "DEVOLUCAO DE MATERIA PRIMA"),
+    ("NF-e", "MATERIA PRIMA EM CONSIGNACAO"),
+    ("NF-e", "MATERIAL DE USO E CONSUMO"),
     ("NF-e", "INDUSTRIALIZACAO POR ENCOMENDA"),
     ("NF-e", "CONSERTO MERCADORIA - ENTRADA"),
     ("NF-e", ""),
@@ -77,6 +82,18 @@ sql_epi = (Path(__file__).resolve().parents[1] /
 assert "EPI GERA ESTOQUE" in sql_epi
 assert "COMPRA DE MATERIA PRIMA" in sql_epi
 assert "on conflict" not in sql_epi
+
+# O banco utiliza exatamente as mesmas naturezas da classificação Python.
+sql_avulsas = (Path(__file__).resolve().parents[1] /
+    "supabase/migrations/20261026_nf_avulsa_materia_prima_prazo.sql").read_text("utf-8")
+assert "btrim(regexp_replace(" in sql_avulsas
+assert "= 'MATERIA PRIMA'" in sql_avulsas
+assert "like '%COMPRA DE MATERIA PRIMA%'" in sql_avulsas
+assert "like '%EPI GERA ESTOQUE%'" in sql_avulsas
+assert "in ('NFE','NOTAFISCALELETRONICA')" in sql_avulsas
+assert "update public.nf_processamentos" not in sql_avulsas.lower()
+assert "delete from public.nf_" not in sql_avulsas.lower()
+
 # A classificação MP usada na organização dos arquivos é a mesma do prazo.
 package_nodes = [
     n for n in ast.parse((Path(__file__).resolve().parents[1] /
@@ -129,6 +146,28 @@ assert str(view.iloc[0]["inicio_prazo_lancamento"])=="2026-10-16 15:00:00"
 assert str(view.iloc[0]["prazo_lancamento"])=="2026-10-19 15:00:00"
 assert view.iloc[0]["situacao_lancamento"]=="AGUARDANDO NOVO RELATÓRIO", view
 assert view.iloc[0]["dias_atraso_lancamento"] >= 1
+
+# Avulsas com natureza curta passam a fazer parte do painel, com status
+# baseado nos horários reais e não apenas no nome ou origem do documento.
+from contextlib import nullcontext
+extra = pd.DataFrame([
+    {"tipo_documento":"NF-e", "origem_dados":"IMPRESSAO_AVULSA_XML",
+     "natureza":"MATERIA PRIMA", "numero_nf":"4538057",
+     "enviado_em":fri_utc.isoformat(), "lancado_em":None,
+     "lancamento_verificado_em":d(7, 14).replace(tzinfo=TZ).astimezone(ZoneInfo("UTC")).isoformat()},
+    {"tipo_documento":"NF-e", "origem_dados":"IMPRESSAO_AVULSA_XML",
+     "natureza":"MATERIA PRIMA", "numero_nf":"4539002",
+     "enviado_em":fri_utc.isoformat(), "lancado_em":d(7, 10).replace(tzinfo=TZ).astimezone(ZoneInfo("UTC")).isoformat(),
+     "lancamento_verificado_em":d(7, 14).replace(tzinfo=TZ).astimezone(ZoneInfo("UTC")).isoformat()},
+    {"tipo_documento":"CT-e", "origem_dados":"IMPRESSAO_AVULSA_XML",
+     "natureza":"MATERIA PRIMA", "numero_nf":"CTE01",
+     "enviado_em":fri_utc.isoformat()},
+])
+tested = fn(extra)
+assert set(tested["numero_nf"]) == {"4538057", "4539002"}, tested
+assert tested.loc[tested.numero_nf.eq("4538057"), "situacao_lancamento"].iloc[0] == "AGUARDANDO LANÇAMENTO"
+assert tested.loc[tested.numero_nf.eq("4539002"), "situacao_lancamento"].iloc[0] == "LANÇAMENTO CONFIRMADO"
+
 # 24h inteiras e frações, inclusive noite; sábado/domingo não contam.
 assert dias_atraso_uteis(d(4, 15), d(4, 15)) == 0
 assert dias_atraso_uteis(d(4, 15), d(4, 15, 1)) == 1
