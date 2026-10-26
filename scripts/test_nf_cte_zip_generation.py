@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 from nf_processor import parse_operational_due_date, build_final_name
+from cte_generator import cte_zip_safe_name
 
 app=Path("streamlit_app.py").read_text(encoding="utf-8")
 client=Path("nf_xml_library.py").read_text(encoding="utf-8")
@@ -59,6 +60,7 @@ names={
     "normalized_business_date":lambda _:date(2026,10,9),
     "parse_operational_due_date":parse_operational_due_date,
     "build_final_name":build_final_name,
+    "cte_zip_safe_name":cte_zip_safe_name,
     "apply_operational_stamp":lambda raw,**kw:raw,
     "is_cte_document_type":lambda typ:str(typ).strip().upper()=="CT-E",
 }
