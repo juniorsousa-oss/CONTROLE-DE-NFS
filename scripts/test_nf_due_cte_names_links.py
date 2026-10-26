@@ -26,7 +26,8 @@ for due in ("02/11/2026", "2026-11-02", pd.Timestamp("2026-11-02")):
         "VENC. 02.11 - 76515 - ARTECHE.pdf"
     )
 
-meta = SimpleNamespace(numero="8618029", emitente="ALFA TRANSPORTES EIRELI")
+meta = SimpleNamespace(numero="8618029", emitente="ALFA TRANSPORTES EIRELI",
+                       chave="0"*20 + "57" + "0"*22)
 ctename = cte_output_name(meta, ["76516", "76515"], "ARTECHE EDC")
 assert "CTE-8618029 - ALFA TRANSPORTES EIRELI -" in ctename, ctename
 assert "NF-" not in ctename, ctename
