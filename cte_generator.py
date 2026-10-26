@@ -567,8 +567,8 @@ MAX_CTE_PDF_FILENAME_BYTES = 95
 def _compact_filename_field(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = text.encode("ascii", "ignore").decode("ascii")
-    text = re.sub(r'[\\\\/:*?"<>|\\x00-\\x1f]+', " ", text)
-    text = re.sub(r"\\s+", " ", text).strip(" .")
+    text = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', " ", text)
+    text = re.sub(r"\s+", " ", text).strip(" .")
     return text or "NAO INFORMADO"
 
 
@@ -642,7 +642,7 @@ def cte_zip_safe_name(
     if (
         original.lower().endswith(".pdf")
         and len(original.encode("utf-8")) <= MAX_CTE_PDF_FILENAME_BYTES
-        and not any(ch in original for ch in ('/', '\\\\'))
+        and not any(ch in original for ch in ('/', '\\'))
         and not any(ord(ch) < 32 for ch in original)
     ):
         return original
