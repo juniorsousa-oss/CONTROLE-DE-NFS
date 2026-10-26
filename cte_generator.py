@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
@@ -557,10 +559,21 @@ def generate_dacte_pdf(raw_xml: bytes) -> bytes:
     return output
 
 
+# O Explorer do Windows considera TODO o caminho (pasta, ZIP interno, nome).
+# 95 bytes para o PDF evita exceder MAX_PATH nas pastas operacionais habituais.
+MAX_CTE_PDF_FILENAME_BYTES = 95
+
+
+def _compact_filename_field(value: object) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r'[\\\\/:*?"<>|\\x00-\\x1f]+', " ", text)
+    text = re.sub(r"\\s+", " ", text).strip(" .")
+    return text or "NAO INFORMADO"
+
+
 def dacte_file_name(meta: CteMetadata) -> str:
-    number = _digits(meta.numero) or "SEM_NUMERO"
-    carrier = _safe_name(meta.emitente)
-    return f"DACTE_CTE_{number}_{carrier}.pdf"
+    return cte_output_name(meta, [])
 
 
 def cte_output_name(
@@ -568,24 +581,77 @@ def cte_output_name(
     linked_nf_numbers: list[str],
     supplier_name: str = "",
 ) -> str:
+    """Nome curto e determinístico, sem perder a identidade fiscal.
+
+    As NFs COMPLETAS continuam no XML, no DACTE e no manifesto, mas nomes
+    de PDFs não devem replicar dezenas de números e razões sociais longas.
+    A chave fiscal reduzida distingue CT-es homônimos na mesma pasta.
+    """
     cte_number = _digits(meta.numero) or "SEM_CTE"
-    carrier = _safe_name(meta.emitente)
-    # Todas as NFs vinculadas são identificadas no arquivo, sem abreviar
-    # a segunda ou as demais como "+1", "+2" etc.
+    carrier = _compact_filename_field(meta.emitente)[:28].rstrip(" .")
+    supplier = _compact_filename_field(supplier_name)[:14].rstrip(" .") if supplier_name else ""
     nfs = list(dict.fromkeys(
         (raw.lstrip("0") or "0")
         for x in linked_nf_numbers
         if (raw := _digits(x))
     ))
-    nf_label = " + ".join(nfs) if nfs else "SEM_NF"
-    supplier = _safe_name(supplier_name) if supplier_name else "FORNECEDOR"
-    name = f"{cte_number} - {carrier} - {nf_label} - {supplier}.pdf"
-    if len(name.encode("utf-8")) > 240:
-        # Evita nome inválido/truncado em ZIP/Windows, sem ocultar números.
-        name = f"{cte_number} - {nf_label}.pdf"
-    if len(name.encode("utf-8")) > 240:
+    label = "-".join(nfs[:2]) if nfs else "SEM-NF"
+    if len(nfs) > 2:
+        label += f"-MAIS{len(nfs)-2}"
+
+    key = _digits(getattr(meta, "chave", ""))
+    identifier = (
+        f"K{key[-10:]}" if len(key) == 44 else
+        "H" + hashlib.sha256(
+            (cte_number + "|" + str(meta.emitente) + "|" +
+             ",".join(nfs) + "|" + supplier_name).encode("utf-8")
+        ).hexdigest()[:10].upper()
+    )
+
+    def make_name() -> str:
+        pieces = [f"CTE-{cte_number}", carrier, f"NF-{label}"]
+        if supplier:
+            pieces.append(supplier)
+        pieces.append(identifier)
+        return " - ".join(pieces) + ".pdf"
+
+    name = make_name()
+    while len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES and supplier:
+        supplier = supplier[:-1].rstrip(" .")
+        name = make_name()
+    while len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES and len(carrier) > 8:
+        carrier = carrier[:-1].rstrip(" .")
+        name = make_name()
+    if len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES:
         raise ValueError(
-            f"CT-e {cte_number} possui NFs demais para um nome de arquivo seguro. "
-            "Divida o lote ou revise os vínculos."
+            f"CT-e {cte_number}: nome excede o limite seguro mesmo compactado. "
+            "Confira números e vínculos do documento."
         )
     return name
+
+
+def cte_zip_safe_name(
+    original: str,
+    numero: str,
+    transportadora: str,
+    nfs_vinculadas: list[str],
+    chave: str = "",
+) -> str:
+    """Garante que PDFs de CT-es preparados em versões antigas caibam no ZIP."""
+    original = str(original or "").strip()
+    if (
+        original.lower().endswith(".pdf")
+        and len(original.encode("utf-8")) <= MAX_CTE_PDF_FILENAME_BYTES
+        and not any(ch in original for ch in ('/', '\\\\'))
+        and not any(ord(ch) < 32 for ch in original)
+    ):
+        return original
+    from types import SimpleNamespace
+    return cte_output_name(
+        SimpleNamespace(
+            numero=numero,
+            emitente=transportadora,
+            chave=chave,
+        ),
+        nfs_vinculadas,
+    )
