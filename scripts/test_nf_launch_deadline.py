@@ -149,7 +149,8 @@ assert view.iloc[0]["dias_atraso_lancamento"] >= 1
 
 # Avulsas com natureza curta passam a fazer parte do painel, com status
 # baseado nos horários reais e não apenas no nome ou origem do documento.
-from contextlib import nullcontext
+# Simular consulta às 14h de segunda, ainda antes do vencimento das 15h.
+namespace["now_local"] = lambda: d(7, 14).replace(tzinfo=TZ)
 extra = pd.DataFrame([
     {"tipo_documento":"NF-e", "origem_dados":"IMPRESSAO_AVULSA_XML",
      "natureza":"MATERIA PRIMA", "numero_nf":"4538057",
