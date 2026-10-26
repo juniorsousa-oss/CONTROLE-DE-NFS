@@ -49,6 +49,8 @@ jobs:
         run: python -m scripts.test_nf_supplier_xml_fallback
       - name: Testar CT-e elegível, DACTE e conteúdo do ZIP final
         run: python -m scripts.test_nf_cte_zip_generation
+      - name: Testar nome seguro de CT-e para extração no Windows (0x80010135)
+        run: python -m scripts.test_nf_cte_windows_filename
       - name: Testar vencimento e vínculo CT-e multi-NF
         run: python -m scripts.test_nf_due_cte_names_links
       - name: Testar autorização da API XML implantada
