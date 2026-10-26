@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pandas as pd
 from nf_processor import parse_operational_due_date, build_final_name
+from cte_generator import cte_output_name
 from cte_generator import cte_zip_safe_name
 
 app=Path("streamlit_app.py").read_text(encoding="utf-8")
@@ -104,8 +105,12 @@ assert {r["tipo_documento"] for r in manifest} == {"CT-e","NF-e"}
 assert len(outputs)==2,outputs.keys()
 cte_zip=[v for k,v in outputs.items() if k.startswith("CTE")][0]
 with zipfile.ZipFile(io.BytesIO(cte_zip)) as inner:
-    assert inner.namelist()==["CTE-987654.pdf"]
-    assert inner.read("CTE-987654.pdf")==b"%PDF-1.4\nfake-dacte"
+    expected = cte_output_name(
+        SimpleNamespace(numero="987654", emitente="TRANSPORTADORA TESTE", chave=cte_key),
+        ["10913"],
+    )
+    assert inner.namelist()==[expected]
+    assert inner.read(expected)==b"%PDF-1.4\nfake-dacte"
 assert state.last_generation_audit["cte_gerados"] == 1
 
 # A chave da NF é estável, mesmo quando o file_id muda na reanálise.
@@ -115,7 +120,7 @@ assert sum(x["tipo_documento"]=="CT-e" for x in manifest_only)==1
 with zipfile.ZipFile(io.BytesIO(
     next(data for name,data in keys_only.items() if name.startswith("CTE"))
 )) as archive:
-    assert "CTE-987654.pdf" in archive.namelist()
+    assert expected in archive.namelist()
 # Restaura o ID normal para os demais cenários.
 state.cte_links[0]["linked_file_ids"]=["nf-1"]
 
