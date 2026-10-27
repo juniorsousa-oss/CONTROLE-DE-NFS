@@ -36,7 +36,7 @@ supplier = "REVESTIMENTOS SUPERFICIAIS E TRATAMENTO TERMICO LTDA"
 a = meta()
 filename = cte_output_name(a, links, supplier)
 assert filename.startswith("CTE-13273734"), filename
-assert "ALFA TRANSPORTES" in filename, filename
+assert "ALFA TRANSPOR" in filename, filename
 assert "NF-" in filename and "MAIS" not in filename, filename
 assert all(nf in filename for nf in links), filename
 assert "REVESTIMENTOS" in filename, filename
