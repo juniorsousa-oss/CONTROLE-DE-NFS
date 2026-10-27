@@ -30,15 +30,22 @@ meta = SimpleNamespace(numero="8618029", emitente="ALFA TRANSPORTES EIRELI",
                        chave="0"*20 + "57" + "0"*22)
 ctename = cte_output_name(meta, ["76516", "76515"], "ARTECHE EDC")
 assert "CTE-8618029 - ALFA TRANSPORTES EIRELI -" in ctename, ctename
-assert "NF-" not in ctename, ctename
+assert "NF-76516+76515" in ctename, ctename
+assert "K" not in ctename.split(".pdf")[0].split(" - ")[-1], ctename
 assert "ARTECHE EDC" in ctename, ctename
 assert len(ctename.encode("utf-8")) <= 95, ctename
 assert "MAIS" not in ctename, ctename
 assert ctename != cte_output_name(meta, ["76516", "76516"], "OUTRO FORNECEDOR"), ctename
-assert ctename == cte_output_name(meta, [], "ARTECHE EDC"), ctename
-assert ctename == cte_output_name(
+assert ctename != cte_output_name(meta, ["76516"], "ARTECHE EDC"), ctename
+assert ctename != cte_output_name(
     meta, ["76516", "76515", "76519", "76520"], "ARTECHE EDC"
 ), ctename
+try:
+    cte_output_name(meta, [], "ARTECHE EDC")
+except ValueError:
+    pass
+else:
+    raise AssertionError("Sem NF referenciada, não se deve gerar nome CT-e")
 
 # O vínculo é válido por lote, não apenas pelo mesmo número da NF em outros lotes.
 records = pd.DataFrame([
