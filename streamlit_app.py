@@ -205,9 +205,16 @@ def cte_output_name(meta, linked_nf_numbers, supplier_name: str = "") -> str:
 
 
 def cte_zip_safe_name(original: str, numero: str, transportadora: str,
-                      nfs_vinculadas: list[str], chave: str = "") -> str:
+                      nfs_vinculadas: list[str], chave: str = "",
+                      supplier_name: str = "") -> str:
     from cte_generator import cte_zip_safe_name as _impl
-    return _impl(original, numero, transportadora, nfs_vinculadas, chave)
+    return _impl(original, numero, transportadora, nfs_vinculadas, chave,
+                 supplier_name)
+
+
+def cte_supplier_from_rows(cte: dict, rows: list[dict]) -> str:
+    from cte_generator import cte_supplier_from_rows as _impl
+    return _impl(cte, rows)
 
 
 @st.cache_data(show_spinner=False, ttl=300, max_entries=2)
@@ -3801,6 +3808,9 @@ def make_zip_outputs(df: pd.DataFrame):
         for company in companies:
             ctes_by_company[company].append(cte)
 
+    # Resolve fornecedores através das NFs deste lote. O CT-e pode ter sido
+    # preparado antes da atualização e ainda não guardar esse dado.
+    cte_source_rows = work.to_dict("records")
     cte_manifested = set()
     for company, ctes in ctes_by_company.items():
         if not ctes:
@@ -3819,6 +3829,15 @@ def make_zip_outputs(df: pd.DataFrame):
                 original_name = str(
                     cte.get("arquivo_final") or cte.get("arquivo_original") or ""
                 ).strip()
+                supplier_name = (
+                    cte_supplier_from_rows(cte, cte_source_rows)
+                    or str(cte.get("fornecedor_vinculado") or "").strip()
+                )
+                if not supplier_name:
+                    raise ValueError(
+                        f"CT-e {cte.get('numero_cte') or ''} sem fornecedor "
+                        "confirmado nas NF-es vinculadas. Confira a etapa 2."
+                    )
                 cte_name = (
                     cte_zip_safe_name(
                         original_name,
@@ -3826,6 +3845,7 @@ def make_zip_outputs(df: pd.DataFrame):
                         str(cte.get("transportadora") or ""),
                         list(cte.get("linked_nf_numbers") or []),
                         str(cte.get("chave_cte") or ""),
+                        supplier_name,
                     )
                     if original_name else ""
                 )
@@ -7453,6 +7473,7 @@ def render_cte_linking_stage() -> None:
                         if str(row.get("file_id") or "")
                     ],
                     "linked_nf_numbers": nf_numbers,
+                    "fornecedor_vinculado": supplier_name,
                     "refs_nfe": refs,
                 }
                 links.append(item)
@@ -7502,6 +7523,16 @@ def render_cte_linking_stage() -> None:
         ) as dacte_zip:
             for item in links:
                 source_name = str(item.get("arquivo_final") or "").strip()
+                linked_analysis = st.session_state.get("analysis")
+                preview_rows = (
+                    linked_analysis.to_dict("records")
+                    if isinstance(linked_analysis, pd.DataFrame)
+                    and not linked_analysis.empty else []
+                )
+                supplier_name = (
+                    cte_supplier_from_rows(item, preview_rows)
+                    or str(item.get("fornecedor_vinculado") or "").strip()
+                )
                 name = (
                     cte_zip_safe_name(
                         source_name,
@@ -7509,6 +7540,7 @@ def render_cte_linking_stage() -> None:
                         str(item.get("transportadora") or ""),
                         list(item.get("linked_nf_numbers") or []),
                         str(item.get("chave_cte") or ""),
+                        supplier_name,
                     )
                     if source_name else ""
                 )
@@ -8366,6 +8398,17 @@ def render_document_linking_stage() -> None:
                 for row in linked_rows
                 if normalized_nf(row.get("numero_nf"))
             ]
+            # CT-e em PDF também preserva o fornecedor das NFs comprovadas.
+            linked_suppliers = {
+                str(row.get("fornecedor_padrao") or "").strip()
+                for row in linked_rows
+                if str(row.get("fornecedor_padrao") or "").strip()
+            }
+            supplier_name = (
+                next(iter(linked_suppliers))
+                if len(linked_suppliers) == 1
+                else "MULTIPLOS FORNECEDORES" if linked_suppliers else ""
+            )
             cte_id = uuid.uuid4().hex[:16]
             link = {
                 "cte_id": cte_id,
@@ -8387,6 +8430,7 @@ def render_document_linking_stage() -> None:
                     if str(row.get("file_id") or "")
                 ],
                 "linked_nf_numbers": nf_numbers,
+                "fornecedor_vinculado": supplier_name,
                 "refs_nfe": refs_nfe,
                 "origem": item["source"],
                 "tomador_servico": str(
