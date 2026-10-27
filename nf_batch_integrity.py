@@ -132,6 +132,49 @@ def validate_batch_selection(
             )
 
 
+def cte_reference_coverage(cte: dict, selected_nfs: list[dict]) -> dict:
+    """Exibe TODAS as NF-es citadas no XML, incluindo as não selecionadas.
+
+    A referência só é considerada coberta se houver chave exata ou, para
+    DANFE somente em PDF sem chave conhecida, número e CNPJ exatos e únicos.
+    """
+    refs = list(dict.fromkeys(
+        _digits(key) for key in cte.get("refs_nfe") or [] if _digits(key)
+    ))
+    cited = []
+    covered = []
+    missing = []
+    invalid = []
+    for ref in refs:
+        if len(ref) != 44 or ref[20:22] != "55":
+            invalid.append(ref or "REFERÊNCIA INVÁLIDA")
+            continue
+        number = _number(ref[25:34])
+        cnpj = ref[6:20]
+        cited.append(number)
+        exact = [
+            row for row in selected_nfs
+            if _digits(row.get("chave_nfe")) == ref
+            and _number(row.get("numero_nf")) == number
+            and _digits(row.get("cnpj_fornecedor")) == cnpj
+        ]
+        pdf_only = [
+            row for row in selected_nfs
+            if not _digits(row.get("chave_nfe"))
+            and _number(row.get("numero_nf")) == number
+            and _digits(row.get("cnpj_fornecedor")) == cnpj
+        ]
+        if len(exact) == 1 or (not exact and len(pdf_only) == 1):
+            covered.append(number)
+        else:
+            missing.append(number)
+    return {
+        "cited": cited, "covered": covered,
+        "missing": missing, "invalid": invalid,
+        "complete": bool(refs) and not missing and not invalid,
+    }
+
+
 def validate_zip_manifest(outputs: dict[str, bytes], manifest: list[dict]) -> None:
     """Audita o conteúdo dos ZIPs, não apenas seus contadores declarados."""
     expected = Counter(
