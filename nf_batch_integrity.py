@@ -85,6 +85,17 @@ def validate_batch_selection(
             valid_nf_keys.add(fiscal_key)
         valid_numbers.add(nf)
 
+    # CT-e XML pode referenciar NF-e recebida somente como PDF, sem chave
+    # extraída. Aceitar a referência apenas se NF+CNPJ fiscal resolverem
+    # EXATAMENTE um documento selecionado, sem chave conflitante.
+    pdf_only_by_identity = {}
+    for item in work:
+        if not _digits(item.get("chave_nfe")):
+            pair = (_number(item.get("numero_nf")),
+                    _digits(item.get("cnpj_fornecedor")))
+            if len(pair[1]) == 14:
+                pdf_only_by_identity.setdefault(pair, []).append(item)
+
     cte_ids = set()
     for cte in ctes:
         cte_key = _digits(cte.get("chave_cte"))
@@ -96,8 +107,15 @@ def validate_batch_selection(
         ids_linked = {str(x) for x in cte.get("linked_file_ids") or [] if str(x)}
         numbers = {_number(x) for x in cte.get("linked_nf_numbers") or [] if _number(x)}
         if refs:
-            if (any(len(x) != 44 or x[20:22] != "55" for x in refs)
-                or not refs.issubset(valid_nf_keys)):
+            unverified = []
+            for ref in refs:
+                if len(ref) != 44 or ref[20:22] != "55":
+                    unverified.append(ref)
+                elif ref not in valid_nf_keys:
+                    pair = (_number(ref[25:34]), ref[6:20])
+                    if len(pdf_only_by_identity.get(pair, [])) != 1:
+                        unverified.append(ref)
+            if unverified:
                 raise ValueError(
                     f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
                     "contém referência fiscal fora das NFs selecionadas."
