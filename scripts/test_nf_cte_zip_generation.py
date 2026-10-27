@@ -12,6 +12,7 @@ import pandas as pd
 from nf_processor import parse_operational_due_date, build_final_name
 from cte_generator import cte_output_name
 from cte_generator import cte_zip_safe_name, cte_supplier_from_rows
+from nf_batch_integrity import validate_batch_selection, validate_zip_manifest
 
 app=Path("streamlit_app.py").read_text(encoding="utf-8")
 client=Path("nf_xml_library.py").read_text(encoding="utf-8")
@@ -30,8 +31,9 @@ assert '"match_version": 2' in client
 
 def digits(value):
     return re.sub(r"\D", "", str(value or ""))
-cte_key = "0" * 20 + "57" + "0" * 22
-nfe_key = "0" * 20 + "55" + "0" * 22
+nfe_key = "31" + "2610" + "14524129000103" + "55" + "001" + "000010913" + "1" + "12345678" + "0"
+cte_key = "31" + "2610" + "99887766000190" + "57" + "001" + "000987654" + "1" + "12345678" + "0"
+assert len(nfe_key) == len(cte_key) == 44
 
 class State(dict):
     def __getattr__(self,k):
@@ -50,6 +52,11 @@ state=State(
     document_link_stats={},
     pdfs={"nf-1":{"bytes":b"%PDF-1.4\nfake-pdf"}},
     last_generation_audit={},
+    nf_selected_flow_keys={"10913|SAREL"},
+    nf_stage2_batch_keys={"10913|SAREL"},
+    nf_stage2_batch_snapshot=pd.DataFrame([
+        {"numero_nf":"10913","fornecedor":"SAREL","cnpj":"14524129000103"}
+    ]),
 )
 st=SimpleNamespace(session_state=state)
 names={
@@ -62,6 +69,11 @@ names={
     "parse_operational_due_date":parse_operational_due_date,
     "build_final_name":build_final_name,
     "cte_zip_safe_name":cte_zip_safe_name,
+    "validate_batch_selection":validate_batch_selection,
+    "validate_zip_manifest":validate_zip_manifest,
+    "flow_nf_key":lambda row: digits(row.get("numero_nf")).lstrip("0")+"|"+str(row.get("fornecedor") or "").strip(),
+    "selected_pending_pre_notes":lambda: state.nf_stage2_batch_snapshot.copy(),
+    "_current_nf_zip_signature":lambda *args:"test-batch-token",
     "cte_supplier_from_rows":cte_supplier_from_rows,
     "apply_operational_stamp":lambda raw,**kw:raw,
     "is_cte_document_type":lambda typ:str(typ).strip().upper()=="CT-E",
@@ -81,7 +93,8 @@ df=pd.DataFrame([{
     "cr":"1001","desc_cr":"MATERIAIS",
     "pre_nota_em":date(2026,10,9),"serie":"1",
     "chave_nfe":nfe_key,"cnpj_fornecedor":"14524129000103",
-    "fornecedor_padrao":"SAREL","vencimento":date(2026,10,20),
+    "fornecedor_padrao":"SAREL","pre_nota_fornecedor":"SAREL",
+    "vencimento":date(2026,10,20),
     "metodo_fornecedor":"XML","confianca":98,
 }])
 assert readiness()["missing"] == [cte_key]
