@@ -119,6 +119,7 @@ from nf_prazo_dashboard import (
 from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
+from nf_batch_integrity import validate_batch_selection, validate_zip_manifest
 from supplier_import import validate_supplier_report
 from nf_final_priority import apply_final_manual_priorities
 import setta_shell
@@ -3555,10 +3556,101 @@ def _cte_zip_readiness() -> dict:
     }
 
 
+def _current_nf_zip_signature(
+    snapshot_rows: list[dict] | None = None,
+    work_rows: list[dict] | None = None,
+    ctes: list[dict] | None = None,
+) -> str:
+    """Detecta se a seleção, NFs ou vínculos mudaram após criar o ZIP."""
+    if snapshot_rows is None:
+        frozen = selected_pending_pre_notes()
+        snapshot_rows = [
+            {**r, "_selection_key": flow_nf_key(r)}
+            for r in frozen.to_dict("records")
+        ] if not frozen.empty else []
+    if work_rows is None:
+        work = st.session_state.get("analysis")
+        work_rows = [
+            {**r, "_selection_key": flow_nf_key({
+                "numero_nf": r.get("numero_nf"),
+                "fornecedor": r.get("pre_nota_fornecedor"),
+            })}
+            for r in work.to_dict("records")
+        ] if isinstance(work, pd.DataFrame) and not work.empty else []
+    if ctes is None:
+        ctes = list(st.session_state.get("cte_links") or [])
+    selected = sorted(str(x) for x in st.session_state.get("nf_selected_flow_keys") or [])
+    concise = {
+        "selecionadas": selected,
+        "snapshot": sorted(
+            (str(r.get("_selection_key") or ""), str(r.get("cnpj") or ""))
+            for r in snapshot_rows
+        ),
+        "documentos": sorted(
+            (str(r.get("_selection_key") or ""), str(r.get("chave_nfe") or ""),
+             str(r.get("file_id") or ""), str(r.get("nome_sugerido") or ""),
+             str(r.get("prioridade_mrp") or ""))
+            for r in work_rows
+        ),
+        "ctes": sorted(
+            (str(c.get("chave_cte") or c.get("cte_id") or ""),
+             tuple(sorted(str(k) for k in c.get("refs_nfe") or [])),
+             tuple(sorted(str(k) for k in c.get("linked_file_ids") or [])))
+            for c in ctes
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(concise, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+
+def _expire_stale_nf_zip() -> bool:
+    if not st.session_state.get("zip_outputs"):
+        return False
+    audit = st.session_state.get("last_generation_audit") or {}
+    signature = audit.get("batch_signature")
+    if signature and signature == _current_nf_zip_signature():
+        return False
+    # Arquivos gerados com lógica antiga não podem permanecer disponíveis após
+    # a atualização. Tampouco downloads de uma seleção recém-modificada.
+    st.session_state.zip_outputs = {}
+    st.session_state.last_generation_audit = {}
+    return True
+
+
 def make_zip_outputs(df: pd.DataFrame):
     cte_status = _cte_zip_readiness()
     if cte_status["errors"]:
         raise ValueError(" | ".join(cte_status["errors"]))
+    # Última barreira: a grade pode conter documentos de uma seleção anterior,
+    # ainda que mostre uma contagem aparentemente correta.
+    frozen = st.session_state.get("nf_stage2_batch_snapshot")
+    active = set(st.session_state.get("nf_selected_flow_keys") or set())
+    frozen_keys = set(st.session_state.get("nf_stage2_batch_keys") or set())
+    if active != frozen_keys or not isinstance(frozen, pd.DataFrame):
+        raise ValueError(
+            "LOTE BLOQUEADO: seleção alterada depois da conferência. "
+            "Volte à Etapa 2 e reanalise as NFs."
+        )
+    selected_snapshot = selected_pending_pre_notes()
+    if selected_snapshot.empty:
+        raise ValueError("LOTE BLOQUEADO: seleção congelada indisponível.")
+    marked_snapshot = selected_snapshot.copy()
+    marked_snapshot["_selection_key"] = marked_snapshot.apply(flow_nf_key, axis=1)
+    marked_work = df.copy()
+    marked_work["_selection_key"] = marked_work.apply(
+        lambda row: flow_nf_key({
+            "numero_nf": row.get("numero_nf"),
+            "fornecedor": row.get("pre_nota_fornecedor"),
+        }), axis=1,
+    )
+    validate_batch_selection(
+        active,
+        marked_snapshot.to_dict("records"),
+        marked_work.to_dict("records"),
+        st.session_state.get("pdfs") or {},
+        list(st.session_state.get("cte_links") or []),
+    )
     outputs: dict[str, bytes] = {}
     manifest: list[dict] = []
     batch = f"NF-{now_local():%Y%m%d-%H%M%S}-{uuid.uuid4().hex[:5].upper()}"
@@ -3805,6 +3897,11 @@ def make_zip_outputs(df: pd.DataFrame):
                 "no lote atual. Revise a chave fiscal na etapa 2."
             )
 
+        if len(companies) != 1:
+            raise ValueError(
+                f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or ''} "
+                "foi associado a empresas distintas ou ambíguas."
+            )
         for company in companies:
             ctes_by_company[company].append(cte)
 
@@ -3961,6 +4058,9 @@ def make_zip_outputs(df: pd.DataFrame):
             f"mas {cte_manifest_count} registrado(s) na saída."
         )
 
+    # Verificação física de PDFs nos ZIPs. Quantidades iguais podem esconder
+    # substituições ou documentos extras, por isso comparamos nomes e tipos.
+    validate_zip_manifest(outputs, manifest)
     _link_stats = st.session_state.get("document_link_stats") or {}
     st.session_state.last_generation_audit = {
         "cte_localizados_biblioteca": cte_status["expected"],
@@ -3978,6 +4078,11 @@ def make_zip_outputs(df: pd.DataFrame):
         ),
         "ignorados": int(_link_stats.get("ignorados") or 0),
         "lote_id": batch,
+        "batch_signature": _current_nf_zip_signature(
+            marked_snapshot.to_dict("records"),
+            marked_work.to_dict("records"),
+            list(st.session_state.get("cte_links") or []),
+        ),
     }
 
     return outputs, manifest
@@ -6605,6 +6710,9 @@ def render_nf_treatment_center() -> None:
                 st.error(f"Falha ao gerar ZIP: {exc}")
 
         if st.session_state.zip_outputs:
+            if _expire_stale_nf_zip():
+                st.error("ZIP antigo ou divergente invalidado. Gere o lote novamente.")
+                return
             _audit = st.session_state.get("last_generation_audit") or {}
             if _audit:
                 st.success(
@@ -9039,6 +9147,11 @@ def render_ready_file_stage() -> None:
 
     merged = recalc(apply_cross_checks(frame.copy()))
     st.session_state.analysis = merged
+    if _expire_stale_nf_zip():
+        st.warning(
+            "ZIP anterior invalidado após mudança do lote ou atualização da "
+            "validação. Refaça a conferência e gere um novo arquivo."
+        )
 
     _current_selection=selected_pending_pre_notes()
     _lot_audit=_audit_selected_nf_batch(_current_selection,merged)
