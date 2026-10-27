@@ -4051,10 +4051,18 @@ def make_zip_outputs(df: pd.DataFrame):
             if not group_keys:
                 continue
             buffer = io.BytesIO()
+            used_remessa_names = set()
             with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
                 for key in group_keys:
                     aux = validated_auxiliary[key]
-                    archive.writestr(aux["arquivo_final"], aux["bytes"])
+                    safe_name = str(aux["arquivo_final"] or "").strip()
+                    if not safe_name or safe_name.casefold() in used_remessa_names:
+                        raise ValueError(
+                            "LOTE BLOQUEADO: remessas com nomes duplicados "
+                            "ou inválidos. Confira os XMLs antes de gerar o ZIP."
+                        )
+                    used_remessa_names.add(safe_name.casefold())
+                    archive.writestr(safe_name, aux["bytes"])
                     manifest.append({
                         "lote_id": batch,
                         "arquivo_original": "BIBLIOTECA XML - REMESSA SEM PRE-NOTA",
