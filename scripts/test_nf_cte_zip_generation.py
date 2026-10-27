@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pandas as pd
 from nf_processor import parse_operational_due_date, build_final_name
 from cte_generator import cte_output_name
-from cte_generator import cte_zip_safe_name
+from cte_generator import cte_zip_safe_name, cte_supplier_from_rows
 
 app=Path("streamlit_app.py").read_text(encoding="utf-8")
 client=Path("nf_xml_library.py").read_text(encoding="utf-8")
@@ -62,6 +62,7 @@ names={
     "parse_operational_due_date":parse_operational_due_date,
     "build_final_name":build_final_name,
     "cte_zip_safe_name":cte_zip_safe_name,
+    "cte_supplier_from_rows":cte_supplier_from_rows,
     "apply_operational_stamp":lambda raw,**kw:raw,
     "is_cte_document_type":lambda typ:str(typ).strip().upper()=="CT-E",
 }
@@ -107,9 +108,10 @@ cte_zip=[v for k,v in outputs.items() if k.startswith("CTE")][0]
 with zipfile.ZipFile(io.BytesIO(cte_zip)) as inner:
     expected = cte_output_name(
         SimpleNamespace(numero="987654", emitente="TRANSPORTADORA TESTE", chave=cte_key),
-        ["10913"],
+        ["10913"], "SAREL",
     )
     assert inner.namelist()==[expected]
+    assert "SAREL" in expected
     assert inner.read(expected)==b"%PDF-1.4\nfake-dacte"
 assert state.last_generation_audit["cte_gerados"] == 1
 
