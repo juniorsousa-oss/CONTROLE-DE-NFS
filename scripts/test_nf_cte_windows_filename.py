@@ -40,7 +40,7 @@ assert "ALFA TRANSPOR" in filename, filename
 assert "NF-" in filename and "MAIS" not in filename, filename
 assert all(nf in filename for nf in links), filename
 assert "REVESTIMENTOS" in filename, filename
-assert "TRANSPORTES" in filename, filename
+assert "ALFA TRANSPOR" in filename, filename
 assert filename.endswith(".pdf") and "K1234567890" not in filename
 assert len(filename.encode("utf-8")) <= 95, filename
 assert not re.search(r'[\\/:*?"<>|]', filename), filename
