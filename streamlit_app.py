@@ -119,7 +119,7 @@ from nf_prazo_dashboard import (
 from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
-from nf_batch_integrity import validate_batch_selection, validate_zip_manifest
+from nf_batch_integrity import validate_batch_selection, validate_zip_manifest, cte_reference_coverage
 from supplier_import import validate_supplier_report
 from nf_final_priority import apply_final_manual_priorities
 import setta_shell
@@ -9290,54 +9290,88 @@ def render_ready_file_stage() -> None:
             },
         )
 
-    # Confirmação 03: relação explícita dos CT-e antes de montar ZIP.
+    # Conferência fiscal: mostrar referências integrais do XML, não apenas
+    # as NFs que conseguiram vínculo com a seleção corrente.
     linked_ctes = list(st.session_state.get("cte_links") or [])
     if linked_ctes:
+        selected_rows = merged.to_dict("records")
         mapped_nf = {
             str(row.get("file_id") or ""): normalized_nf(row.get("numero_nf"))
             for _, row in merged.iterrows()
         }
-        mapped_key = {
-            digits_only(row.get("chave_nfe")): normalized_nf(row.get("numero_nf"))
-            for _, row in merged.iterrows()
-            if len(digits_only(row.get("chave_nfe"))) == 44
-        }
-        number_counts = (
-            merged["numero_nf"].map(normalized_nf).value_counts().to_dict()
-            if "numero_nf" in merged.columns else {}
-        )
         cte_preview = []
+        cte_outside_selection = []
         for cte in linked_ctes:
             linked_ids = [
-                str(v) for v in (cte.get("linked_file_ids") or []) if str(v).strip()
+                str(value) for value in (cte.get("linked_file_ids") or [])
+                if str(value).strip()
             ]
-            # IDs locais podem mudar após reanálise. Primeiro conferimos as
-            # chaves fiscais; número só é usado quando inequívoco neste lote.
-            linked_numbers = sorted({
-                number for number in (
-                    [mapped_nf.get(file_id, "") for file_id in linked_ids]
-                    + [mapped_key.get(digits_only(key), "") for key in
-                       (cte.get("refs_nfe") or [])]
-                    + [normalized_nf(value) for value in
-                       (cte.get("linked_nf_numbers") or [])
-                       if number_counts.get(normalized_nf(value),0) == 1]
-                )
-                if number and number in number_counts
-            })
+            covered = cte_reference_coverage(cte, selected_rows)
+            # XML: a coluna registra TODOS os documentos fiscais referenciados,
+            # mesmo que nenhum deles esteja selecionado para este lote.
+            has_refs = bool(cte.get("refs_nfe"))
+            if has_refs:
+                all_numbers = list(dict.fromkeys(covered["cited"]))
+                in_batch = list(dict.fromkeys(covered["covered"]))
+                absent = list(dict.fromkeys(covered["missing"]))
+                invalid_refs = covered["invalid"]
+            else:
+                # DACTE em PDF pode não expor as chaves; nesses casos exigir
+                # associação segura por ID local, nunca só nome ou número.
+                in_batch = sorted({
+                    mapped_nf.get(file_id, "") for file_id in linked_ids
+                    if mapped_nf.get(file_id, "")
+                })
+                all_numbers = in_batch
+                absent = []
+                invalid_refs = []
+                if not in_batch or len(set(linked_ids) - set(mapped_nf)) > 0:
+                    absent = ["VÍNCULO NÃO CONFIRMADO"]
+
+            supplier = (
+                cte_supplier_from_rows(cte, selected_rows)
+                or str(cte.get("fornecedor_vinculado") or "").strip()
+            )
+            cte_number = str(cte.get("numero_cte") or "").strip()
+            blocked = bool(absent or invalid_refs or not in_batch)
+            if blocked:
+                cte_outside_selection.append({
+                    "CT-e": cte_number,
+                    "NFs fora do lote": ", ".join(absent) or "REFERÊNCIA FISCAL INVÁLIDA",
+                })
             cte_preview.append({
-                "CT-e": str(cte.get("numero_cte") or ""),
-                "TRANSPORTADORA": str(cte.get("transportadora") or ""),
-                "NFs VINCULADAS": ", ".join(linked_numbers),
-                "ARQUIVO DACTE": str(cte.get("arquivo_final") or cte.get("arquivo_original") or ""),
+                "CT-e": cte_number,
+                "TRANSPORTADORA (EMITENTE CT-e)": str(cte.get("transportadora") or ""),
+                "FORNECEDOR DAS NFs": supplier or "NÃO CONFIRMADO",
+                "TODAS AS NFs DO CT-e": ", ".join(all_numbers) or "SEM CHAVES NO XML",
+                "NFs NESTE LOTE": ", ".join(in_batch),
+                "NFs FORA DO LOTE": ", ".join(absent),
+                "CONFERÊNCIA": "REVISAR VÍNCULOS" if blocked else "CONFERIDO",
+                "ARQUIVO DACTE": str(
+                    cte.get("arquivo_final") or cte.get("arquivo_original") or ""
+                ),
             })
         st.markdown("#### CT-e VINCULADOS ÀS NFs DESTE LOTE")
+        st.caption(
+            "TRANSPORTADORA é quem emitiu o CT-e. FORNECEDOR é o emitente "
+            "da mercadoria nas NFs. As referências do XML devem estar "
+            "integralmente cobertas pelo lote para liberar o ZIP."
+        )
         _setta_dataframe(
             pd.DataFrame(cte_preview),
-            use_container_width=True,hide_index=True,height=300,
+            use_container_width=True, hide_index=True, height=300,
         )
-        _missing_cte_links = any(not x["NFs VINCULADAS"] for x in cte_preview)
-        if _missing_cte_links:
-            st.error("EXISTEM CT-e SEM NF VINCULADA NESTE LOTE. VOLTE À ETAPA 2.")
+        if cte_outside_selection:
+            st.error(
+                f"{len(cte_outside_selection)} CT-e(s) possuem NF(s) fora da "
+                "seleção ou referência fiscal sem comprovação. ZIP BLOQUEADO. "
+                "Revise as NF-es na Etapa 1 e reconsulte na Etapa 2; "
+                "não é permitido excluir referências do XML para forçar o vínculo."
+            )
+            _setta_dataframe(
+                pd.DataFrame(cte_outside_selection),
+                use_container_width=True, hide_index=True,
+            )
             return
     else:
         st.caption("NENHUM CT-e VINCULADO A ESTE LOTE.")
