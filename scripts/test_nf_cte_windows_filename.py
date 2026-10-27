@@ -69,19 +69,23 @@ assert cte_zip_safe_name("13273734 - NF-297219-MAIS5.pdf", a.numero, a.emitente,
 assert cte_zip_safe_name("../caminho/indevido.pdf", a.numero, a.emitente, links, a.chave, supplier) == safe
 
 # O fornecedor é obtido por chave fiscal e não é inferido por NF homônima.
-nf_key = "0" * 20 + "55" + "0" * 22
+nf_cnpj = "12345678000195"
+nf_key = "31" + "2610" + nf_cnpj + "55" + "001" + "000297219" + "1" + "12345678" + "0"
 cte_ref = {"refs_nfe":[nf_key], "linked_file_ids":["antigo"], "linked_nf_numbers":["297219"]}
-nf_rows = [{"file_id":"novo", "chave_nfe":nf_key,
+nf_rows = [{"file_id":"novo", "chave_nfe":nf_key, "cnpj_fornecedor":nf_cnpj,
             "numero_nf":"297219", "fornecedor_padrao":supplier}]
 assert cte_supplier_from_rows(cte_ref, nf_rows) == supplier
 assert cte_supplier_from_rows({"linked_file_ids":["novo"]}, nf_rows) == supplier
 assert cte_supplier_from_rows({"linked_nf_numbers":["297219"]}, nf_rows) == supplier
-nf_rows.append({"file_id":"outro", "chave_nfe":"1"*20+"55"+"2"*22,
+other_cnpj = "98765432000190"
+other_key = "31" + "2610" + other_cnpj + "55" + "001" + "000297219" + "1" + "87654321" + "0"
+nf_rows.append({"file_id":"outro", "chave_nfe":other_key,
+                "cnpj_fornecedor":other_cnpj,
                 "numero_nf":"297219", "fornecedor_padrao":"OUTRA EMPRESA"})
 assert not cte_supplier_from_rows({"linked_nf_numbers":["297219"]}, nf_rows)
 assert cte_supplier_from_rows(cte_ref, nf_rows) == supplier
 assert cte_supplier_from_rows(
-    {"refs_nfe":[nf_key, "1"*20+"55"+"2"*22]}, nf_rows
+    {"refs_nfe":[nf_key, other_key]}, nf_rows
 ) == "MULTIPLOS FORNECEDORES"
 
 # O caminho representativo deve caber no limite convencional de 260 caracteres.
