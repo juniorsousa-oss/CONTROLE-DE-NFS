@@ -81,6 +81,15 @@ rejected("CT-e com ID de sessão anterior", transports=[
 ])
 rejected("CT-e duplicado", transports=cte + cte)
 
+# NF-e somente em PDF pode ter CT-e XML associado: número + CNPJ
+# precisam coincidir exatamente e resolver UMA única nota aprovada.
+work_pdf_only = [{**work[0], "chave_nfe": ""}]
+validate_batch_selection(selected, snapshot, work_pdf_only, pdfs, cte)
+rejected("CT-e XML de outro CNPJ contra NF PDF", actual=work_pdf_only,
+         transports=[{**cte[0], "refs_nfe": [k2]}])
+rejected("CT-e com chave de outra NF contra PDF sem chave", actual=work_pdf_only,
+         transports=[{**cte[0], "refs_nfe": [k2], "linked_nf_numbers": ["101"]}])
+
 # Associação por ID é permitida quando o CT-e PDF não contém chaves, mas deve
 # apontar exclusivamente para IDs de NFs já autorizadas.
 validate_batch_selection(selected, snapshot, work, pdfs, [{
