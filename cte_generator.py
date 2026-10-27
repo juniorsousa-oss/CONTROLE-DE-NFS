@@ -634,39 +634,53 @@ def cte_output_name(
 
 
 def cte_supplier_from_rows(cte: dict, rows: list[dict]) -> str:
-    """Resolve fornecedor somente com referência segura às NFs do lote.
+    """Identifica o fornecedor da mercadoria, não a transportadora.
 
-    Prioriza chave de NF-e, depois ID local; número sozinho só se inequívoco.
-    Não escolhe um fornecedor arbitrário em documentos homônimos.
+    Um CT-e XML só vincula fornecedores por chave exata de NF-e ou por
+    NF+CNPJ quando o DANFE está em PDF sem chave. Não recua para número
+    isolado caso haja referências fiscais não encontradas.
     """
-    def doc(value: object) -> str:
+    def digits(value: object) -> str:
         return re.sub(r"\D", "", str(value or ""))
 
-    refs = {doc(value) for value in cte.get("refs_nfe") or []}
-    refs = {key for key in refs if len(key) == 44 and key[20:22] == "55"}
-    ids = {str(x) for x in cte.get("linked_file_ids") or [] if str(x)}
-    numbers = {doc(x).lstrip("0") or "0" for x in cte.get("linked_nf_numbers") or [] if doc(x)}
+    def num(value: object) -> str:
+        value = digits(value)
+        return value.lstrip("0") or ("0" if value else "")
 
-    matched = [
-        row for row in rows
-        if refs and doc(row.get("chave_nfe")) in refs
-    ]
-    if not matched and ids:
-        matched = [row for row in rows if str(row.get("file_id") or "") in ids]
-    if not matched and numbers:
-        subset = []
-        for number in numbers:
-            candidates = [
+    refs = set(digits(k) for k in cte.get("refs_nfe") or [] if digits(k))
+    ids = {str(x) for x in cte.get("linked_file_ids") or [] if str(x).strip()}
+    numbers = {num(x) for x in cte.get("linked_nf_numbers") or [] if num(x)}
+    matched = []
+    if refs:
+        for key in refs:
+            if len(key) != 44 or key[20:22] != "55":
+                continue
+            number, issuer = num(key[25:34]), key[6:20]
+            exact = [
                 row for row in rows
-                if (doc(row.get("numero_nf")).lstrip("0") or "0") == number
+                if digits(row.get("chave_nfe")) == key
+                and num(row.get("numero_nf")) == number
+                and digits(row.get("cnpj_fornecedor")) == issuer
             ]
-            # Número sem chave não desambigua filiais e fornecedores homônimos.
-            fiscal_keys = {doc(row.get("chave_nfe")) for row in candidates}
-            if len(candidates) == 1 or (
-                candidates and len(fiscal_keys) == 1 and "" not in fiscal_keys
-            ):
-                subset.extend(candidates)
-        matched = subset
+            pdf_without_key = [
+                row for row in rows
+                if not digits(row.get("chave_nfe"))
+                and num(row.get("numero_nf")) == number
+                and digits(row.get("cnpj_fornecedor")) == issuer
+            ]
+            if len(exact) == 1:
+                matched.append(exact[0])
+            elif not exact and len(pdf_without_key) == 1:
+                matched.append(pdf_without_key[0])
+    elif ids:
+        matched = [row for row in rows if str(row.get("file_id") or "") in ids]
+    elif numbers:
+        # Compatibilidade legada com DACTE somente PDF: sem chave e sem IDs.
+        # Exigir número único no lote, sem assumir identidade de fornecedores.
+        for number in numbers:
+            candidates = [row for row in rows if num(row.get("numero_nf")) == number]
+            if len(candidates) == 1:
+                matched.extend(candidates)
 
     suppliers = {
         str(row.get("fornecedor_padrao") or "").strip()
