@@ -13,6 +13,7 @@ from cte_generator import (
     MAX_CTE_PDF_FILENAME_BYTES,
     cte_output_name,
     cte_zip_safe_name,
+    cte_supplier_from_rows,
     dacte_file_name,
 )
 
@@ -38,7 +39,8 @@ assert filename.startswith("CTE-13273734"), filename
 assert "ALFA TRANSPORTES" in filename, filename
 assert "NF-" not in filename and "MAIS" not in filename, filename
 assert all(nf not in filename for nf in links), filename
-assert supplier not in filename, filename
+assert "REVESTIMENTOS" in filename, filename
+assert "TRANSPORTES" in filename, filename
 assert filename.endswith(".pdf") and "K1234567890" in filename
 assert len(filename.encode("utf-8")) <= 95, filename
 assert not re.search(r'[\\/:*?"<>|]', filename), filename
@@ -49,7 +51,7 @@ assert len(dacte_file_name(a).encode("utf-8")) <= 95
 second = cte_output_name(meta("1234567891"), links, supplier)
 assert filename != second
 assert cte_output_name(meta(), ["297219"], supplier) == cte_output_name(meta(), links, supplier)
-assert cte_output_name(meta(), links, "OUTRO FORNECEDOR") == filename
+assert cte_output_name(meta(), links, "OUTRO FORNECEDOR") != filename
 
 # Arquivos já gerados pela versão anterior (nome de até 240 bytes) devem
 # ser compactados no ZIP sem precisar reabrir/alterar o XML ou o PDF.
@@ -59,12 +61,28 @@ legacy = (
     + " - REVESTIMENTOS SUPERFICIAIS E TRATAMENTO TERMICO LTDA.pdf"
 )
 assert len(legacy.encode("utf-8")) > 95
-safe = cte_zip_safe_name(legacy, a.numero, a.emitente, links, a.chave)
-assert safe == cte_output_name(a, links), (safe, filename)
-assert cte_zip_safe_name("CTE-13273734.pdf", a.numero, a.emitente, links, a.chave) == filename
+safe = cte_zip_safe_name(legacy, a.numero, a.emitente, links, a.chave, supplier)
+assert safe == filename, (safe, filename)
+assert cte_zip_safe_name("CTE-13273734.pdf", a.numero, a.emitente, links, a.chave, supplier) == filename
 # Mesmo um arquivo antigo curto (com NF ou MAIS) recebe a nomenclatura simplificada.
-assert cte_zip_safe_name("13273734 - NF-297219-MAIS5.pdf", a.numero, a.emitente, links, a.chave) == filename
-assert cte_zip_safe_name("../caminho/indevido.pdf", a.numero, a.emitente, links, a.chave) == safe
+assert cte_zip_safe_name("13273734 - NF-297219-MAIS5.pdf", a.numero, a.emitente, links, a.chave, supplier) == filename
+assert cte_zip_safe_name("../caminho/indevido.pdf", a.numero, a.emitente, links, a.chave, supplier) == safe
+
+# O fornecedor é obtido por chave fiscal e não é inferido por NF homônima.
+nf_key = "0" * 20 + "55" + "0" * 22
+cte_ref = {"refs_nfe":[nf_key], "linked_file_ids":["antigo"], "linked_nf_numbers":["297219"]}
+nf_rows = [{"file_id":"novo", "chave_nfe":nf_key,
+            "numero_nf":"297219", "fornecedor_padrao":supplier}]
+assert cte_supplier_from_rows(cte_ref, nf_rows) == supplier
+assert cte_supplier_from_rows({"linked_file_ids":["novo"]}, nf_rows) == supplier
+assert cte_supplier_from_rows({"linked_nf_numbers":["297219"]}, nf_rows) == supplier
+nf_rows.append({"file_id":"outro", "chave_nfe":"1"*20+"55"+"2"*22,
+                "numero_nf":"297219", "fornecedor_padrao":"OUTRA EMPRESA"})
+assert not cte_supplier_from_rows({"linked_nf_numbers":["297219"]}, nf_rows)
+assert cte_supplier_from_rows(cte_ref, nf_rows) == supplier
+assert cte_supplier_from_rows(
+    {"refs_nfe":[nf_key, "1"*20+"55"+"2"*22]}, nf_rows
+) == "MULTIPLOS FORNECEDORES"
 
 # O caminho representativo deve caber no limite convencional de 260 caracteres.
 target_directory = (
