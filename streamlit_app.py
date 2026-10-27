@@ -7744,13 +7744,14 @@ def _analysis_rows_for_nfe_keys(
             raw_nf = ref[25:34]
             nf = str(int(raw_nf)) if raw_nf.isdigit() else raw_nf
             supplier_cnpj = ref[6:20]
-            candidates = analysis[number_series.eq(normalized_nf(nf))].copy()
-            if not candidates.empty and supplier_cnpj:
-                exact = candidates[
-                    cnpj_series.loc[candidates.index].eq(supplier_cnpj)
-                ].copy()
-                if not exact.empty:
-                    candidates = exact
+            # A ausência de uma chave correspondente não autoriza vincular
+            # pelo número isolado. Exigir CNPJ IDÊNTICO e NF sem chave
+            # previamente identificada (PDF sem XML), sem ambiguidade.
+            candidates = analysis[
+                number_series.eq(normalized_nf(nf))
+                & cnpj_series.eq(supplier_cnpj)
+                & key_series.eq("")
+            ].copy()
             if len(candidates) == 1:
                 hit = candidates
 
