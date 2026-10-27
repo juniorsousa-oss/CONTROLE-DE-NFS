@@ -37,7 +37,7 @@ assert "MAIS" not in ctename, ctename
 assert ctename != cte_output_name(meta, ["76516", "76516"], "OUTRO FORNECEDOR"), ctename
 assert ctename == cte_output_name(meta, [], "ARTECHE EDC"), ctename
 assert ctename == cte_output_name(
-    meta, ["76516", "76515", "76519", "76520"], "ARTECHE"
+    meta, ["76516", "76515", "76519", "76520"], "ARTECHE EDC"
 ), ctename
 
 # O vínculo é válido por lote, não apenas pelo mesmo número da NF em outros lotes.
