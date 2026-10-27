@@ -640,7 +640,7 @@ def cte_supplier_from_rows(cte: dict, rows: list[dict]) -> str:
     Não escolhe um fornecedor arbitrário em documentos homônimos.
     """
     def doc(value: object) -> str:
-        return re.sub(r"\\D", "", str(value or ""))
+        return re.sub(r"\D", "", str(value or ""))
 
     refs = {doc(value) for value in cte.get("refs_nfe") or []}
     refs = {key for key in refs if len(key) == 44 and key[20:22] == "55"}
