@@ -581,53 +581,43 @@ def cte_output_name(
     linked_nf_numbers: list[str],
     supplier_name: str = "",
 ) -> str:
-    """CT-e + transportadora + fornecedor + identificador fiscal.
+    """Somente CT-e, transportadora, todas as NFs e fornecedor.
 
-    A lista de NFs não faz parte do arquivo, mas permanece no DACTE,
-    na vinculação e no manifesto. Não extrapola o limite do Windows.
+    O nome não contém hash, chave ou a antiga abreviação MAIS*. Os números
+    fiscais nunca são omitidos: se não couberem, a geração é bloqueada.
     """
     cte_number = _digits(meta.numero) or "SEM_CTE"
-    carrier = _compact_filename_field(meta.emitente)[:32].rstrip(" .")
-    supplier = (
-        _compact_filename_field(supplier_name)[:37].rstrip(" .")
-        if str(supplier_name or "").strip() else ""
-    )
-    key = _digits(getattr(meta, "chave", ""))
-    if len(key) == 44:
-        identifier = f"K{key[-10:]}"
-    else:
-        nfs = sorted(set(
-            raw.lstrip("0") or "0"
-            for value in linked_nf_numbers
-            if (raw := _digits(value))
-        ))
-        fingerprint = "|".join(
-            (cte_number, str(meta.emitente), ",".join(nfs), supplier_name)
-        )
-        identifier = "H" + hashlib.sha256(
-            fingerprint.encode("utf-8")
-        ).hexdigest()[:10].upper()
+    carrier = _compact_filename_field(meta.emitente)[:35].rstrip(" .")
+    supplier = _compact_filename_field(supplier_name)[:35].rstrip(" .")
+    if not str(supplier_name or "").strip():
+        raise ValueError(f"CT-e {cte_number}: fornecedor não identificado.")
+    all_numbers = []
+    for number in linked_nf_numbers:
+        digits = _digits(number)
+        if digits:
+            normalized = digits.lstrip("0") or "0"
+            if normalized not in all_numbers:
+                all_numbers.append(normalized)
+    if not all_numbers:
+        raise ValueError(f"CT-e {cte_number}: referências de NFs indisponíveis.")
+    nf_label = "+".join(all_numbers)
 
     def make_name() -> str:
-        pieces = [f"CTE-{cte_number}", carrier]
-        if supplier:
-            pieces.append(supplier)
-        pieces.append(identifier)
-        return " - ".join(pieces) + ".pdf"
+        return f"CTE-{cte_number} - {carrier} - NF-{nf_label} - {supplier}.pdf"
 
     name = make_name()
-    # Reduzir primeiro o nome mais longo e preservar uma parte legível de ambos.
     while len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES:
-        if len(supplier) > 12 and len(supplier) >= len(carrier):
-            supplier = supplier[:-1].rstrip(" .")
-        elif len(carrier) > 8:
+        if len(carrier) >= len(supplier) and len(carrier) > 8:
             carrier = carrier[:-1].rstrip(" .")
         elif len(supplier) > 8:
             supplier = supplier[:-1].rstrip(" .")
+        elif len(carrier) > 8:
+            carrier = carrier[:-1].rstrip(" .")
         else:
             raise ValueError(
-                f"CT-e {cte_number}: não é possível compactar o nome "
-                "sem perder a identidade do documento."
+                f"CT-e {cte_number}: a lista completa das NFs excede "
+                "o tamanho seguro para Windows. Confira o lote; "
+                "nenhum número de NF será descartado do nome."
             )
         name = make_name()
     return name
