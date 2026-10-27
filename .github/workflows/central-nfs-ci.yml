@@ -35,6 +35,8 @@ jobs:
         run: python -m scripts.test_nf_stage3_batch_snapshot
       - name: Impedir ZIP com NF ou CT-e fora da seleção aprovada
         run: python -m scripts.test_nf_batch_integrity
+      - name: Bloquear associação de CT-e a NF homônima de outro CNPJ
+        run: python -m scripts.test_nf_cte_cross_supplier
       - name: Testar prioridade manual na confirmação final
         run: python -m scripts.test_nf_final_priority
       - name: Testar busca manual NF mais CNPJ por XML confirmado
