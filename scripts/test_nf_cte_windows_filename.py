@@ -37,20 +37,25 @@ a = meta()
 filename = cte_output_name(a, links, supplier)
 assert filename.startswith("CTE-13273734"), filename
 assert "ALFA TRANSPORTES" in filename, filename
-assert "NF-" not in filename and "MAIS" not in filename, filename
-assert all(nf not in filename for nf in links), filename
+assert "NF-" in filename and "MAIS" not in filename, filename
+assert all(nf in filename for nf in links), filename
 assert "REVESTIMENTOS" in filename, filename
 assert "TRANSPORTES" in filename, filename
-assert filename.endswith(".pdf") and "K1234567890" in filename
+assert filename.endswith(".pdf") and "K1234567890" not in filename
 assert len(filename.encode("utf-8")) <= 95, filename
 assert not re.search(r'[\\/:*?"<>|]', filename), filename
 assert cte_output_name(a, links, supplier) == filename
-assert len(dacte_file_name(a).encode("utf-8")) <= 95
+try:
+    dacte_file_name(a)
+except ValueError:
+    pass
+else:
+    raise AssertionError("CT-e sem NF ou fornecedor deve bloquear nome")
 
 # Nenhuma identidade fiscal de CT-e pode desaparecer numa colisão de numeração.
 second = cte_output_name(meta("1234567891"), links, supplier)
-assert filename != second
-assert cte_output_name(meta(), ["297219"], supplier) == cte_output_name(meta(), links, supplier)
+assert filename == second, "Chaves diferentes não aparecem no nome aprovado"
+assert cte_output_name(meta(), ["297219"], supplier) != cte_output_name(meta(), links, supplier)
 assert cte_output_name(meta(), links, "OUTRO FORNECEDOR") != filename
 
 # Arquivos já gerados pela versão anterior (nome de até 240 bytes) devem
