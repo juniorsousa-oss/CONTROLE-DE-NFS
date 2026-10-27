@@ -139,6 +139,56 @@ with zipfile.ZipFile(io.BytesIO(
 # Restaura o ID normal para os demais cenários.
 state.cte_links[0]["linked_file_ids"]=["nf-1"]
 
+# Remessa fiscal referenciada pelo CT-e, mas sem pré-nota: gera PDF
+# separado, não altera o total de NF-e do lote principal.
+aux_key = (
+    "31" + "2610" + "14524129000103" + "55" + "001" +
+    "000034429" + "1" + "12345678" + "0"
+)
+assert len(aux_key) == 44
+state.cte_links[0]["refs_nfe"] = [nfe_key, aux_key]
+state.cte_auxiliary_remessas = {
+    aux_key: {
+        "chave": aux_key, "numero": "34429", "cnpj": "14524129000103",
+        "fornecedor": "SAREL", "natureza_fiscal": "SIMPLES REMESSA",
+        "arquivo_final": "NF-34429 - REMESSA SEM PRE-NOTA.pdf",
+        "bytes": b"%PDF-1.4 AUXILIAR",
+    }
+}
+remessa_outputs,remessa_manifest=make_zips(df)
+assert len(remessa_outputs)==3
+assert len(remessa_manifest)==3
+assert state.last_generation_audit["nf_geradas"]==1
+assert state.last_generation_audit["nf_remessas_auxiliares"]==1
+remessas = [
+    r for r in remessa_manifest
+    if r.get("origem_dados")=="REMESSA_AUXILIAR_SEM_PRE_NOTA"
+]
+assert len(remessas)==1 and remessas[0]["natureza"]=="SIMPLES REMESSA"
+archive_bytes = next(
+    data for name,data in remessa_outputs.items()
+    if name.startswith("REMESSAS SEM PRE-NOTA")
+)
+with zipfile.ZipFile(io.BytesIO(archive_bytes)) as archive:
+    assert archive.namelist()==["NF-34429 - REMESSA SEM PRE-NOTA.pdf"]
+    assert archive.read(archive.namelist()[0])==b"%PDF-1.4 AUXILIAR"
+with zipfile.ZipFile(io.BytesIO(
+    next(v for k,v in remessa_outputs.items() if k.startswith("CTE"))
+)) as archive:
+    ctename=archive.namelist()[0]
+    assert "NF-10913+34429" in ctename
+    assert "K" not in ctename.split(" - ")[-1]
+
+# A inclusão sem XML validado ou fora das referências permanece bloqueada.
+state.cte_auxiliary_remessas={}
+try:
+    make_zips(df)
+except ValueError as exc:
+    assert "CT-e" in str(exc) or "LOTE BLOQUEADO" in str(exc)
+else:
+    raise AssertionError("Não pode omitir uma remessa ainda referenciada pelo CT-e.")
+state.cte_links[0]["refs_nfe"]=[nfe_key]
+
 # A exclusão fiscal documentada para tomador não-SETTA é permitida; não cria DACTE.
 state.cte_links=[]
 state.cte_ignored_non_setta=[{"chave_cte":cte_key,"tomador":"OUTRA EMPRESA"}]
