@@ -119,6 +119,7 @@ from nf_prazo_dashboard import (
 from nf_batch_display import add_cte_links_to_batch_view
 import nf_xml_library
 import nf_avulsa
+from nf_remessa_auxiliary import load_auxiliary_remessa
 from nf_batch_integrity import validate_batch_selection, validate_zip_manifest, cte_reference_coverage
 from supplier_import import validate_supplier_report
 from nf_final_priority import apply_final_manual_priorities
@@ -575,6 +576,7 @@ def init():
         "prefilter_files": {},
         "prefilter_stats": {},
         "cte_links": [],
+        "cte_auxiliary_remessas": {},
         "cte_rejected": [],
         "cte_outputs": {},
         "cte_ignored_count": 0,
@@ -3598,6 +3600,10 @@ def _current_nf_zip_signature(
              tuple(sorted(str(k) for k in c.get("linked_file_ids") or [])))
             for c in ctes
         ),
+        "remessas_sem_pre_nota": sorted(
+            (key, hashlib.sha256(aux.get("bytes") or b"").hexdigest())
+            for key, aux in (st.session_state.get("cte_auxiliary_remessas") or {}).items()
+        ),
     }
     return hashlib.sha256(
         json.dumps(concise, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -3644,12 +3650,14 @@ def make_zip_outputs(df: pd.DataFrame):
             "fornecedor": row.get("pre_nota_fornecedor"),
         }), axis=1,
     )
+    validated_auxiliary = dict(st.session_state.get("cte_auxiliary_remessas") or {})
     validate_batch_selection(
         active,
         marked_snapshot.to_dict("records"),
         marked_work.to_dict("records"),
         st.session_state.get("pdfs") or {},
         list(st.session_state.get("cte_links") or []),
+        validated_auxiliary,
     )
     outputs: dict[str, bytes] = {}
     manifest: list[dict] = []
@@ -3935,12 +3943,17 @@ def make_zip_outputs(df: pd.DataFrame):
                         f"CT-e {cte.get('numero_cte') or ''} sem fornecedor "
                         "confirmado nas NF-es vinculadas. Confira a etapa 2."
                     )
+                all_referenced_numbers = [
+                    normalized_nf(digits_only(ref)[25:34])
+                    for ref in cte.get("refs_nfe") or []
+                    if len(digits_only(ref)) == 44 and digits_only(ref)[20:22] == "55"
+                ] or list(cte.get("linked_nf_numbers") or [])
                 cte_name = (
                     cte_zip_safe_name(
                         original_name,
                         str(cte.get("numero_cte") or ""),
                         str(cte.get("transportadora") or ""),
-                        list(cte.get("linked_nf_numbers") or []),
+                        all_referenced_numbers,
                         str(cte.get("chave_cte") or ""),
                         supplier_name,
                     )
@@ -3983,15 +3996,7 @@ def make_zip_outputs(df: pd.DataFrame):
                             "chave_cte": str(
                                 cte.get("chave_cte") or ""
                             ),
-                            "nfs_vinculadas": ", ".join(
-                                [
-                                    normalized_nf(value)
-                                    for value in (
-                                        cte.get("linked_nf_numbers") or []
-                                    )
-                                    if normalized_nf(value)
-                                ]
-                            ),
+                            "nfs_vinculadas": ", ".join(all_referenced_numbers),
                             "transportadora": str(
                                 cte.get("transportadora") or ""
                             ),
@@ -4021,10 +4026,62 @@ def make_zip_outputs(df: pd.DataFrame):
         zip_name = f"CTE´s - {date_label} - {company}.zip"
         outputs[zip_name] = buffer.getvalue()
 
+    # Remessas sem pré-nota são anexos fiscais comprovados por XML.
+    # Nunca ganham vencimento, cobrança ou carimbo de material recebido.
+    if validated_auxiliary:
+        aux_companies = {}
+        for cte in st.session_state.get("cte_links") or []:
+            keys = {digits_only(ref) for ref in cte.get("refs_nfe") or []}
+            for company, company_ctes in ctes_by_company.items():
+                if cte not in company_ctes:
+                    continue
+                for key in keys & set(validated_auxiliary):
+                    aux_companies.setdefault(key, set()).add(company)
+        for key in validated_auxiliary:
+            if len(aux_companies.get(key, set())) != 1:
+                raise ValueError(
+                    "LOTE BLOQUEADO: remessa auxiliar sem destino SETTA "
+                    "unívoco entre os CT-es selecionados."
+                )
+        for company in ("SEN", "SEE", "STA"):
+            group_keys = [
+                key for key in sorted(validated_auxiliary)
+                if company in aux_companies.get(key, set())
+            ]
+            if not group_keys:
+                continue
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+                for key in group_keys:
+                    aux = validated_auxiliary[key]
+                    archive.writestr(aux["arquivo_final"], aux["bytes"])
+                    manifest.append({
+                        "lote_id": batch,
+                        "arquivo_original": "BIBLIOTECA XML - REMESSA SEM PRE-NOTA",
+                        "arquivo_final": aux["arquivo_final"],
+                        "tipo_documento": "NF-e",
+                        "chave_nfe": key,
+                        "numero_nf": aux["numero"],
+                        "cnpj_fornecedor": aux["cnpj"],
+                        "fornecedor_padrao": aux["fornecedor"],
+                        "natureza": "SIMPLES REMESSA",
+                        "origem_dados": "REMESSA_AUXILIAR_SEM_PRE_NOTA",
+                        "status": "REALIZADO",
+                        "operador": None,
+                        "recebido_em": processed_at,
+                        "pdf_criado_em": processed_at,
+                        "processado_em": processed_at,
+                        "carimbo_aplicado": False,
+                        "empresa_sigla": company,
+                        "prioridade_mrp": False,
+                    })
+            outputs[f"REMESSAS SEM PRE-NOTA - {date_label} - {company}.zip"] = buffer.getvalue()
+
     nf_manifest_count = sum(
         1
         for item in manifest
         if not is_cte_document_type(item.get("tipo_documento"))
+        and item.get("origem_dados") != "REMESSA_AUXILIAR_SEM_PRE_NOTA"
     )
     cte_manifest_count = sum(
         1
@@ -4068,6 +4125,7 @@ def make_zip_outputs(df: pd.DataFrame):
         "nf_recebidas": int(_link_stats.get("nf_classificados") or expected_nf_count),
         "nf_vinculadas": expected_nf_count,
         "nf_geradas": nf_manifest_count,
+        "nf_remessas_auxiliares": len(validated_auxiliary),
         "cte_recebidos": int(_link_stats.get("cte_classificados") or expected_cte_count),
         "cte_vinculados": expected_cte_count,
         "cte_gerados": cte_manifest_count,
@@ -4905,6 +4963,7 @@ def _reset_nf_session_flow() -> None:
     st.session_state.prefilter_files = {}
     st.session_state.prefilter_stats = {}
     st.session_state.cte_links = []
+    st.session_state.cte_auxiliary_remessas = {}
     st.session_state.cte_rejected = []
     st.session_state.cte_outputs = {}
     st.session_state.cte_ignored_count = 0
@@ -5081,6 +5140,7 @@ def _activate_nf_document_batch(selection: set[str]) -> bool:
         st.session_state.prefilter_files = {}
         st.session_state.prefilter_stats = {}
         st.session_state.cte_links = []
+        st.session_state.cte_auxiliary_remessas = {}
         st.session_state.cte_rejected = []
         st.session_state.cte_outputs = {}
         st.session_state.cte_ignored_non_setta = []
@@ -7558,7 +7618,11 @@ def render_cte_linking_stage() -> None:
                 )
                 final_name = cte_output_name(
                     meta,
-                    nf_numbers,
+                    [
+                        normalized_nf(digits_only(key)[25:34])
+                        for key in meta.refs_nfe
+                        if len(digits_only(key)) == 44
+                    ],
                     supplier_name,
                 )
 
@@ -8405,7 +8469,11 @@ def render_document_linking_stage() -> None:
                     )
                     final_name = cte_output_name(
                         meta,
-                        nf_numbers,
+                        [
+                            normalized_nf(digits_only(key)[25:34])
+                            for key in meta.refs_nfe
+                            if len(digits_only(key)) == 44
+                        ],
                         supplier_name,
                     )
                     chave_cte = meta.chave
@@ -9557,6 +9625,7 @@ def render_file_processing():
         st.session_state.prefilter_files = {}
         st.session_state.prefilter_stats = {}
         st.session_state.cte_links = []
+        st.session_state.cte_auxiliary_remessas = {}
         st.session_state.cte_rejected = []
         st.session_state.cte_outputs = {}
         st.session_state.cte_ignored_count = 0
