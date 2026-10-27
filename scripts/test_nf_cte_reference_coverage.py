@@ -58,6 +58,18 @@ selected.append({
     "cnpj_fornecedor": cnpj_tasco, "fornecedor_padrao": supplier
 })
 assert cte_reference_coverage(ctes[0], selected)["complete"]
+# Sem pré-nota, uma remessa validada no XML cobre só a referência fiscal,
+# permanecendo fora das NFs selecionadas.
+auxiliary = {ref_344293: {
+    "chave": ref_344293, "numero": "344293", "cnpj": cnpj_tasco,
+    "bytes": b"%PDF-1.4", "natureza_fiscal": "REMESSA"
+}}
+aux_coverage = cte_reference_coverage(ctes[0], selected[:1], auxiliary)
+assert aux_coverage["complete"] and aux_coverage["auxiliary"] == ["344293"]
+assert aux_coverage["covered"] == ["344501"]
+assert not cte_reference_coverage(
+    ctes[0], selected[:1], {ref_344293: {**auxiliary[ref_344293], "cnpj": "00000000000000"}}
+)["complete"]
 
 # Nenhum emissor homônimo ou CNPJ divergente pode dar falso positivo.
 wrong = [{**selected[0], "cnpj_fornecedor": "82110818000393"}]
@@ -72,7 +84,8 @@ assert cte_reference_coverage(ctes[1], pdf_only)["complete"]
 assert not cte_reference_coverage(ctes[1], pdf_only + pdf_only)["complete"]
 
 app = Path("streamlit_app.py").read_text("utf-8")
-assert "cte_reference_coverage(cte, selected_rows)" in app
+assert "cte_reference_coverage(" in app
+assert "cte, selected_rows, verified_remessas" in app
 assert "TODAS AS NFs DO CT-e" in app
 assert "NFs FORA DO LOTE" in app
 assert "TRANSPORTADORA (EMITENTE CT-e)" in app
