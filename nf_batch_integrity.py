@@ -32,6 +32,7 @@ def validate_batch_selection(
     work: list[dict],
     pdfs: dict,
     ctes: list[dict],
+    auxiliary: dict[str, dict] | None = None,
 ) -> None:
     """A seleção confirmada é a única fonte de autorização da geração."""
     if not selected_keys or not snapshot or not work:
@@ -96,6 +97,22 @@ def validate_batch_selection(
             if len(pair[1]) == 14:
                 pdf_only_by_identity.setdefault(pair, []).append(item)
 
+    auxiliary = auxiliary or {}
+    cte_references = {
+        _digits(ref) for cte in ctes for ref in cte.get("refs_nfe") or []
+    }
+    for key, aux in auxiliary.items():
+        if (
+            key not in cte_references or key != _digits(aux.get("chave"))
+            or _number(key[25:34]) != _number(aux.get("numero"))
+            or key[6:20] != _digits(aux.get("cnpj"))
+            or not aux.get("bytes")
+            or "REMESSA" not in str(aux.get("natureza_fiscal") or "").upper()
+        ):
+            raise ValueError(
+                "LOTE BLOQUEADO: remessa auxiliar não corresponde ao XML "
+                "referenciado por um CT-e selecionado."
+            )
     cte_ids = set()
     for cte in ctes:
         cte_key = _digits(cte.get("chave_cte"))
@@ -111,7 +128,7 @@ def validate_batch_selection(
             for ref in refs:
                 if len(ref) != 44 or ref[20:22] != "55":
                     unverified.append(ref)
-                elif ref not in valid_nf_keys:
+                elif ref not in valid_nf_keys and ref not in auxiliary:
                     pair = (_number(ref[25:34]), ref[6:20])
                     if len(pdf_only_by_identity.get(pair, [])) != 1:
                         unverified.append(ref)
@@ -125,14 +142,21 @@ def validate_batch_selection(
                 f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
                 "não tem vínculo seguro ao lote selecionado."
             )
-        if numbers and not numbers.issubset(valid_numbers):
+        valid_cte_numbers = valid_numbers | {
+            _number(aux.get("numero")) for key, aux in auxiliary.items()
+            if key in refs
+        }
+        if numbers and not numbers.issubset(valid_cte_numbers):
             raise ValueError(
                 f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
                 "informa NFs fora da seleção."
             )
 
 
-def cte_reference_coverage(cte: dict, selected_nfs: list[dict]) -> dict:
+def cte_reference_coverage(
+    cte: dict, selected_nfs: list[dict],
+    auxiliary: dict[str, dict] | None = None,
+) -> dict:
     """Exibe TODAS as NF-es citadas no XML, incluindo as não selecionadas.
 
     A referência só é considerada coberta se houver chave exata ou, para
@@ -141,8 +165,10 @@ def cte_reference_coverage(cte: dict, selected_nfs: list[dict]) -> dict:
     refs = list(dict.fromkeys(
         _digits(key) for key in cte.get("refs_nfe") or [] if _digits(key)
     ))
+    auxiliary = auxiliary or {}
     cited = []
     covered = []
+    auxiliaries = []
     missing = []
     invalid = []
     for ref in refs:
@@ -166,10 +192,17 @@ def cte_reference_coverage(cte: dict, selected_nfs: list[dict]) -> dict:
         ]
         if len(exact) == 1 or (not exact and len(pdf_only) == 1):
             covered.append(number)
+        elif (
+            ref in auxiliary and _digits(auxiliary[ref].get("chave")) == ref
+            and _digits(auxiliary[ref].get("cnpj")) == cnpj
+            and _number(auxiliary[ref].get("numero")) == number
+            and bool(auxiliary[ref].get("bytes"))
+        ):
+            auxiliaries.append(number)
         else:
             missing.append(number)
     return {
-        "cited": cited, "covered": covered,
+        "cited": cited, "covered": covered, "auxiliary": auxiliaries,
         "missing": missing, "invalid": invalid,
         "complete": bool(refs) and not missing and not invalid,
     }
