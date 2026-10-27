@@ -9363,6 +9363,8 @@ def render_ready_file_stage() -> None:
     linked_ctes = list(st.session_state.get("cte_links") or [])
     if linked_ctes:
         selected_rows = merged.to_dict("records")
+        verified_remessas = dict(st.session_state.get("cte_auxiliary_remessas") or {})
+        candidate_remessas = {}
         mapped_nf = {
             str(row.get("file_id") or ""): normalized_nf(row.get("numero_nf"))
             for _, row in merged.iterrows()
@@ -9374,13 +9376,41 @@ def render_ready_file_stage() -> None:
                 str(value) for value in (cte.get("linked_file_ids") or [])
                 if str(value).strip()
             ]
-            covered = cte_reference_coverage(cte, selected_rows)
+            covered = cte_reference_coverage(
+                cte, selected_rows, verified_remessas
+            )
+            for missing_number in covered["missing"]:
+                for ref in cte.get("refs_nfe") or []:
+                    ref = digits_only(ref)
+                    if (len(ref) == 44 and ref[20:22] == "55"
+                            and normalized_nf(ref[25:34]) == missing_number):
+                        # Somente fornecedor das NFs do MESMO CT-e pode ser
+                        # referência para conferência de remessa sem pré-nota.
+                        same_cte_issuers = {
+                            digits_only(row.get("cnpj_fornecedor"))
+                            for row in selected_rows
+                            if digits_only(row.get("chave_nfe")) in {
+                                digits_only(x) for x in cte.get("refs_nfe") or []
+                            } and len(digits_only(row.get("cnpj_fornecedor"))) == 14
+                        }
+                        if not same_cte_issuers:
+                            same_cte_issuers = {
+                                digits_only(row.get("cnpj_fornecedor"))
+                                for row in selected_rows
+                                if normalized_nf(row.get("numero_nf")) in covered["covered"]
+                                and len(digits_only(row.get("cnpj_fornecedor"))) == 14
+                            }
+                        if same_cte_issuers:
+                            candidate_remessas.setdefault(ref, set()).update(
+                                same_cte_issuers
+                            )
             # XML: a coluna registra TODOS os documentos fiscais referenciados,
             # mesmo que nenhum deles esteja selecionado para este lote.
             has_refs = bool(cte.get("refs_nfe"))
             if has_refs:
                 all_numbers = list(dict.fromkeys(covered["cited"]))
                 in_batch = list(dict.fromkeys(covered["covered"]))
+                aux_in_batch = list(dict.fromkeys(covered["auxiliary"]))
                 absent = list(dict.fromkeys(covered["missing"]))
                 invalid_refs = covered["invalid"]
             else:
@@ -9390,6 +9420,7 @@ def render_ready_file_stage() -> None:
                     mapped_nf.get(file_id, "") for file_id in linked_ids
                     if mapped_nf.get(file_id, "")
                 })
+                aux_in_batch = []
                 all_numbers = in_batch
                 absent = []
                 invalid_refs = []
@@ -9401,6 +9432,18 @@ def render_ready_file_stage() -> None:
                 or str(cte.get("fornecedor_vinculado") or "").strip()
             )
             cte_number = str(cte.get("numero_cte") or "").strip()
+            try:
+                preview_name = cte_zip_safe_name(
+                    str(cte.get("arquivo_final") or cte.get("arquivo_original") or ""),
+                    cte_number,
+                    str(cte.get("transportadora") or ""),
+                    all_numbers,
+                    str(cte.get("chave_cte") or ""),
+                    supplier,
+                )
+            except ValueError as exc:
+                preview_name = f"ERRO DE RENOMEAÇÃO: {exc}"
+                invalid_refs.append("NOME INCOMPATÍVEL")
             blocked = bool(absent or invalid_refs or not in_batch)
             if blocked:
                 cte_outside_selection.append({
@@ -9413,11 +9456,10 @@ def render_ready_file_stage() -> None:
                 "FORNECEDOR DAS NFs": supplier or "NÃO CONFIRMADO",
                 "TODAS AS NFs DO CT-e": ", ".join(all_numbers) or "SEM CHAVES NO XML",
                 "NFs NESTE LOTE": ", ".join(in_batch),
+                "REMESSAS SEM PRÉ-NOTA": ", ".join(aux_in_batch),
                 "NFs FORA DO LOTE": ", ".join(absent),
                 "CONFERÊNCIA": "REVISAR VÍNCULOS" if blocked else "CONFERIDO",
-                "ARQUIVO DACTE": str(
-                    cte.get("arquivo_final") or cte.get("arquivo_original") or ""
-                ),
+                "ARQUIVO DACTE": preview_name,
             })
         st.markdown("#### CT-e VINCULADOS ÀS NFs DESTE LOTE")
         st.caption(
@@ -9433,9 +9475,42 @@ def render_ready_file_stage() -> None:
             st.error(
                 f"{len(cte_outside_selection)} CT-e(s) possuem NF(s) fora da "
                 "seleção ou referência fiscal sem comprovação. ZIP BLOQUEADO. "
-                "Revise as NF-es na Etapa 1 e reconsulte na Etapa 2; "
-                "não é permitido excluir referências do XML para forçar o vínculo."
+                "Uma NF auxiliar de remessa poderá ser incluída separadamente, "
+                "somente após validar seu XML e sua natureza fiscal."
             )
+            if candidate_remessas:
+                st.caption(
+                    "REMESSAS SEM PRÉ-NOTA · O aplicativo consultará cada chave "
+                    "de NF-e na Biblioteca XML e só incluirá documentos cuja "
+                    "natureza fiscal indique REMESSA e cujo fornecedor confira "
+                    "com as NFs deste CT-e. Elas não terão cobrança de lançamento."
+                )
+                if st.button(
+                    "VALIDAR E INCLUIR REMESSAS SEM PRÉ-NOTA",
+                    key="stage3_accept_verified_remessas",
+                    use_container_width=True,
+                ):
+                    try:
+                        additions = {}
+                        for key, suppliers in candidate_remessas.items():
+                            if key in verified_remessas:
+                                continue
+                            additions[key] = load_auxiliary_remessa(
+                                key, set(candidate_remessas), suppliers
+                            )
+                        st.session_state.cte_auxiliary_remessas = {
+                            **verified_remessas, **additions
+                        }
+                        st.success(
+                            f"{len(additions)} remessa(s) fiscalmente "
+                            "confirmada(s) e separada(s) das pré-notas."
+                        )
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(
+                            f"A remessa não foi liberada: {exc}. Nenhum "
+                            "documento desse processamento foi incluído."
+                        )
             _setta_dataframe(
                 pd.DataFrame(cte_outside_selection),
                 use_container_width=True, hide_index=True,
