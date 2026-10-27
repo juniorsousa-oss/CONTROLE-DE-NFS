@@ -581,19 +581,21 @@ def cte_output_name(
     linked_nf_numbers: list[str],
     supplier_name: str = "",
 ) -> str:
-    """Padrão simplificado: CT-e, transportadora e identificador fiscal.
+    """CT-e + transportadora + fornecedor + identificador fiscal.
 
-    NFs relacionadas e fornecedor seguem no DACTE/manifesto, nunca no nome
-    do arquivo. O sufixo da chave diferencia CT-es com o mesmo número.
+    A lista de NFs não faz parte do arquivo, mas permanece no DACTE,
+    na vinculação e no manifesto. Não extrapola o limite do Windows.
     """
     cte_number = _digits(meta.numero) or "SEM_CTE"
-    carrier = _compact_filename_field(meta.emitente)[:45].rstrip(" .")
+    carrier = _compact_filename_field(meta.emitente)[:32].rstrip(" .")
+    supplier = (
+        _compact_filename_field(supplier_name)[:37].rstrip(" .")
+        if str(supplier_name or "").strip() else ""
+    )
     key = _digits(getattr(meta, "chave", ""))
     if len(key) == 44:
         identifier = f"K{key[-10:]}"
     else:
-        # Legado sem chave: identificador determinístico incluindo os vínculos
-        # para evitar colisões quando números de CT-e se repetem.
         nfs = sorted(set(
             raw.lstrip("0") or "0"
             for value in linked_nf_numbers
@@ -607,18 +609,73 @@ def cte_output_name(
         ).hexdigest()[:10].upper()
 
     def make_name() -> str:
-        return f"CTE-{cte_number} - {carrier} - {identifier}.pdf"
+        pieces = [f"CTE-{cte_number}", carrier]
+        if supplier:
+            pieces.append(supplier)
+        pieces.append(identifier)
+        return " - ".join(pieces) + ".pdf"
 
     name = make_name()
-    while len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES and len(carrier) > 8:
-        carrier = carrier[:-1].rstrip(" .")
+    # Reduzir primeiro o nome mais longo e preservar uma parte legível de ambos.
+    while len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES:
+        if len(supplier) > 12 and len(supplier) >= len(carrier):
+            supplier = supplier[:-1].rstrip(" .")
+        elif len(carrier) > 8:
+            carrier = carrier[:-1].rstrip(" .")
+        elif len(supplier) > 8:
+            supplier = supplier[:-1].rstrip(" .")
+        else:
+            raise ValueError(
+                f"CT-e {cte_number}: não é possível compactar o nome "
+                "sem perder a identidade do documento."
+            )
         name = make_name()
-    if len(name.encode("utf-8")) > MAX_CTE_PDF_FILENAME_BYTES:
-        raise ValueError(
-            f"CT-e {cte_number}: nome excede o limite seguro mesmo compactado. "
-            "Confira a numeração do documento."
-        )
     return name
+
+
+def cte_supplier_from_rows(cte: dict, rows: list[dict]) -> str:
+    """Resolve fornecedor somente com referência segura às NFs do lote.
+
+    Prioriza chave de NF-e, depois ID local; número sozinho só se inequívoco.
+    Não escolhe um fornecedor arbitrário em documentos homônimos.
+    """
+    def doc(value: object) -> str:
+        return re.sub(r"\\D", "", str(value or ""))
+
+    refs = {doc(value) for value in cte.get("refs_nfe") or []}
+    refs = {key for key in refs if len(key) == 44 and key[20:22] == "55"}
+    ids = {str(x) for x in cte.get("linked_file_ids") or [] if str(x)}
+    numbers = {doc(x).lstrip("0") or "0" for x in cte.get("linked_nf_numbers") or [] if doc(x)}
+
+    matched = [
+        row for row in rows
+        if refs and doc(row.get("chave_nfe")) in refs
+    ]
+    if not matched and ids:
+        matched = [row for row in rows if str(row.get("file_id") or "") in ids]
+    if not matched and numbers:
+        subset = []
+        for number in numbers:
+            candidates = [
+                row for row in rows
+                if (doc(row.get("numero_nf")).lstrip("0") or "0") == number
+            ]
+            # Número sem chave não desambigua filiais e fornecedores homônimos.
+            fiscal_keys = {doc(row.get("chave_nfe")) for row in candidates}
+            if len(candidates) == 1 or (
+                candidates and len(fiscal_keys) == 1 and "" not in fiscal_keys
+            ):
+                subset.extend(candidates)
+        matched = subset
+
+    suppliers = {
+        str(row.get("fornecedor_padrao") or "").strip()
+        for row in matched
+        if str(row.get("fornecedor_padrao") or "").strip()
+    }
+    if not suppliers:
+        return ""
+    return next(iter(suppliers)) if len(suppliers) == 1 else "MULTIPLOS FORNECEDORES"
 
 
 def cte_zip_safe_name(
@@ -627,20 +684,13 @@ def cte_zip_safe_name(
     transportadora: str,
     nfs_vinculadas: list[str],
     chave: str = "",
+    supplier_name: str = "",
 ) -> str:
-    """Padroniza também downloads de CT-es criados na versão anterior.
-
-    A alteração é exclusiva do nome no ZIP, nunca do PDF, da chave fiscal,
-    das NFs vinculadas ou dos registros já persistidos no banco.
-    """
+    """Renomeia PDFs antigos dentro dos novos ZIPs, sem alterar o conteúdo."""
     from types import SimpleNamespace
     return cte_output_name(
-        SimpleNamespace(
-            numero=numero,
-            emitente=transportadora,
-            chave=chave,
-        ),
+        SimpleNamespace(numero=numero, emitente=transportadora, chave=chave),
         nfs_vinculadas,
-        # No legado sem chave, o nome original distingue cópias homônimas.
-        supplier_name=str(original or "") if len(_digits(chave)) != 44 else "",
+        # Nome do fornecedor identificado pela NF, não pela transportadora.
+        supplier_name=supplier_name,
     )
