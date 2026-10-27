@@ -31,10 +31,11 @@ meta = SimpleNamespace(numero="8618029", emitente="ALFA TRANSPORTES EIRELI",
 ctename = cte_output_name(meta, ["76516", "76515"], "ARTECHE EDC")
 assert "CTE-8618029 - ALFA TRANSPORTES EIRELI -" in ctename, ctename
 assert "NF-" not in ctename, ctename
+assert "ARTECHE EDC" in ctename, ctename
 assert len(ctename.encode("utf-8")) <= 95, ctename
 assert "MAIS" not in ctename, ctename
-assert ctename == cte_output_name(meta, ["76516", "76516"], "ARTECHE"), ctename
-assert ctename == cte_output_name(meta, [], "ARTECHE"), ctename
+assert ctename != cte_output_name(meta, ["76516", "76516"], "OUTRO FORNECEDOR"), ctename
+assert ctename == cte_output_name(meta, [], "ARTECHE EDC"), ctename
 assert ctename == cte_output_name(
     meta, ["76516", "76515", "76519", "76520"], "ARTECHE"
 ), ctename
