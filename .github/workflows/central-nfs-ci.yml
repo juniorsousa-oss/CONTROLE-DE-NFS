@@ -33,6 +33,8 @@ jobs:
         run: python -m scripts.test_nf_supplier_cnpj_sidebar_ui
       - name: Testar lote congelado até a geração dos PDFs
         run: python -m scripts.test_nf_stage3_batch_snapshot
+      - name: Impedir ZIP com NF ou CT-e fora da seleção aprovada
+        run: python -m scripts.test_nf_batch_integrity
       - name: Testar prioridade manual na confirmação final
         run: python -m scripts.test_nf_final_priority
       - name: Testar busca manual NF mais CNPJ por XML confirmado
