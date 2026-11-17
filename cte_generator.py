@@ -340,15 +340,34 @@ def _text_box(
     bold: bool = False,
     align: int = 0,
 ):
-    page.insert_textbox(
-        fitz.Rect(x0, y0, x1, y1),
-        str(value or ""),
-        fontsize=size,
-        fontname="Times-Bold" if bold else "Times-Roman",
-        color=BLACK,
-        align=align,
-        lineheight=1.0,
-        overlay=True,
+    """Imprime o conteúdo integral ou bloqueia o PDF: nunca omitir texto.
+
+    PyMuPDF insert_textbox() retorna um número negativo quando o texto não
+    cabe. Antes ignorávamos esse retorno e entregávamos PDFs sem emitente,
+    título DACTE ou observações. Reduzimos a fonte até o limite de leitura;
+    se nem assim couber, informamos o erro em vez de perder dados fiscais.
+    """
+    content = str(value or "")
+    if not content.strip():
+        return
+    rect = fitz.Rect(x0, y0, x1, y1)
+    if rect.is_empty or rect.is_infinite:
+        raise ValueError("DACTE: área de impressão inválida.")
+    minimum = max(4.0, min(6.0, float(size) * 0.60))
+    current = float(size)
+    while current >= minimum - 0.001:
+        remaining = page.insert_textbox(
+            rect, content,
+            fontsize=round(current, 2),
+            fontname="Times-Bold" if bold else "Times-Roman",
+            color=BLACK, align=align, lineheight=1.0, overlay=True,
+        )
+        if remaining >= 0:
+            return
+        current -= 0.25
+    raise ValueError(
+        "DACTE: texto não cabe na área de impressão, mesmo com fonte reduzida. "
+        f"Verificar campo: {content[:80]!r}. Arquivo não gerado."
     )
 
 
@@ -396,6 +415,26 @@ def _draw_barcode(page: fitz.Page, x0: float, y0: float, x1: float, y1: float, k
     draw_code128(page, x0, y0, x1, y1, key)
 
 
+def _status_exibicao(codigo: str, motivo: str) -> str:
+    """Tratamento visual; nunca altera o XML fiscal nem seus metadados.
+
+    Alguns emissores enviam $APP_NAME_FORMATED$ literalmente em xMotivo.
+    Para cStat=100 a expressão se refere ao CT-e. Tokens desconhecidos
+    não podem ir para o documento final.
+    """
+    texto = str(motivo or "").strip()
+    if codigo == "100":
+        texto = texto.replace("$APP_NAME_FORMATED$", "CT-e")
+        if not texto:
+            texto = "Autorizado o uso do CT-e"
+    if re.search(r"\$[A-Za-z][A-Za-z0-9_]*\$", texto):
+        raise ValueError(
+            "DACTE: mensagem de autorização contém marcador não resolvido "
+            "no XML. Corrigir na origem antes de gerar o PDF."
+        )
+    return texto
+
+
 def _draw_header(page: fitz.Page, data: dict, page_no: int, total_pages: int):
     _rect(page, 20, 20, 575, 138)
 
@@ -433,17 +472,21 @@ def _draw_header(page: fitz.Page, data: dict, page_no: int, total_pages: int):
     _rect(page, 390, 20, 575, 138)
     _draw_barcode(page, 398, 30, 566, 63, data["chave"])
     _text_box(page, 398, 66, 566, 84, _format_key(data["chave"]), 6.0, False, 1)
+    # O QR ocupa o canto direito; protocolo e status ficam num bloco
+    # próprio à esquerda. No layout antigo o QR sobrepunha esses textos.
+    tem_qr = bool(data.get("qr_code"))
+    right = 525 if tem_qr else 566
     _text_box(
-        page, 398, 87, 566, 105,
+        page, 398, 85, right, 109,
         f"PROTOCOLO: {data['protocolo']} {_fmt_date(data['protocolo_data'])}",
         5.8,
     )
     _text_box(
-        page, 398, 107, 566, 123,
-        f"STATUS: {data['status_codigo']} {data['status_motivo']}",
+        page, 398, 109, right, 132,
+        f"STATUS: {data['status_codigo']} {_status_exibicao(data['status_codigo'], data['status_motivo'])}",
         5.4,
     )
-    if data.get("qr_code"):
+    if tem_qr:
         _draw_qr(page, fitz.Rect(530, 88, 568, 126), data["qr_code"])
 
 
@@ -529,6 +572,14 @@ def _draw_main_page(page: fitz.Page, data: dict, page_no: int, total_pages: int,
 
 def generate_dacte_pdf(raw_xml: bytes) -> bytes:
     data = _parse_cte(raw_xml)
+    if not str(data["emit"].get("nome") or "").strip():
+        raise ValueError(
+            "DACTE: XML sem razão social do emitente (emit/xNome). "
+            "Não é seguro gerar um documento sem identificar a transportadora."
+        )
+    # Valida previamente tokens, inclusive para evitar PDFs parcialmente
+    # construídos com mensagem de status inválida.
+    _status_exibicao(data["status_codigo"], data["status_motivo"])
 
     if data.get("status_codigo") and data["status_codigo"] != "100":
         # O DACTE pode ser produzido para conferência, mas deixa a situação explícita.
@@ -554,8 +605,19 @@ def generate_dacte_pdf(raw_xml: bytes) -> bytes:
                 overlay=True,
             )
 
-    output = doc.tobytes(garbage=4, deflate=True)
-    doc.close()
+    # Último controle de integridade: a transportadora e o título precisam
+    # existir no TEXTO do arquivo entregue, não apenas no nome do ZIP.
+    try:
+        page_text = re.sub(r"\s+", " ", " ".join(p.get_text() for p in doc)).casefold()
+        emitente = re.sub(r"\s+", " ", str(data["emit"]["nome"])).casefold().strip()
+        if "dacte" not in page_text or emitente not in page_text:
+            raise ValueError(
+                "DACTE: título ou razão social da transportadora não foi "
+                "renderizado no PDF. Documento bloqueado para correção."
+            )
+        output = doc.tobytes(garbage=4, deflate=True)
+    finally:
+        doc.close()
     return output
 
 
