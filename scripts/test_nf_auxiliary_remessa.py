@@ -51,12 +51,22 @@ pdfs = {"pdf-501":{"bytes":b"%PDF-1.4"}}
 aux = {k293:result}
 assert cte_reference_coverage(cte,work,aux)["complete"]
 validate_batch_selection({"344501|TASCO"},selected,work,pdfs,[cte],aux)
+# Uma remessa citada no CT-e, mas não selecionada para envio, NÃO
+# obriga a inclusão de seu DANFE. A validação auxiliar continua obrigatória
+# somente quando se optar por incluí-la fisicamente no pacote.
+validate_batch_selection({"344501|TASCO"},selected,work,pdfs,[cte],{})
+assert not cte_reference_coverage(cte,work,{})["complete"]
+assert cte_reference_coverage(cte,work,{})["eligible_for_batch"]
+
+# A remessa opcional, se anexada, deve manter o XML, número e CNPJ corretos.
 try:
-    validate_batch_selection({"344501|TASCO"},selected,work,pdfs,[cte],{})
-except ValueError:
-    pass
+    validate_batch_selection({"344501|TASCO"},selected,work,pdfs,[cte],{
+        k293: {**result,"cnpj":"00000000000000"}
+    })
+except ValueError as exc:
+    assert "LOTE BLOQUEADO" in str(exc)
 else:
-    raise AssertionError("CT-e não pode omitir remessa sem validação.")
+    raise AssertionError("Remessa auxiliar com CNPJ divergente não pode ser anexada.")
 
 # Sem inventar uma natureza para documento genérico ou de compra.
 with patch.object(remessa,"safe_nfe_record",return_value=(
