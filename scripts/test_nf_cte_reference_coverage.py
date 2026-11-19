@@ -45,6 +45,8 @@ assert report_94["cited"] == ["344293", "344501"], report_94
 assert report_94["covered"] == ["344501"], report_94
 assert report_94["missing"] == ["344293"], report_94
 assert report_94["complete"] is False, report_94
+assert report_94["eligible_for_batch"] is True, report_94
+assert report_96["eligible_for_batch"] is True, report_96
 assert report_96["complete"] and report_96["missing"] == [], report_96
 
 # A transportadora é emitente do CT-e, TASCO é fornecedor das NFs.
@@ -92,4 +94,7 @@ assert "TRANSPORTADORA (EMITENTE CT-e)" in app
 assert "FORNECEDOR DAS NFs" in app
 assert "if cte_outside_selection:" in app
 assert "ZIP BLOQUEADO" in app
+assert "blocked = bool(invalid_refs or not in_batch)" in app
+assert "CONFERIDO · LOTE PARCIAL" in app
+assert "INCLUSÃO OPCIONAL" in app
 print("NFS_CTE_FISCAL_REFERENCE_COVERAGE_OK")
