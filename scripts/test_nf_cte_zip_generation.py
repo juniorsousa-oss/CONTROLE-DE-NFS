@@ -179,14 +179,31 @@ with zipfile.ZipFile(io.BytesIO(
     assert "NF-10913+34429" in ctename
     assert "K" not in ctename.split(" - ")[-1]
 
-# A inclusão sem XML validado ou fora das referências permanece bloqueada.
+# Uma NF citada no CT-e, mas não selecionada, NÃO deve impedir a carga.
+# Sem inclusão auxiliar, o ZIP tem somente a NF selecionada + DACTE.
+# O nome e o manifesto do CT-e preservam TODAS as referências fiscais.
 state.cte_auxiliary_remessas={}
+partial_outputs,partial_manifest=make_zips(df)
+assert len(partial_outputs)==2,partial_outputs.keys()
+assert len(partial_manifest)==2,partial_manifest
+assert sum(x["tipo_documento"]=="NF-e" for x in partial_manifest)==1
+assert sum(x["tipo_documento"]=="CT-e" for x in partial_manifest)==1
+partial_cte=next(x for x in partial_manifest if x["tipo_documento"]=="CT-e")
+assert "10913" in partial_cte["nfs_vinculadas"]
+assert "34429" in partial_cte["nfs_vinculadas"]
+with zipfile.ZipFile(io.BytesIO(
+    next(data for name,data in partial_outputs.items() if name.startswith("CTE"))
+)) as archive:
+    assert len(archive.namelist())==1
+    assert "NF-10913+34429" in archive.namelist()[0]
+# Se nenhuma NF do CT-e pertence à carga, o bloqueio fiscal permanece.
+state.cte_links[0]["refs_nfe"]=[aux_key]
 try:
     make_zips(df)
 except ValueError as exc:
-    assert "CT-e" in str(exc) or "LOTE BLOQUEADO" in str(exc)
+    assert "LOTE BLOQUEADO" in str(exc)
 else:
-    raise AssertionError("Não pode omitir uma remessa ainda referenciada pelo CT-e.")
+    raise AssertionError("CT-e sem nenhuma NF vinculada à carga foi aceito")
 state.cte_links[0]["refs_nfe"]=[nfe_key]
 
 # A exclusão fiscal documentada para tomador não-SETTA é permitida; não cria DACTE.
