@@ -9379,6 +9379,7 @@ def render_ready_file_stage() -> None:
         }
         cte_preview = []
         cte_outside_selection = []
+        cte_other_references = []
         for cte in linked_ctes:
             linked_ids = [
                 str(value) for value in (cte.get("linked_file_ids") or [])
@@ -9452,11 +9453,22 @@ def render_ready_file_stage() -> None:
             except ValueError as exc:
                 preview_name = f"ERRO DE RENOMEAÇÃO: {exc}"
                 invalid_refs.append("NOME INCOMPATÍVEL")
-            blocked = bool(absent or invalid_refs or not in_batch)
+            # A cobertura parcial não invalida um CT-e: outras NF-es
+            # continuam listadas no XML, mas não devem entrar neste ZIP.
+            # Apenas vínculo inexistente ou referência inválida bloqueia.
+            blocked = bool(invalid_refs or not in_batch)
             if blocked:
                 cte_outside_selection.append({
                     "CT-e": cte_number,
-                    "NFs fora do lote": ", ".join(absent) or "REFERÊNCIA FISCAL INVÁLIDA",
+                    "Motivo": (
+                        ", ".join(invalid_refs) if invalid_refs
+                        else "NENHUMA NF VALIDADA NESTA CARGA"
+                    ),
+                })
+            elif absent:
+                cte_other_references.append({
+                    "CT-e": cte_number,
+                    "NFs não selecionadas": ", ".join(absent),
                 })
             cte_preview.append({
                 "CT-e": cte_number,
@@ -9466,14 +9478,18 @@ def render_ready_file_stage() -> None:
                 "NFs NESTE LOTE": ", ".join(in_batch),
                 "REMESSAS SEM PRÉ-NOTA": ", ".join(aux_in_batch),
                 "NFs FORA DO LOTE": ", ".join(absent),
-                "CONFERÊNCIA": "REVISAR VÍNCULOS" if blocked else "CONFERIDO",
+                "CONFERÊNCIA": (
+                    "REVISAR VÍNCULOS" if blocked
+                    else ("CONFERIDO · LOTE PARCIAL" if absent else "CONFERIDO")
+                ),
                 "ARQUIVO DACTE": preview_name,
             })
         st.markdown("#### CT-e VINCULADOS ÀS NFs DESTE LOTE")
         st.caption(
             "TRANSPORTADORA é quem emitiu o CT-e. FORNECEDOR é o emitente "
-            "da mercadoria nas NFs. As referências do XML devem estar "
-            "integralmente cobertas pelo lote para liberar o ZIP."
+            "da mercadoria nas NFs. O CT-e pode citar outras notas além "
+            "das selecionadas; basta um vínculo fiscal exato com esta carga. "
+            "As demais referências permanecem no documento original."
         )
         _setta_dataframe(
             pd.DataFrame(cte_preview),
@@ -9481,12 +9497,28 @@ def render_ready_file_stage() -> None:
         )
         if cte_outside_selection:
             st.error(
-                f"{len(cte_outside_selection)} CT-e(s) possuem NF(s) fora da "
-                "seleção ou referência fiscal sem comprovação. ZIP BLOQUEADO. "
-                "Uma NF auxiliar de remessa poderá ser incluída separadamente, "
-                "somente após validar seu XML e sua natureza fiscal."
+                f"{len(cte_outside_selection)} CT-e(s) sem vínculo fiscal "
+                "válido com a carga atual ou com referência inválida. "
+                "ZIP BLOQUEADO até corrigir esses vínculos."
             )
-            if candidate_remessas:
+            _setta_dataframe(
+                pd.DataFrame(cte_outside_selection),
+                use_container_width=True, hide_index=True,
+            )
+            return
+        if cte_other_references:
+            st.info(
+                f"{len(cte_other_references)} CT-e(s) citam NF-es que não "
+                "serão enviadas nesta carga. Os DACTEs serão mantidos "
+                "integrais, e as outras NF-es não serão incluídas "
+                "automaticamente. Essa situação não bloqueia o ZIP."
+            )
+            _setta_dataframe(
+                pd.DataFrame(cte_other_references),
+                use_container_width=True, hide_index=True,
+            )
+        if candidate_remessas:
+            with st.expander("REMESSAS SEM PRÉ-NOTA (INCLUSÃO OPCIONAL)", expanded=False):
                 st.caption(
                     "REMESSAS SEM PRÉ-NOTA · O aplicativo consultará cada chave "
                     "de NF-e na Biblioteca XML e só incluirá documentos cuja "
@@ -9519,11 +9551,6 @@ def render_ready_file_stage() -> None:
                             f"A remessa não foi liberada: {exc}. Nenhum "
                             "documento desse processamento foi incluído."
                         )
-            _setta_dataframe(
-                pd.DataFrame(cte_outside_selection),
-                use_container_width=True, hide_index=True,
-            )
-            return
     else:
         st.caption("NENHUM CT-e VINCULADO A ESTE LOTE.")
 
