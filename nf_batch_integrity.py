@@ -124,33 +124,52 @@ def validate_batch_selection(
         ids_linked = {str(x) for x in cte.get("linked_file_ids") or [] if str(x)}
         numbers = {_number(x) for x in cte.get("linked_nf_numbers") or [] if _number(x)}
         if refs:
-            unverified = []
-            for ref in refs:
-                if len(ref) != 44 or ref[20:22] != "55":
-                    unverified.append(ref)
-                elif ref not in valid_nf_keys and ref not in auxiliary:
-                    pair = (_number(ref[25:34]), ref[6:20])
-                    if len(pdf_only_by_identity.get(pair, [])) != 1:
-                        unverified.append(ref)
-            if unverified:
+            # REFERÊNCIA FISCAL não é sinônimo de DOCUMENTO DESTA CARGA.
+            # Um CT-e pode transportar várias NF-es e a SETTA processar só
+            # parte delas agora. Todas as chaves citadas devem ser válidas,
+            # mas basta UMA NF-e da seleção com identidade fiscal comprovada.
+            # As demais continuam no XML, nome do DACTE e manifesto.
+            invalid_refs = {
+                ref for ref in refs
+                if len(ref) != 44 or ref[20:22] != "55"
+            }
+            if invalid_refs:
                 raise ValueError(
                     f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
-                    "contém referência fiscal fora das NFs selecionadas."
+                    "contém chave de NF-e inválida."
                 )
-        elif not ids_linked or not ids_linked.issubset(ids):
-            raise ValueError(
-                f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
-                "não tem vínculo seguro ao lote selecionado."
-            )
-        valid_cte_numbers = valid_numbers | {
-            _number(aux.get("numero")) for key, aux in auxiliary.items()
-            if key in refs
-        }
-        if numbers and not numbers.issubset(valid_cte_numbers):
-            raise ValueError(
-                f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
-                "informa NFs fora da seleção."
-            )
+            matched = {
+                ref for ref in refs if ref in valid_nf_keys
+                or len(pdf_only_by_identity.get(
+                    (_number(ref[25:34]), ref[6:20]), []
+                )) == 1
+            }
+            if not matched:
+                raise ValueError(
+                    f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
+                    "não referencia nenhuma NF-e validada nesta carga."
+                )
+            # Números dos vínculos internos precisam pertencer ao XML.
+            # NFs externas à carga PODEM estar entre esses números.
+            ref_numbers = {_number(ref[25:34]) for ref in refs}
+            if numbers and not numbers.issubset(ref_numbers):
+                raise ValueError(
+                    f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
+                    "possui número de NF incompatível com suas chaves fiscais."
+                )
+        else:
+            # DACTE sem XML/referências: exigir IDs ATUAIS da seleção,
+            # pois aqui não existe uma chave fiscal que restaure o vínculo.
+            if not ids_linked or not ids_linked.issubset(ids):
+                raise ValueError(
+                    f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
+                    "não tem vínculo seguro ao lote selecionado."
+                )
+            if numbers and not numbers.issubset(valid_numbers):
+                raise ValueError(
+                    f"LOTE BLOQUEADO: CT-e {cte.get('numero_cte') or cte_id} "
+                    "informa NF sem vínculo com a seleção."
+                )
 
 
 def cte_reference_coverage(
@@ -204,7 +223,10 @@ def cte_reference_coverage(
     return {
         "cited": cited, "covered": covered, "auxiliary": auxiliaries,
         "missing": missing, "invalid": invalid,
+        # 'complete' é cobertura integral, apenas informativa; NÃO é
+        # requisito para exportar o CT-e em lotes parciais.
         "complete": bool(refs) and not missing and not invalid,
+        "eligible_for_batch": bool(covered) and not invalid,
     }
 
 
