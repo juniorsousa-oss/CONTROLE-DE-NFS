@@ -70,8 +70,22 @@ rejected("PDF de outro lote", actual=[{**work[0], "file_id": "pdf-b"}])
 rejected("CT-e antigo de outra NF", transports=[
     {**cte[0], "refs_nfe": [k2], "linked_nf_numbers": ["102"]}
 ])
-rejected("CT-e incluindo NF fora do lote", transports=[
+# Um CT-e com várias NFs é válido em LOTE PARCIAL se ao menos uma
+# chave fiscal estiver no lote. As outras referências são preservadas.
+validate_batch_selection(selected, snapshot, work, pdfs, [
     {**cte[0], "refs_nfe": [k1, k2], "linked_nf_numbers": ["101", "102"]}
+])
+validate_batch_selection(selected, snapshot, work, pdfs, [
+    {**cte[0], "refs_nfe": [k1, k2], "linked_nf_numbers": ["101"]}
+])
+rejected("CT-e com nenhuma das NFs selecionadas", transports=[
+    {**cte[0], "refs_nfe": [k2], "linked_nf_numbers": ["102"]}
+])
+rejected("CT-e com chave fiscal malformada", transports=[
+    {**cte[0], "refs_nfe": [k1, "123"], "linked_nf_numbers": ["101"]}
+])
+rejected("CT-e com número interno que nem existe no XML", transports=[
+    {**cte[0], "refs_nfe": [k1, k2], "linked_nf_numbers": ["101", "99999"]}
 ])
 rejected("CT-e sem vínculo fiscal/ID", transports=[
     {**cte[0], "refs_nfe": [], "linked_file_ids": [], "linked_nf_numbers": ["101"]}
