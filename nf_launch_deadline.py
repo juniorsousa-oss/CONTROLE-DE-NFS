@@ -1,13 +1,14 @@
-"""Prazo de lançamento NF-e: 24 h de relógio, excluindo sábados e domingos.
+"""Prazo de lançamento NF-e: 24 horas nos dias úteis de Patos de Minas/MG.
 
-A janela operacional (seg-qui 07–18 h; sex 07–16 h) determina apenas
-o INÍCIO válido. Durante os dias úteis o relógio não pausa à noite.
-Feriados não estão excluídos; esta regra considera somente o fim de semana.
+Exclui sábados, domingos, feriados nacionais e municipais de Patos de Minas.
+A janela operacional (seg-qui 07-18h; sex 07-16h) define apenas o início.
+Nos dias úteis, a contagem continua durante a noite.
+Pontos facultativos não são feriados automaticamente.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from math import ceil
 from zoneinfo import ZoneInfo
 import re
@@ -47,6 +48,40 @@ def _localize(when: datetime) -> datetime:
     return when.astimezone(LOCAL_TZ)
 
 
+_FERIADOS_FIXOS = {
+    (1, 1), (4, 21), (5, 1), (9, 7), (10, 12),
+    (11, 2), (11, 15), (11, 20), (12, 25),
+    (5, 24), (6, 13), (8, 15),
+}
+
+
+def _data_pascoa(ano: int) -> date:
+    """Algoritmo gregoriano, alinhado ao calendário de feriados do banco."""
+    a = ano % 19
+    b, c = divmod(ano, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    base = h + l - 7 * m + 114
+    mes, resto = divmod(base, 31)
+    return date(ano, mes, resto + 1)
+
+
+def eh_dia_util(valor: date | datetime) -> bool:
+    """Dias úteis SETTA (nacionais + Patos de Minas, sem pontos facultativos)."""
+    dia = valor.date() if isinstance(valor, datetime) else valor
+    if not isinstance(dia, date):
+        raise TypeError("É necessária uma data válida.")
+    if dia.weekday() >= 5 or (dia.month, dia.day) in _FERIADOS_FIXOS:
+        return False
+    pascoa = _data_pascoa(dia.year)
+    return dia not in {pascoa - timedelta(days=2), pascoa + timedelta(days=60)}
+
+
 def inicio_valido_envio(enviado_em: datetime) -> datetime:
     """Move somente envios fora da janela para 07 h do próximo dia útil."""
     if not isinstance(enviado_em, datetime):
@@ -54,7 +89,7 @@ def inicio_valido_envio(enviado_em: datetime) -> datetime:
     atual = _localize(enviado_em)
     while True:
         dia = atual.weekday()  # seg=0, sex=4, sáb=5, dom=6
-        if dia >= 5:
+        if not eh_dia_util(atual.date()):
             atual = (atual + timedelta(days=1)).replace(
                 hour=7, minute=0, second=0, microsecond=0,
             )
@@ -70,11 +105,11 @@ def inicio_valido_envio(enviado_em: datetime) -> datetime:
 
 
 def prazo_lancamento(enviado_em: datetime) -> datetime:
-    """Acumula 24 horas sem contar qualquer segundo de sábado/domingo."""
+    """Acumula 24 horas sem contar finais de semana nem feriados."""
     atual = inicio_valido_envio(enviado_em)
     restante = timedelta(hours=24)
     while restante > timedelta(0):
-        if atual.weekday() >= 5:
+        if not eh_dia_util(atual.date()):
             # Volta a contar à meia-noite de segunda. O horário de abertura
             # limita apenas novos inícios, não a continuação de prazos.
             atual = (atual + timedelta(days=1)).replace(
@@ -90,7 +125,7 @@ def prazo_lancamento(enviado_em: datetime) -> datetime:
         atual = proxima_meia_noite
         restante -= disponivel
     # Se terminou exatamente no começo do sábado, vence segunda 00 h.
-    while atual.weekday() >= 5:
+    while not eh_dia_util(atual.date()):
         atual = (atual + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0,
         )
@@ -98,12 +133,10 @@ def prazo_lancamento(enviado_em: datetime) -> datetime:
 
 
 def dias_atraso_uteis(vencimento: datetime, referencia: datetime | None = None) -> int:
-    """Dias equivalentes de 24h após o vencimento, sem sábados e domingos.
+    """Dias de atraso após o prazo, sem finais de semana ou feriados.
 
-    Contagem iniciada somente após as 24h da regra de lançamento.
-    Frações positivas arredondam para cima (primeiro dia = 1).
-    O relógio continua à noite de seg-sex, assim como o prazo existente.
-    Feriados não são excluídos, pois a regra institucional atual não os trata.
+    Frações positivas são arredondadas para cima. Nos dias úteis o relógio
+    continua à noite, em alinhamento com a regra do banco.
     """
     if not isinstance(vencimento, datetime):
         return 0
@@ -118,7 +151,7 @@ def dias_atraso_uteis(vencimento: datetime, referencia: datetime | None = None) 
             hour=0, minute=0, second=0, microsecond=0
         )
         fim = min(proxima, atual)
-        if cursor.weekday() < 5:
+        if eh_dia_util(cursor.date()):
             segundos += (fim - cursor).total_seconds()
         cursor = fim
     return int(ceil(segundos / 86400)) if segundos > 0 else 0
