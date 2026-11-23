@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from html import escape
-from nf_launch_deadline import dias_atraso_uteis
+from nf_launch_deadline import dias_atraso_uteis, eh_dia_util
 
 import pandas as pd
 
@@ -148,15 +148,24 @@ def montar_email_html(rows: pd.DataFrame, date_ref: datetime, *, homologacao: bo
 
 def gerar_previa_visual_ficticia(date_ref: datetime) -> str:
     """Prévia local do design, sem API, PIN, banco fiscal ou envio de e-mail."""
-    from pandas.tseries.offsets import BDay
-
     data = pd.Timestamp(date_ref)
+
+    def data_antes_de_dias_uteis(dias: int) -> str:
+        anterior = data
+        while not eh_dia_util(anterior.date()):
+            anterior -= pd.Timedelta(days=1)
+        for _ in range(dias):
+            anterior -= pd.Timedelta(days=1)
+            while not eh_dia_util(anterior.date()):
+                anterior -= pd.Timedelta(days=1)
+        return anterior.strftime("%d/%m/%Y %H:%M")
+
     rows = pd.DataFrame([
         {
             "NF": "EXEMPLO-001234",
             "FORNECEDOR": "FORNECEDOR MODELO A LTDA (FICTÍCIO)",
             "NATUREZA": "COMPRA DE MATERIA PRIMA",
-            "DATA DE ENVIO": (data - BDay(3)).strftime("%d/%m/%Y %H:%M"),
+            "DATA DE ENVIO": data_antes_de_dias_uteis(3),
             "DIAS DE ATRASO": 2,
             "NOME DO ARQUIVO": "NF_EXEMPLO_001234_FORNECEDOR_MODELO_A.pdf",
         },
@@ -164,7 +173,7 @@ def gerar_previa_visual_ficticia(date_ref: datetime) -> str:
             "NF": "EXEMPLO-005678",
             "FORNECEDOR": "FORNECEDOR MODELO B LTDA (FICTÍCIO)",
             "NATUREZA": "COMPRA DE MATERIA PRIMA",
-            "DATA DE ENVIO": (data - BDay(2)).strftime("%d/%m/%Y %H:%M"),
+            "DATA DE ENVIO": data_antes_de_dias_uteis(2),
             "DIAS DE ATRASO": 1,
             "NOME DO ARQUIVO": "NF_EXEMPLO_005678_FORNECEDOR_MODELO_B.pdf",
         },
