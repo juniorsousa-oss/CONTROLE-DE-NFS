@@ -6739,40 +6739,7 @@ def render_nf_treatment_center() -> None:
         ):
             try:
                 outputs, manifest = make_zip_outputs(merged)
-                st.session_state.zip_outputs = outputs
-
-                if SAVE_NF_HISTORY:
-                    st.session_state.history.extend(manifest)
-                    if db.configured():
-                        try:
-                            _save_result = db.save_process_records(manifest)
-                            _inserted = int((_save_result or {}).get("inseridos", 0))
-                            if _inserted != len(manifest):
-                                raise RuntimeError(
-                                    f"Conferência do banco falhou: {len(manifest)} "
-                                    f"registro(s) esperados e {_inserted} gravado(s)."
-                                )
-                            _invalidate_process_cache()
-                            st.session_state.nf_flow_stage = 3
-                            st.success(
-                                f"ZIPs criados e {_inserted} registro(s) confirmados no Supabase. "
-                                "Nenhum PDF foi salvo no banco."
-                            )
-                        except Exception as exc:
-                            st.warning(f"ZIPs criados, mas o histórico não pôde ser gravado no Supabase: {exc}")
-                    else:
-                        st.success("ZIPs criados. Histórico mantido nesta sessão; nenhum PDF foi salvo em banco.")
-                else:
-                    # Mantém somente a carga atual para testar a conferência.
-                    # Ao processar uma nova carga, esta referência é substituída.
-                    st.session_state.current_test_manifest = manifest
-                    st.success(
-                        "ZIPs criados em modo de testes. A conferência usa apenas esta carga atual; "
-                        "nenhum histórico foi acumulado e nada foi gravado no Supabase."
-                    )
-
-                # Recarrega a central para que a etapa de baixa/confirmação
-                # apareça imediatamente na mesma tela.
+                _persist_and_release_nf_zip(outputs, manifest)
                 st.rerun()
             except Exception as exc:
                 st.error(f"Falha ao gerar ZIP: {exc}")
@@ -9188,6 +9155,118 @@ def render_document_linking_stage() -> None:
 
 
 
+def _persist_and_release_nf_zip(outputs: dict, manifest: list[dict]) -> None:
+    """Não disponibilizar ZIP até comprovar a gravação dos registros no banco."""
+    if not outputs or not manifest:
+        raise RuntimeError("O lote não contém arquivos e registros válidos.")
+    audit = dict(st.session_state.get("last_generation_audit") or {})
+    if SAVE_NF_HISTORY:
+        result = db.persist_generated_batch(manifest)
+        audit["documentos_reutilizados"] = result["reused"]
+        audit["registros_persistidos"] = len(result["records"])
+        st.session_state.history.extend(result["records"])
+        _invalidate_process_cache()
+    else:
+        st.session_state.current_test_manifest = [
+            {**row, "id": str(row.get("id") or uuid.uuid4())} for row in manifest
+        ]
+        audit["registros_persistidos"] = len(manifest)
+    audit["lote_persistido"] = True
+    st.session_state.last_generation_audit = audit
+    st.session_state.zip_outputs = outputs
+    st.session_state.nf_flow_stage = 3
+
+
+def _render_persisted_nf_zip() -> None:
+    audit = st.session_state.get("last_generation_audit") or {}
+    if audit:
+        st.success(
+            "ARQUIVOS GERADOS · "
+            f"NF {audit.get('nf_geradas', 0)} · "
+            f"CT-e {audit.get('cte_gerados', 0)}"
+        )
+
+    all_zips_buffer = io.BytesIO()
+    with zipfile.ZipFile(
+        all_zips_buffer,
+        "w",
+        compression=zipfile.ZIP_STORED,
+    ) as master_zip:
+        for zip_name, zip_bytes in st.session_state.zip_outputs.items():
+            master_zip.writestr(zip_name, zip_bytes)
+
+    all_zips_name = (
+        f"{now_local():%d-%m-%Y} - ARQUIVOS PRONTOS - NOTAS FISCAIS.zip"
+    )
+    st.download_button(
+        "BAIXAR ARQUIVO PRONTO",
+        all_zips_buffer.getvalue(),
+        file_name=all_zips_name,
+        mime="application/zip",
+        type="primary",
+        use_container_width=True,
+        key="stage3_download_ready_files",
+                on_click="ignore",
+    )
+
+    with st.expander(
+        "DOWNLOADS POR PACOTE",
+        expanded=False,
+    ):
+        for zip_name, zip_bytes in st.session_state.zip_outputs.items():
+            st.download_button(
+                zip_name,
+                zip_bytes,
+                file_name=zip_name,
+                mime="application/zip",
+                use_container_width=True,
+                key=f"stage3_download_{zip_name}",
+                    on_click="ignore",
+            )
+
+    batch_id = str(audit.get("lote_id") or "")
+    try:
+        # A tabela de confirmação usa o banco, não o manifesto sem IDs
+        # nem um histórico em cache potencialmente desatualizado.
+        if SAVE_NF_HISTORY:
+            batch_records = pd.DataFrame(db.list_process_batch(batch_id))
+        else:
+            batch_records = pd.DataFrame(st.session_state.get("current_test_manifest") or [])
+        if batch_records.empty:
+            raise RuntimeError("Nenhum registro persistido para o lote.")
+    except Exception as exc:
+        st.error(f"Não foi possível consultar a confirmação do lote {batch_id}: {exc}")
+        st.info("Não reinicie a geração. Atualize a consulta ao banco.")
+        if st.button("ATUALIZAR CONFIRMAÇÃO DO LOTE", key="retry_batch_confirmation"):
+            _invalidate_process_cache()
+            st.rerun()
+        return
+
+    reused = audit.get("documentos_reutilizados") or []
+    if reused:
+        st.info(
+            f"{len(reused)} documento(s) fiscal(is) já registrado(s) em outro lote "
+            "acompanham este ZIP, sem duplicar seu histórico ou alterar seu envio original."
+        )
+        _setta_dataframe(pd.DataFrame(reused), hide_index=True, use_container_width=True)
+        st.caption("Se algum CT-e reutilizado ainda não tiver envio confirmado, confira seu lote original em Pendências.")
+    awaiting = _awaiting_send_records(batch_records)
+    if not awaiting.empty:
+        st.warning(f"AGUARDANDO DECISÃO · LOTE {batch_id} · {len(awaiting)} DOCUMENTO(S)")
+        st.session_state["_nf_send_confirmation_batch"] = batch_id
+        render_send_and_tracking_stage(awaiting)
+    else:
+        st.success("Todos os documentos novos deste lote já tiveram o envio confirmado.")
+        if st.button(
+            "INICIAR NOVO FLUXO",
+            use_container_width=True,
+            key="stage3_start_new_flow",
+        ):
+            _reset_nf_session_flow()
+            st.rerun()
+
+
+
 def render_ready_file_stage() -> None:
     section_band(
         "03 · FINALIZAÇÃO",
@@ -9198,7 +9277,20 @@ def render_ready_file_stage() -> None:
     current_records = current_process_records_for_tests()
     awaiting_remote = _awaiting_send_records(current_records)
     frame = st.session_state.get("analysis")
-    if not isinstance(frame, pd.DataFrame) or frame.empty:
+    audit = st.session_state.get("last_generation_audit") or {}
+    selected_batch = str(st.session_state.get("_nf_send_confirmation_batch") or "")
+    # Um lote já gravado não depende mais das pré-notas dinâmicas nem
+    # da revalidação fiscal: o usuário precisa apenas baixar e decidir.
+    if st.session_state.get("zip_outputs") and audit.get("lote_persistido") and (
+        not selected_batch or selected_batch == str(audit.get("lote_id") or "")
+    ):
+        _render_persisted_nf_zip()
+        return
+    # ZIPs de sessões antigas que falharam na gravação não são confiáveis.
+    if st.session_state.get("zip_outputs") and not audit.get("lote_persistido"):
+        st.session_state.zip_outputs = {}
+        st.warning("O arquivo anterior não teve sua persistência confirmada. Gere novamente após a correção.")
+    if selected_batch or not isinstance(frame, pd.DataFrame) or frame.empty:
         if not awaiting_remote.empty:
             st.warning(
                 "Somente os REGISTROS do lote foram recuperados do banco. "
@@ -9210,7 +9302,7 @@ def render_ready_file_stage() -> None:
             )
             if _selected_batch and "lote_id" in awaiting_remote.columns:
                 awaiting_remote=awaiting_remote[
-                    awaiting_remote["lote_id"].fillna("").astype(str).eq(_selected_batch)
+                    awaiting_remote["lote_id"].fillna("").astype(str).replace("", "SEM IDENTIFICAÇÃO").eq(_selected_batch)
                 ].copy()
             if awaiting_remote.empty:
                 st.warning("O lote selecionado não possui registros aguardando envio.")
@@ -9576,92 +9668,14 @@ def render_ready_file_stage() -> None:
         ):
             try:
                 outputs, manifest = make_zip_outputs(merged)
-                st.session_state.zip_outputs = outputs
-
-                if SAVE_NF_HISTORY:
-                    st.session_state.history.extend(manifest)
-                    if db.configured():
-                        result = db.save_process_records(manifest)
-                        inserted = int((result or {}).get("inseridos", 0))
-                        if inserted != len(manifest):
-                            raise RuntimeError(
-                                f"Conferência do banco falhou: "
-                                f"{len(manifest)} esperado(s) e {inserted} gravado(s)."
-                            )
-                        _invalidate_process_cache()
-                    else:
-                        st.session_state.current_test_manifest = manifest
-                else:
-                    st.session_state.current_test_manifest = manifest
-
-                st.session_state.nf_flow_stage = 3
+                _persist_and_release_nf_zip(outputs, manifest)
                 st.rerun()
             except Exception as exc:
-                st.error(f"Falha ao gerar os arquivos: {exc}")
+                st.session_state.zip_outputs = {}
+                st.error(f"Falha ao gerar ou registrar o lote: {exc}")
+                st.warning("Nenhum download foi liberado sem confirmação da gravação no banco.")
         return
 
-    audit = st.session_state.get("last_generation_audit") or {}
-    if audit:
-        st.success(
-            "ARQUIVOS GERADOS · "
-            f"NF {audit.get('nf_geradas', 0)} · "
-            f"CT-e {audit.get('cte_gerados', 0)}"
-        )
-
-    all_zips_buffer = io.BytesIO()
-    with zipfile.ZipFile(
-        all_zips_buffer,
-        "w",
-        compression=zipfile.ZIP_STORED,
-    ) as master_zip:
-        for zip_name, zip_bytes in st.session_state.zip_outputs.items():
-            master_zip.writestr(zip_name, zip_bytes)
-
-    all_zips_name = (
-        f"{now_local():%d-%m-%Y} - ARQUIVOS PRONTOS - NOTAS FISCAIS.zip"
-    )
-    st.download_button(
-        "BAIXAR ARQUIVO PRONTO",
-        all_zips_buffer.getvalue(),
-        file_name=all_zips_name,
-        mime="application/zip",
-        type="primary",
-        use_container_width=True,
-        key="stage3_download_ready_files",
-                on_click="ignore",
-    )
-
-    with st.expander(
-        "DOWNLOADS POR PACOTE",
-        expanded=False,
-    ):
-        for zip_name, zip_bytes in st.session_state.zip_outputs.items():
-            st.download_button(
-                zip_name,
-                zip_bytes,
-                file_name=zip_name,
-                mime="application/zip",
-                use_container_width=True,
-                key=f"stage3_download_{zip_name}",
-                    on_click="ignore",
-            )
-
-    current_records = current_process_records_for_tests()
-    awaiting = _awaiting_send_records(current_records)
-    if not awaiting.empty:
-        with st.expander(
-            "CONFIRMAR ENVIO / ACOMPANHAMENTO",
-            expanded=False,
-        ):
-            render_send_and_tracking_stage(current_records)
-    else:
-        if st.button(
-            "INICIAR NOVO FLUXO",
-            use_container_width=True,
-            key="stage3_start_new_flow",
-        ):
-            _reset_nf_session_flow()
-            st.rerun()
 
 
 
