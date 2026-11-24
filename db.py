@@ -200,6 +200,121 @@ def save_process_records(rows: Iterable[dict]) -> dict:
     return rpc("nf_registrar_processamentos", {"p_rows": rows}, timeout=90) or {}
 
 
+def list_process_batch(batch_id: str) -> list[dict]:
+    """Read persisted records for one exact batch (not the paginated history)."""
+    if not configured():
+        raise RuntimeError("Supabase não configurado.")
+    return _select_all("nf_processamentos", filters={"lote_id": f"eq.{batch_id}"}, max_rows=10000)
+
+
+def _existing_fiscal_records(rows: list[dict]) -> dict[tuple[str, str], dict]:
+    import re
+    found = {}
+    for field in ("chave_nfe", "chave_cte"):
+        keys = sorted({
+            str(r.get(field) or "").strip() for r in rows
+            if re.fullmatch(r"[0-9]{44}", str(r.get(field) or "").strip())
+        })
+        for start in range(0, len(keys), 50):
+            chunk = keys[start:start + 50]
+            records = _select_all(
+                "nf_processamentos",
+                filters={field: "in.(" + ",".join(chunk) + ")"},
+                max_rows=1000,
+            )
+            for record in records:
+                found[(field, str(record.get(field) or ""))] = record
+    return found
+
+
+def persist_generated_batch(rows: Iterable[dict]) -> dict:
+    """Persist the new invoices; reuse an already registered CT-e, never reset it.
+
+    The fiscal PDF can be included again in a different ZIP, but the original
+    CT-e remains in its original batch/status. The normal invoice is never
+    silently omitted. Verify the actual persisted batch before releasing ZIPs.
+    """
+    manifest = [dict(row) for row in rows]
+    if not manifest:
+        raise ValueError("O lote não possui documentos.")
+    if not configured():
+        raise RuntimeError("Banco indisponível: o lote não foi liberado.")
+    batch = str(manifest[0].get("lote_id") or "").strip()
+    if not batch or any(str(r.get("lote_id") or "").strip() != batch for r in manifest):
+        raise ValueError("Identificação do lote inconsistente.")
+
+    def identity(r):
+        return (
+            str(r.get("tipo_documento") or "").strip(),
+            str(r.get("chave_nfe") or "").strip(),
+            str(r.get("chave_cte") or "").strip(),
+            str(r.get("arquivo_final") or "").strip(),
+        )
+
+    def plan():
+        existing = _existing_fiscal_records(manifest)
+        current = list_process_batch(batch)
+        current_ids = {identity(r) for r in current}
+        expected_ids = set()
+        pending, reused = [], []
+        seen = set()
+        for row in manifest:
+            ident = identity(row)
+            if ident in seen:
+                raise ValueError("Documento duplicado no manifesto do lote.")
+            seen.add(ident)
+            field = "chave_cte" if row.get("tipo_documento") == "CT-e" else "chave_nfe"
+            key = str(row.get(field) or "").strip()
+            record = existing.get((field, key))
+            if ident in current_ids:
+                expected_ids.add(ident)
+                continue
+            if record:
+                if str(record.get("lote_id") or "") == batch:
+                    raise RuntimeError("Lote existente diverge dos arquivos gerados.")
+                if row.get("tipo_documento") == "CT-e" or row.get("origem_dados") == "REMESSA_AUXILIAR_SEM_PRE_NOTA":
+                    old_company = str(record.get("empresa_sigla") or "").strip()
+                    new_company = str(row.get("empresa_sigla") or "").strip()
+                    if old_company and new_company and old_company != new_company:
+                        raise RuntimeError("Documento fiscal já registrado para outra empresa.")
+                    reused.append({
+                        "tipo_documento": row.get("tipo_documento"),
+                        "numero": row.get("numero_cte") or row.get("numero_nf"),
+                        "lote_id": record.get("lote_id"),
+                        "status": record.get("status"),
+                    })
+                    continue
+                raise RuntimeError(
+                    f"NF {row.get('numero_nf') or key} já registrada no lote "
+                    f"{record.get('lote_id')}. Consulte a confirmação/recuperação de envio."
+                )
+            expected_ids.add(ident)
+            pending.append(row)
+        if current_ids - expected_ids or len(current_ids) != len(current):
+            raise RuntimeError("O lote salvo contém documentos divergentes.")
+        return pending, reused, expected_ids
+
+    pending, reused, expected = plan()
+    if pending:
+        try:
+            save_process_records(pending)
+        except Exception as exc:
+            # An HTTP response may be lost after commit, or another lot may
+            # register the same CT-e concurrently. Re-read before retrying.
+            retry, reused, expected = plan()
+            if retry:
+                if "HTTP 409" not in str(exc) or len(retry) >= len(pending):
+                    raise
+                save_process_records(retry)
+    saved = list_process_batch(batch)
+    if {identity(r) for r in saved} != expected or len(saved) != len(expected):
+        raise RuntimeError("O banco não confirmou integralmente os registros novos do lote.")
+    if not saved:
+        raise RuntimeError("Nenhum documento novo foi registrado. Consulte os lotes existentes.")
+    return {"lote_id": batch, "records": saved, "reused": reused,
+            "inseridos": len(saved), "total": len(manifest)}
+
+
 def register_avulsa_records(rows: Iterable[dict]) -> dict:
     """Registra somente chaves fiscais ausentes, em transação atômica no banco."""
     data = list(rows)
