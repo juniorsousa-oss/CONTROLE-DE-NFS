@@ -23,8 +23,9 @@ TZ = ZoneInfo("America/Sao_Paulo")
 
 
 def d(weekday: int, hour: int, minute: int = 0) -> datetime:
-    # 2026-10-12 é segunda-feira.
-    return datetime(2026, 10, 12 + weekday, hour, minute)
+    # 2026-10-19 é segunda-feira de semana sem feriado nacional.
+    # O feriado de 12/10 é testado separadamente em tests/test_nf_launch_deadline.py.
+    return datetime(2026, 10, 19 + weekday, hour, minute)
 
 
 cases = [
@@ -142,8 +143,8 @@ records = pd.DataFrame([
 ])
 view = fn(records)
 assert view["numero_nf"].tolist()==["001"], view
-assert str(view.iloc[0]["inicio_prazo_lancamento"])=="2026-10-16 15:00:00"
-assert str(view.iloc[0]["prazo_lancamento"])=="2026-10-19 15:00:00"
+assert str(view.iloc[0]["inicio_prazo_lancamento"])=="2026-10-23 15:00:00"
+assert str(view.iloc[0]["prazo_lancamento"])=="2026-10-26 15:00:00"
 assert view.iloc[0]["situacao_lancamento"]=="AGUARDANDO NOVO RELATÓRIO", view
 assert view.iloc[0]["dias_atraso_lancamento"] >= 1
 
