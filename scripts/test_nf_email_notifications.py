@@ -73,7 +73,8 @@ def run() -> None:
     assert "[HOMOLOGAÇÃO / DADOS FICTÍCIOS]" in fake_preview
     assert "NÃO REALIZAR COBRANÇA" in fake_preview
     assert "color:#292d32" in fake_preview
-    assert "12/10/2026" in fake_preview
+    # 12/10 é feriado; o primeiro exemplo recua para sexta-feira.
+    assert "09/10/2026" in fake_preview
     assert "13/10/2026" in fake_preview
     assert "NOTAS FISCAIS EM ACOMPANHAMENTO" not in html
     assert '<h1' not in html

@@ -1744,10 +1744,10 @@ def _clean_mrp_materials_api_snapshot(
         .str.replace(r"\.0$", "", regex=True)
         .str.strip()
     )
+    # A API usa ISO (YYYY-MM-DD); dayfirst inverteria dias e meses e
+    # poderia transformar outras linhas da mesma carga em NaT.
     base["data_cm"] = pd.to_datetime(
-        base["data_cm"],
-        errors="coerce",
-        dayfirst=True,
+        base["data_cm"], errors="coerce", format="%Y-%m-%d",
     ).dt.date
 
     total_raw = len(base)
@@ -1819,145 +1819,109 @@ def _load_materials_api_current_cached() -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def refresh_mrp_from_materials_api(force: bool = False) -> dict:
-    """Recalcula o impacto MRP com a carga atual da API e o último STSUP01 já persistido."""
-    if force:
-        try:
-            _load_materials_api_current_cached.clear()
-        except Exception:
-            pass
+def _materials_load_id(value) -> int:
+    text = str(value or "").strip()
+    return int(text) if text.isascii() and text.isdecimal() and len(text) <= 20 else 0
 
+
+def refresh_mrp_from_materials_api() -> dict:
+    """Aplica uma nova carga de Materiais ao STSUP01 já confirmado."""
     status = _cached_materials_api_status() or {}
-    if not bool(status.get("disponivel")):
-        return {"ok": False, "recalculado": False, "motivo": "API_SEM_CARGA"}
+    carga_id = _materials_load_id(status.get("carga_id"))
+    if not status.get("disponivel") or not carga_id:
+        return {"ok": False, "motivo": "API_SEM_CARGA"}
 
-    carga_id = status.get("carga_id")
     current_stats = st.session_state.get("mrp_priority_stats") or {}
+    applied = _materials_load_id(current_stats.get("carga_materiais_id"))
+    if applied == carga_id:
+        return {"ok": True, "recalculado": False, "carga_id": carga_id}
+    if applied > carga_id:
+        return {"ok": False, "motivo": "CARGA_ANTERIOR", "carga_id": carga_id}
+
     current_detail = st.session_state.get("mrp_impact_detail")
-
-    if (
-        (not isinstance(current_detail, pd.DataFrame) or current_detail.empty)
-        and db.configured()
-    ):
-        try:
-            remote_mrp = _cached_db_mrp_load() or {}
-        except Exception:
-            remote_mrp = {}
-        if remote_mrp:
-            current_detail = pd.DataFrame(remote_mrp.get("detalhe") or [])
-            remote_summary = pd.DataFrame(remote_mrp.get("resumo") or [])
-            for frame in (current_detail, remote_summary):
-                for column in ("data_pre_nota", "data_cm"):
-                    if column in frame.columns:
-                        frame[column] = pd.to_datetime(
-                            frame[column],
-                            errors="coerce",
-                        ).dt.date
-            st.session_state.mrp_impact_detail = current_detail
-            st.session_state.mrp_priority_summary = remote_summary
-            st.session_state.mrp_priority_files = tuple(
-                remote_mrp.get("arquivos") or []
-            )
-            current_stats = remote_mrp.get("stats") or {}
-            st.session_state.mrp_priority_stats = current_stats
-
-    if (
-        not force
-        and carga_id is not None
-        and str(current_stats.get("carga_materiais_id") or "") == str(carga_id)
-    ):
-        return {
-            "ok": True,
-            "recalculado": False,
-            "motivo": "ATUALIZADO",
-            "carga_id": carga_id,
-        }
-
-    if not isinstance(current_detail, pd.DataFrame) or current_detail.empty:
-        return {
-            "ok": True,
-            "recalculado": False,
-            "motivo": "SEM_BASE_STSUP01",
-            "carga_id": carga_id,
-        }
-
     entry_cols = [
-        "data_pre_nota",
-        "numero_nf",
-        "fornecedor_codigo",
-        "fornecedor",
-        "cr",
-        "desc_cr",
-        "natureza",
-        "produto",
-        "descricao",
-        "tes",
+        "data_pre_nota", "numero_nf", "fornecedor_codigo", "fornecedor",
+        "cr", "desc_cr", "natureza", "produto", "descricao", "tes",
     ]
-    entries = current_detail.copy()
-    for col in entry_cols:
-        if col not in entries.columns:
-            entries[col] = ""
-    entries = entries[entry_cols].copy()
-
-    payload = _load_materials_api_current_cached()
-    if not bool(
-        payload.get("disponivel")
-        and isinstance(payload.get("carga"), dict)
+    if (
+        not isinstance(current_detail, pd.DataFrame) or current_detail.empty
+        or not {"data_pre_nota", "numero_nf", "produto"}.issubset(current_detail.columns)
     ):
-        return {"ok": False, "recalculado": False, "motivo": "API_SEM_CARGA"}
+        return {"ok": False, "motivo": "SEM_BASE_STSUP01", "carga_id": carga_id}
 
+    payload = _load_materials_api_current_cached() or {}
+    metadata = payload.get("carga")
+    rows = payload.get("itens")
+    if not payload.get("disponivel") or not isinstance(metadata, dict):
+        return {"ok": False, "motivo": "API_SEM_CARGA", "carga_id": carga_id}
+    if _materials_load_id(metadata.get("carga_id")) != carga_id:
+        return {"ok": False, "motivo": "VERSAO_MUDOU", "carga_id": carga_id}
+    if not isinstance(rows, list) or metadata.get("total_itens") != len(rows):
+        return {"ok": False, "motivo": "CARGA_INCOMPLETA", "carga_id": carga_id}
+
+    entries = current_detail.reindex(columns=entry_cols, fill_value="").copy()
     materials, mat_stats = _clean_mrp_materials_api_snapshot(payload)
+    if mat_stats.get("invalidas"):
+        return {"ok": False, "motivo": "CARGA_INCOMPLETA", "carga_id": carga_id}
     detail, summary, impact_stats = _build_mrp_impact(materials, entries)
+    detail = _filter_excluded_nfs(detail)
+    summary = _filter_excluded_nfs(summary)
 
-    old_stats = dict(current_stats)
     old_files = tuple(st.session_state.get("mrp_priority_files") or ())
     nf_source = old_files[1] if len(old_files) > 1 else "Último STSUP01 persistido"
+    files = (f"API Gestão de Entregas · carga {carga_id}", nf_source)
+    stats = {**current_stats, **mat_stats, **impact_stats}
+    high = summary[summary["prioridade"].eq("ALTA")] if not summary.empty else pd.DataFrame()
 
-    st.session_state.mrp_impact_detail = detail.copy()
-    st.session_state.mrp_priority_summary = summary.copy()
-    st.session_state.mrp_priority_stats = {
-        **old_stats,
-        **mat_stats,
-        **impact_stats,
-    }
-    st.session_state.mrp_priority_files = (
-        f"API Gestão de Entregas · carga {carga_id or '-'}",
-        nf_source,
+    # Não declarar a carga nova no app se a gravação falhar.
+    persisted = db.save_mrp_load(
+        dataframe_records_for_db(detail), dataframe_records_for_db(summary), list(files), stats,
     )
+    if not persisted.get("ok"):
+        return {"ok": False, "motivo": "GRAVACAO_NAO_CONFIRMADA", "carga_id": carga_id}
 
-    high = (
-        summary[
-            summary["prioridade"]
-            .fillna("")
-            .astype(str)
-            .str.upper()
-            .eq("ALTA")
-        ].copy()
-        if isinstance(summary, pd.DataFrame) and not summary.empty
-        else pd.DataFrame()
-    )
+    _invalidate_mrp_cache()
+    st.session_state.mrp_impact_detail = detail
+    st.session_state.mrp_priority_summary = summary
+    st.session_state.mrp_priority_stats = stats
+    st.session_state.mrp_priority_files = files
     st.session_state.priority_date_nf_keys = set(
-        high.get("data_nf", pd.Series(dtype=str))
-        .dropna().astype(str).tolist()
+        high.get("data_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
     )
     st.session_state.priority_nf_numbers = set(
-        high.get("numero_nf", pd.Series(dtype=str))
-        .dropna().astype(str).tolist()
+        high.get("numero_nf", pd.Series(dtype=str)).dropna().astype(str).tolist()
     )
     st.session_state.priority_nf_doc_keys = set()
     st.session_state.priority_nf_keys = set()
+    return {"ok": True, "recalculado": True, "carga_id": carga_id}
 
-    persisted = persist_mrp_current()
-    return {
-        "ok": True,
-        "recalculado": True,
-        "carga_id": carga_id,
-        "nfs": len(summary),
-        "nfs_alta": int(
-            summary["prioridade"].eq("ALTA").sum()
-        ) if not summary.empty else 0,
-        "persistido": persisted,
-    }
+
+def _sync_materials_mrp() -> dict:
+    """Mantém o cálculo anterior e informa uma falha sem republicar NFs."""
+    if not SAVE_NF_HISTORY or not db.configured():
+        return {"checked": False}
+    try:
+        result = refresh_mrp_from_materials_api()
+    except Exception as exc:
+        print(f"NF_MATERIAIS_SYNC erro={type(exc).__name__}", flush=True)
+        result = {"ok": False, "motivo": "ERRO"}
+    if result.get("ok"):
+        st.session_state.pop("_central_materials_warning", None)
+        if result.get("recalculado"):
+            _refresh_missing_mrp_analysis()
+            st.session_state.base_analysis_ready = True
+            st.session_state.base_analysis_at = now_local().isoformat(timespec="seconds")
+    else:
+        reason = {
+            "API_SEM_CARGA": "Nenhuma carga disponível na origem.",
+            "SEM_BASE_STSUP01": "Aguardando uma base NF/STSUP01 válida.",
+            "VERSAO_MUDOU": "A origem mudou durante a leitura. Recarregue para conferir.",
+            "CARGA_ANTERIOR": "A API retornou uma versão anterior à análise.",
+            "CARGA_INCOMPLETA": "A API retornou uma carga incompleta ou inválida.",
+            "GRAVACAO_NAO_CONFIRMADA": "A Central não confirmou a gravação.",
+        }.get(result.get("motivo"), "Não foi possível atualizar a análise.")
+        st.session_state["_central_materials_warning"] = f"Materiais: {reason} Análise anterior preservada."
+    return result
 
 
 def _stsup01_operational_date(value):
@@ -10904,12 +10868,14 @@ def _sync_central_nfs_on_page_load() -> dict:
             # Se outra sessão já concluiu o processamento, o banco contém a
             # fotografia vigente; recuperá-la é obrigatório antes da análise.
             _ensure_operational_reference_data()
+            result["materials"] = _sync_materials_mrp()
             if (
                 st.session_state.get("pre_notes_db_loaded")
                 and st.session_state.get("mrp_db_loaded")
                 and not result.get("errors")
             ):
-                _refresh_missing_mrp_analysis()
+                if not result["materials"].get("recalculado"):
+                    _refresh_missing_mrp_analysis()
                 st.session_state.base_analysis_ready = True
                 st.session_state.base_analysis_at = now_local().isoformat(
                     timespec="seconds"
@@ -10931,6 +10897,10 @@ if _force_central_sync:
             _central_sync_result = _sync_central_nfs_sources(force=True)
             _invalidate_pre_notes_cache()
             _invalidate_mrp_cache()
+            _invalidate_materials_status_cache()
+            _load_materials_api_current_cached.clear()
+            _ensure_operational_reference_data()
+            _sync_materials_mrp()
         st.session_state["_nf_central_page_loaded"] = True
         if _central_sync_result.get("changed"):
             st.rerun()
@@ -10951,13 +10921,26 @@ def _render_nfs_sources_status():
         states = {}
 
     api_status = _cached_materials_api_status() or {}
-    api_available = bool(api_status.get("disponivel"))
+    available_id = _materials_load_id(api_status.get("carga_id"))
+    applied_id = _materials_load_id(
+        (st.session_state.get("mrp_priority_stats") or {}).get("carga_materiais_id")
+    )
+    api_available = bool(api_status.get("disponivel") and available_id)
+    material_status = (
+        "ATUALIZADO" if api_available and applied_id == available_id else
+        "ANÁLISE PENDENTE" if api_available else "INDISPONÍVEL"
+    )
+    material_origin = (
+        f"CARGA {applied_id} APLICADA" if material_status == "ATUALIZADO" else
+        f"CARGA {available_id} NA API · ANÁLISE {applied_id or '—'}" if api_available else
+        "API GESTÃO DE ENTREGAS"
+    )
 
     cards = [
         (
             "MATERIAIS",
-            "CONECTADA" if api_available else "INDISPONÍVEL",
-            "API GESTÃO DE ENTREGAS",
+            material_status,
+            material_origin,
             str(api_status.get("ultima_verificacao_em") or api_status.get("ativada_em") or ""),
         ),
         (
@@ -10991,6 +10974,8 @@ def _render_nfs_sources_status():
         st.warning(str(st.session_state.get("_central_nfs_error")))
     if st.session_state.get("_central_nf_tes_info"):
         st.info(st.session_state["_central_nf_tes_info"])
+    if st.session_state.get("_central_materials_warning"):
+        st.warning(st.session_state["_central_materials_warning"])
 
     if st.button(
         "REPROCESSAR FONTES",
